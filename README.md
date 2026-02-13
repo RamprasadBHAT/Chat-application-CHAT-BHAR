@@ -1,6 +1,6 @@
 # ChatBhar Web (Interactive Landing + Local Messaging)
 
-A modern, glassmorphism-inspired web app prototype for **ChatBhar** with interactive landing navigation, local auth, richer chat, and client-side backup flows.
+A modern, glassmorphism-inspired web app prototype for **ChatBhar** with proper login-first navigation, richer chat, and client-side backup flows.
 
 ## Implemented now
 
@@ -13,6 +13,7 @@ A modern, glassmorphism-inspired web app prototype for **ChatBhar** with interac
   - text messages + multi-file attachments
   - supports all file formats accepted by browser file picker
   - attachment previews with type-aware icons
+  - sent files are shown as downloadable links in chat
 - **Client-only backup model** (no server DB required for this demo):
   - auto-save chat state to browser local storage
   - export backup JSON
