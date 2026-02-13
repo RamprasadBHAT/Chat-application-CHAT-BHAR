@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatBhar — Social + Messaging</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+    <div class="app-shell">
+      <header class="topbar glass">
+        <div class="brand">
+          <div class="brand-logo">💬</div>
+          <h1>ChatBhar</h1>
+        </div>
+        <div class="top-actions">
+          <button id="themeToggle" class="icon-btn" title="Toggle theme">🌙</button>
+          <button class="icon-btn" title="Notifications">🔔</button>
+        </div>
+      </header>
+
+      <main>
+        <section id="home" class="screen active">
+          <div class="search-row glass">
+            <span>🔍</span>
+            <input placeholder="Search creators, channels, tags…" />
+          </div>
+
+          <div class="stories glass">
+            <div class="story"><div class="avatar">YS</div><p>Your Story</p></div>
+            <div class="story"><div class="avatar">AN</div><p>@anaya</p></div>
+            <div class="story"><div class="avatar">RV</div><p>@ravi</p></div>
+            <div class="story"><div class="avatar">+ </div><p>Add</p></div>
+          </div>
+
+          <article class="feed-card glass">
+            <div class="media">Trending Reel Preview</div>
+            <div class="feed-meta">
+              <div>
+                <h3>@creator</h3>
+                <p>caption text... #trending #chatbhar</p>
+              </div>
+              <div class="actions">
+                <button>♡ 1,234</button>
+                <button>💬 56</button>
+                <button>↗ Share</button>
+              </div>
+            </div>
+          </article>
+
+          <div class="quick-grid">
+            <button class="glass quick-card" data-tab="explore">Explore trends</button>
+            <button class="glass quick-card" data-tab="channels">Channels</button>
+            <button class="glass quick-card" data-tab="post">Create post/live</button>
+            <button class="glass quick-card" data-tab="chat">Open chat inbox</button>
+          </div>
+        </section>
+
+        <section id="explore" class="screen">
+          <h2>Explore</h2>
+          <p>Discover short + long form content, creators, hashtags, and channels.</p>
+        </section>
+
+        <section id="post" class="screen">
+          <h2>Create</h2>
+          <p>Post photos/videos, stories, or start a live session.</p>
+        </section>
+
+        <section id="channels" class="screen">
+          <h2>Channels</h2>
+          <p>Subscribed creators, livestreams, and community updates.</p>
+        </section>
+
+        <section id="chat" class="screen">
+          <div class="chat-layout glass">
+            <aside class="chat-list">
+              <h3>Messages</h3>
+              <button class="chat-user active" data-name="Anaya">Anaya <small>Typing…</small></button>
+              <button class="chat-user" data-name="Design Team">Design Team <small>3 new files</small></button>
+              <button class="chat-user" data-name="Ravi">Ravi <small>See you soon!</small></button>
+            </aside>
+
+            <section class="chat-panel">
+              <div class="chat-header">
+                <h3 id="activeChatTitle">Anaya</h3>
+                <span>Online</span>
+              </div>
+
+              <div id="messages" class="messages">
+                <div class="bubble incoming">Hey! Can you share the draft assets?</div>
+                <div class="bubble outgoing">Sure, sending now 👇</div>
+              </div>
+
+              <div id="attachmentPreview" class="attachment-preview" hidden></div>
+
+              <form id="chatForm" class="composer">
+                <label class="attach-btn" for="fileInput" title="Attach files">📎</label>
+                <input id="fileInput" type="file" multiple />
+                <input id="messageInput" type="text" placeholder="Type a message" required />
+                <button type="submit">Send</button>
+              </form>
+            </section>
+          </div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav glass">
+        <button class="nav-btn active" data-tab="home">🏠<span>Home</span></button>
+        <button class="nav-btn" data-tab="explore">🔍<span>Explore</span></button>
+        <button class="nav-btn" data-tab="post">➕<span>Post</span></button>
+        <button class="nav-btn" data-tab="channels">🎥<span>Channels</span></button>
+        <button class="nav-btn" data-tab="chat">💬<span>Chat</span></button>
+      </nav>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
