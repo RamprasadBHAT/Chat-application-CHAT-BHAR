@@ -1,38 +1,205 @@
+const AUTH_USERS_KEY = 'chatbhar.users';
+const AUTH_SESSION_KEY = 'chatbhar.session';
+const CHAT_STORE_KEY = 'chatbhar.chatStore';
+
+const defaultUsers = [
+  {
+    id: 'admin-1',
+    name: 'Owner Admin',
+    email: 'admin@chatbhar.app',
+    password: 'Admin@1234',
+    role: 'admin'
+  },
+  {
+    id: 'creator-1',
+    name: 'Ramprasad Bhat',
+    email: 'ramprasadbhat@gmail.com',
+    password: 'Ram@1234',
+    role: 'creator'
+  }
+];
+
+const defaultChats = {
+  Anaya: [
+    { dir: 'incoming', text: 'Hey! Can you share the draft assets?', files: [], ts: Date.now() - 900000 },
+    { dir: 'outgoing', text: 'Sure, sending now 👇', files: [], ts: Date.now() - 850000 }
+  ],
+  'Design Team': [{ dir: 'incoming', text: 'Please review the moodboard.', files: [], ts: Date.now() - 720000 }],
+  Ravi: [{ dir: 'incoming', text: 'See you soon!', files: [], ts: Date.now() - 700000 }]
+};
+
+const authGate = document.getElementById('authGate');
+const appShell = document.getElementById('appShell');
+const loginForm = document.getElementById('loginForm');
+const authMessage = document.getElementById('authMessage');
+const adminBtn = document.getElementById('adminBtn');
+const logoutBtn = document.getElementById('logoutBtn');
+const themeToggle = document.getElementById('themeToggle');
+
 const screens = [...document.querySelectorAll('.screen')];
 const navButtons = [...document.querySelectorAll('.nav-btn')];
 const quickButtons = [...document.querySelectorAll('.quick-card')];
-const chatUsers = [...document.querySelectorAll('.chat-user')];
 const activeChatTitle = document.getElementById('activeChatTitle');
 const messages = document.getElementById('messages');
 const chatForm = document.getElementById('chatForm');
 const messageInput = document.getElementById('messageInput');
 const fileInput = document.getElementById('fileInput');
 const attachmentPreview = document.getElementById('attachmentPreview');
-const themeToggle = document.getElementById('themeToggle');
+const backupNowBtn = document.getElementById('backupNowBtn');
+const shareBackupBtn = document.getElementById('shareBackupBtn');
+const importBackupBtn = document.getElementById('importBackupBtn');
+const backupInput = document.getElementById('backupInput');
+const syncStatus = document.getElementById('syncStatus');
+const chatUsersWrap = document.getElementById('chatUsersWrap');
+const newChatBtn = document.getElementById('newChatBtn');
 
 let pendingFiles = [];
+let chatStore = loadJson(CHAT_STORE_KEY, defaultChats);
+let activeChat = Object.keys(chatStore)[0];
 
-function openTab(tabId) {
-  screens.forEach((screen) => {
-    screen.classList.toggle('active', screen.id === tabId);
+bootstrapUsers();
+loadSession();
+bindEvents();
+renderChatUsers();
+renderMessages();
+
+function loadJson(key, fallback) {
+  const raw = localStorage.getItem(key);
+  if (!raw) return structuredClone(fallback);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return structuredClone(fallback);
+  }
+}
+
+function saveJson(key, payload) {
+  localStorage.setItem(key, JSON.stringify(payload));
+}
+
+function bootstrapUsers() {
+  const existing = loadJson(AUTH_USERS_KEY, []);
+  if (!existing.length) saveJson(AUTH_USERS_KEY, defaultUsers);
+}
+
+function bindEvents() {
+  loginForm.addEventListener('submit', onLogin);
+  logoutBtn.addEventListener('click', onLogout);
+  themeToggle.addEventListener('click', toggleTheme);
+
+  [...navButtons, ...quickButtons].forEach((button) => {
+    button.addEventListener('click', () => openTab(button.dataset.tab));
   });
 
-  navButtons.forEach((button) => {
-    button.classList.toggle('active', button.dataset.tab === tabId);
+  adminBtn.addEventListener('click', () => openTab('admin'));
+  newChatBtn.addEventListener('click', createNewChat);
+
+  fileInput.addEventListener('change', (event) => {
+    pendingFiles = [...event.target.files].map((file) => ({
+      name: file.name,
+      type: file.type || 'application/octet-stream',
+      size: file.size
+    }));
+    renderAttachmentPreview();
+  });
+
+  chatForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    sendMessage();
+  });
+
+  backupNowBtn.addEventListener('click', exportBackupFile);
+  shareBackupBtn.addEventListener('click', saveBackupToMobile);
+  importBackupBtn.addEventListener('click', () => backupInput.click());
+  backupInput.addEventListener('change', importBackupFile);
+}
+
+function onLogin(event) {
+  event.preventDefault();
+  const email = document.getElementById('emailInput').value.trim().toLowerCase();
+  const password = document.getElementById('passwordInput').value;
+  const users = loadJson(AUTH_USERS_KEY, defaultUsers);
+  const found = users.find((u) => u.email === email && u.password === password);
+
+  if (!found) {
+    authMessage.textContent = 'Invalid email/password.';
+    return;
+  }
+
+  saveJson(AUTH_SESSION_KEY, { id: found.id, email: found.email, role: found.role, name: found.name });
+  authMessage.textContent = '';
+  loadSession();
+}
+
+function loadSession() {
+  const session = loadJson(AUTH_SESSION_KEY, null);
+  if (!session?.id) {
+    authGate.hidden = false;
+    appShell.hidden = true;
+    return;
+  }
+
+  authGate.hidden = true;
+  appShell.hidden = false;
+  adminBtn.hidden = session.role !== 'admin';
+}
+
+function onLogout() {
+  localStorage.removeItem(AUTH_SESSION_KEY);
+  loadSession();
+}
+
+function toggleTheme() {
+  document.body.classList.toggle('dark');
+  themeToggle.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+}
+
+function openTab(tabId) {
+  screens.forEach((screen) => screen.classList.toggle('active', screen.id === tabId));
+  navButtons.forEach((button) => button.classList.toggle('active', button.dataset.tab === tabId));
+}
+
+function renderChatUsers() {
+  chatUsersWrap.innerHTML = '';
+  Object.keys(chatStore).forEach((chatName) => {
+    const latest = chatStore[chatName].at(-1);
+    const btn = document.createElement('button');
+    btn.className = `chat-user ${chatName === activeChat ? 'active' : ''}`;
+    btn.innerHTML = `${chatName}<small>${latest?.text || 'No messages yet'}</small>`;
+    btn.addEventListener('click', () => {
+      activeChat = chatName;
+      renderChatUsers();
+      renderMessages();
+    });
+    chatUsersWrap.appendChild(btn);
   });
 }
 
-[...navButtons, ...quickButtons].forEach((button) => {
-  button.addEventListener('click', () => openTab(button.dataset.tab));
-});
+function renderMessages() {
+  activeChatTitle.textContent = activeChat;
+  messages.innerHTML = '';
+  chatStore[activeChat].forEach((msg) => {
+    const bubble = document.createElement('div');
+    bubble.className = `bubble ${msg.dir}`;
 
-chatUsers.forEach((userBtn) => {
-  userBtn.addEventListener('click', () => {
-    chatUsers.forEach((u) => u.classList.remove('active'));
-    userBtn.classList.add('active');
-    activeChatTitle.textContent = userBtn.dataset.name;
+    const fileMarkup = msg.files.length
+      ? `<ul class="file-list">${msg.files.map((f) => `<li>${fileIcon(f.type)} ${f.name} (${Math.ceil(f.size / 1024)} KB)</li>`).join('')}</ul>`
+      : '';
+
+    bubble.innerHTML = `${msg.text || ''}${fileMarkup}`;
+    messages.appendChild(bubble);
   });
-});
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function fileIcon(type) {
+  if (type.startsWith('image/')) return '🖼️';
+  if (type.startsWith('video/')) return '🎞️';
+  if (type.startsWith('audio/')) return '🎵';
+  if (type.includes('pdf')) return '📕';
+  if (type.includes('zip') || type.includes('rar') || type.includes('7z')) return '🗜️';
+  return '📄';
+}
 
 function renderAttachmentPreview() {
   if (!pendingFiles.length) {
@@ -42,44 +209,99 @@ function renderAttachmentPreview() {
   }
 
   const rows = pendingFiles
-    .map((file) => `<li>${file.name} <small>(${Math.ceil(file.size / 1024)} KB)</small></li>`)
+    .map((file) => `<li>${fileIcon(file.type)} ${file.name} <small>(${Math.ceil(file.size / 1024)} KB)</small></li>`)
     .join('');
 
-  attachmentPreview.innerHTML = `
-    <strong>Attachments (${pendingFiles.length})</strong>
-    <ul>${rows}</ul>
-  `;
+  attachmentPreview.innerHTML = `<strong>Attachments (${pendingFiles.length})</strong><ul>${rows}</ul>`;
   attachmentPreview.hidden = false;
 }
 
-fileInput.addEventListener('change', (event) => {
-  pendingFiles = [...event.target.files];
-  renderAttachmentPreview();
-});
-
-chatForm.addEventListener('submit', (event) => {
-  event.preventDefault();
+function sendMessage() {
   const text = messageInput.value.trim();
   if (!text && !pendingFiles.length) return;
 
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble outgoing';
+  chatStore[activeChat].push({
+    dir: 'outgoing',
+    text,
+    files: [...pendingFiles],
+    ts: Date.now()
+  });
 
-  const attachmentText = pendingFiles.length
-    ? `<br><small>📎 ${pendingFiles.map((f) => f.name).join(', ')}</small>`
-    : '';
-
-  bubble.innerHTML = `${text || 'Sent attachments'}${attachmentText}`;
-  messages.appendChild(bubble);
-  messages.scrollTop = messages.scrollHeight;
+  saveJson(CHAT_STORE_KEY, chatStore);
+  syncStatus.textContent = `Local backup updated ${new Date().toLocaleTimeString()}`;
 
   messageInput.value = '';
   fileInput.value = '';
   pendingFiles = [];
   renderAttachmentPreview();
-});
+  renderChatUsers();
+  renderMessages();
+}
 
-themeToggle.addEventListener('click', () => {
-  document.body.classList.toggle('dark');
-  themeToggle.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
-});
+function createNewChat() {
+  const name = prompt('Enter chat name (person/group/channel):');
+  if (!name) return;
+  if (!chatStore[name]) chatStore[name] = [];
+  activeChat = name;
+  saveJson(CHAT_STORE_KEY, chatStore);
+  renderChatUsers();
+  renderMessages();
+}
+
+function exportBackupFile() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    source: 'chatbhar-local-web',
+    chatStore
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `chatbhar-backup-${Date.now()}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function saveBackupToMobile() {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    chatStore
+  };
+  const file = new File([JSON.stringify(payload, null, 2)], 'chatbhar-mobile-backup.json', {
+    type: 'application/json'
+  });
+
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    await navigator.share({
+      title: 'ChatBhar backup',
+      text: 'Save this backup to your mobile files.',
+      files: [file]
+    });
+    return;
+  }
+
+  exportBackupFile();
+}
+
+function importBackupFile(event) {
+  const selected = event.target.files[0];
+  if (!selected) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      if (!parsed.chatStore) return;
+      chatStore = parsed.chatStore;
+      activeChat = Object.keys(chatStore)[0] || 'General';
+      if (!chatStore[activeChat]) chatStore[activeChat] = [];
+      saveJson(CHAT_STORE_KEY, chatStore);
+      renderChatUsers();
+      renderMessages();
+      syncStatus.textContent = `Backup restored ${new Date().toLocaleTimeString()}`;
+    } catch {
+      syncStatus.textContent = 'Backup import failed';
+    }
+  };
+  reader.readAsText(selected);
+}

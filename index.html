@@ -12,7 +12,25 @@
   <body>
     <div class="bg-orb orb-1"></div>
     <div class="bg-orb orb-2"></div>
-    <div class="app-shell">
+
+    <section id="authGate" class="auth-gate">
+      <div class="auth-card glass">
+        <div class="brand auth-brand">
+          <div class="brand-logo">💬</div>
+          <h1>ChatBhar</h1>
+        </div>
+        <p>Sign in to continue</p>
+        <form id="loginForm" class="auth-form">
+          <input id="emailInput" type="email" placeholder="Email" required />
+          <input id="passwordInput" type="password" placeholder="Password" required />
+          <button type="submit">Login</button>
+        </form>
+        <small id="authHint">Default creator user: ramprasadbhat@gmail.com / Ram@1234</small>
+        <small id="authMessage"></small>
+      </div>
+    </section>
+
+    <div class="app-shell" id="appShell" hidden>
       <header class="topbar glass">
         <div class="brand">
           <div class="brand-logo">💬</div>
@@ -21,6 +39,8 @@
         <div class="top-actions">
           <button id="themeToggle" class="icon-btn" title="Toggle theme">🌙</button>
           <button class="icon-btn" title="Notifications">🔔</button>
+          <button id="adminBtn" class="admin-btn" hidden>Admin</button>
+          <button id="logoutBtn" class="admin-btn">Logout</button>
         </div>
       </header>
 
@@ -80,31 +100,48 @@
           <div class="chat-layout glass">
             <aside class="chat-list">
               <h3>Messages</h3>
-              <button class="chat-user active" data-name="Anaya">Anaya <small>Typing…</small></button>
-              <button class="chat-user" data-name="Design Team">Design Team <small>3 new files</small></button>
-              <button class="chat-user" data-name="Ravi">Ravi <small>See you soon!</small></button>
+              <div id="chatUsersWrap"></div>
+              <button id="newChatBtn" class="utility-btn">+ New chat</button>
             </aside>
 
             <section class="chat-panel">
               <div class="chat-header">
                 <h3 id="activeChatTitle">Anaya</h3>
-                <span>Online</span>
+                <span id="syncStatus">Local backup active</span>
               </div>
 
-              <div id="messages" class="messages">
-                <div class="bubble incoming">Hey! Can you share the draft assets?</div>
-                <div class="bubble outgoing">Sure, sending now 👇</div>
-              </div>
+              <div id="messages" class="messages"></div>
 
               <div id="attachmentPreview" class="attachment-preview" hidden></div>
+
+              <div class="chat-tools">
+                <button id="backupNowBtn" class="utility-btn">⬇ Export backup</button>
+                <button id="importBackupBtn" class="utility-btn">⬆ Import backup</button>
+                <button id="shareBackupBtn" class="utility-btn">📲 Save to phone</button>
+                <input id="backupInput" type="file" accept="application/json" hidden />
+              </div>
 
               <form id="chatForm" class="composer">
                 <label class="attach-btn" for="fileInput" title="Attach files">📎</label>
                 <input id="fileInput" type="file" multiple />
-                <input id="messageInput" type="text" placeholder="Type a message" required />
+                <input id="messageInput" type="text" placeholder="Type a message" />
                 <button type="submit">Send</button>
               </form>
             </section>
+          </div>
+        </section>
+
+        <section id="admin" class="screen">
+          <h2>Admin Console</h2>
+          <div class="glass admin-panel">
+            <p><strong>Admin access granted</strong></p>
+            <p>Initial creator user account seeded:</p>
+            <ul>
+              <li>Name: Ramprasad Bhat</li>
+              <li>Email: ramprasadbhat@gmail.com</li>
+              <li>Role: creator</li>
+            </ul>
+            <p>You can modify seeded users in local storage for demo purposes.</p>
           </div>
         </section>
       </main>
