@@ -46,7 +46,6 @@
         </div>
         <div class="top-actions">
           <button id="themeToggle" class="icon-btn" title="Toggle theme">🌙</button>
-          <button class="icon-btn" title="Notifications">🔔</button>
           <button id="logoutBtn" class="admin-btn">Logout</button>
         </div>
       </header>
@@ -66,7 +65,6 @@
               <span>🔍</span>
               <input placeholder="Search creators, channels, tags…" />
             </div>
-
             <div class="stories glass" id="storiesRow"></div>
             <div id="feedList" class="feed-list"></div>
           </section>
@@ -78,7 +76,6 @@
 
           <section id="post" class="screen">
             <h2>Create Upload</h2>
-
             <div class="glass upload-type-row" id="uploadTypeRow">
               <button class="type-btn active" data-type="short">Shorts</button>
               <button class="type-btn" data-type="carousel">Carousel Post</button>
@@ -88,15 +85,19 @@
 
             <form id="uploadForm" class="glass upload-form">
               <input id="uploadCaption" type="text" placeholder="Write caption / title" />
-              <textarea id="uploadDescription" placeholder="Description (optional for LTV)"></textarea>
+              <textarea id="uploadDescription" placeholder="Description"></textarea>
               <input id="uploadFiles" type="file" multiple hidden />
-              <div id="uploadDropZone" class="upload-dropzone" role="button" tabindex="0" aria-label="Upload files">
+
+              <div id="uploadDropZone" class="upload-dropzone" role="button" tabindex="0">
                 <div class="drop-icon">☁️</div>
-                <p><strong>Click to browse</strong> or drag files here</p>
-                <small id="uploadHint">Shorts: 1 video · Carousel: multiple images · LTV: 1 video · Story: image/video (24h, title/description optional)</small>
+                <p><strong>Click to browse your computer</strong> or drag file(s) here</p>
+                <small id="uploadHint">Shorts: 1 video · Carousel: multiple images · LTV: 1 video · Story: image/video (24h)</small>
               </div>
+
               <div id="uploadSelectedPreview" class="upload-selected-preview"></div>
+
               <div class="upload-btn-row">
+                <button type="button" id="openCreativeSuite">Creative Suite</button>
                 <button type="button" id="clearUploadSelection">Cancel</button>
                 <button type="submit" id="publishUploadBtn">Create post</button>
               </div>
@@ -109,7 +110,7 @@
 
           <section id="channels" class="screen">
             <h2>My Channel</h2>
-            <p>Manage your uploaded content, thumbnails, trims, music, and metadata.</p>
+            <p>Card-based dashboard to manage published content.</p>
             <div id="channelContentList" class="channel-content-list"></div>
           </section>
 
@@ -120,12 +121,11 @@
                 <div id="chatUsersWrap"></div>
                 <button id="newChatBtn" class="utility-btn">+ New chat</button>
               </aside>
-
               <section class="chat-panel">
                 <div class="chat-header">
                   <h3 id="activeChatTitle">General</h3>
                   <div class="menu-wrap">
-                    <button id="chatMenuBtn" class="utility-btn" title="Chat options">⋮</button>
+                    <button id="chatMenuBtn" class="utility-btn">⋮</button>
                     <div id="chatMenu" class="chat-menu" hidden>
                       <button id="backupNowBtn">Export backup</button>
                       <button id="importBackupBtn">Import backup</button>
@@ -134,14 +134,11 @@
                     </div>
                   </div>
                 </div>
-
                 <div id="messages" class="messages"></div>
                 <div id="attachmentPreview" class="attachment-preview" hidden></div>
-
                 <input id="backupInput" type="file" accept="application/json" hidden />
-
                 <form id="chatForm" class="composer">
-                  <label class="attach-btn" for="fileInput" title="Attach files">📎</label>
+                  <label class="attach-btn" for="fileInput">📎</label>
                   <input id="fileInput" type="file" multiple />
                   <input id="messageInput" type="text" placeholder="Type a message" />
                   <button type="submit">Send</button>
@@ -151,14 +148,9 @@
           </section>
         </main>
 
-        <aside class="web-sidepanel glass" aria-label="Desktop helper panel">
+        <aside class="web-sidepanel glass">
           <h3>ChatBhar Web</h3>
-          <p>Desktop mode: broader layout for web browsers, similar to chat-first web apps.</p>
-          <ul>
-            <li>Left navigation rail</li>
-            <li>Wide content area</li>
-            <li>Split chat list + thread</li>
-          </ul>
+          <p>Fast CMS + channels management with lazy-loaded feed.</p>
         </aside>
       </div>
     </div>
@@ -173,6 +165,51 @@
         <div class="story-viewer-actions">
           <button id="prevStory">← Prev</button>
           <button id="nextStory">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="creativeSuiteModal" class="modal" hidden>
+      <div class="modal-card glass">
+        <div class="modal-top">
+          <h3>Creative Suite</h3>
+          <button id="closeCreativeSuite" class="icon-btn">✕</button>
+        </div>
+        <div class="suite-grid">
+          <aside id="suiteAssetList" class="suite-asset-list"></aside>
+          <section>
+            <div id="suitePreview" class="suite-preview"></div>
+            <div class="suite-controls">
+              <label>Trim Start (s)<input id="trimStartInput" type="number" min="0" step="0.1" /></label>
+              <label>Trim End (s)<input id="trimEndInput" type="number" min="0" step="0.1" /></label>
+              <label>Overlay Text<input id="overlayTextInput" type="text" placeholder="Add text" /></label>
+              <label>Text Color<input id="overlayColorInput" type="color" value="#ffffff" /></label>
+            </div>
+          </section>
+        </div>
+        <div class="upload-btn-row">
+          <button id="saveCreativeSuite" type="button">Save edits</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="postViewer" class="modal" hidden>
+      <div class="modal-card glass post-viewer-card">
+        <div class="modal-top">
+          <h3 id="postViewerTitle">Post</h3>
+          <button id="closePostViewer" class="icon-btn">✕</button>
+        </div>
+        <div id="postViewerMedia" class="post-viewer-media"></div>
+        <div id="postViewerInteraction" class="post-interaction"></div>
+      </div>
+    </div>
+
+    <div id="confirmModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <p id="confirmMessage">Are you sure?</p>
+        <div class="upload-btn-row">
+          <button id="confirmCancel" type="button">Cancel</button>
+          <button id="confirmOk" type="button">Delete</button>
         </div>
       </div>
     </div>

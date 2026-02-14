@@ -1,40 +1,37 @@
-# ChatBhar Web (Responsive Social + Chat App)
+# ChatBhar Web — High-Performance Social CMS + Channels
 
-A modern, glassmorphism-inspired responsive web app prototype for ChatBhar.
+A responsive social media prototype with a CMS-style upload pipeline, creative suite editing, channel management dashboard, and interactive public feed.
 
-## What is implemented
+## Implemented capabilities
 
-- Login-first flow (signup/login shown first; app opens after auth)
-- Device-adaptive UI:
-  - Mobile-first app form factor
-  - Desktop/web layout with left nav + wider main panel
-- Instagram-style upload modes in **Post**:
+- Login-first auth flow (signup/login before app access)
+- Multi-story and multi-content uploader with drag-and-drop
+- Simulated **chunked + concurrent upload pipeline** for fast feedback
+- Creative Suite (pre-publish and re-open from channel cards):
+  - video trim start/end metadata
+  - text overlay, color styling, draggable placement
+- Content formats:
   - Shorts (single video)
-  - Multi-carousel image posts (multiple images)
-  - Long-form video / LTV (single video + required description)
-  - 24-hour Story (single image/video with 24h expiry)
-- Story upload UX:
-  - title and description are optional for Stories
-  - smooth upload progress bar simulation
-- Upload UI improvements:
-  - drag-and-drop upload box (browse or drop files)
-  - selected file previews before publish
-  - YouTube publish-inspired button styling
-- Home reflection of uploaded content:
-  - Story row uses uploaded stories from registered users only
-  - Feed shows uploaded Shorts/Carousel/LTV
-  - Story viewer supports next/prev + image/video
-- Channel (profile) management in **Channels** tab:
-  - manage only logged-in user uploads
-  - edit title and description
-  - upload thumbnail after upload
-  - set video trim start/end values
-  - add music file from device (stored for future processing)
-  - delete uploaded content
-- Chat features:
-  - create/switch/delete chats
-  - send text + multi-format attachments
-  - 3-dot menu for backup/import/save/delete
+  - Carousel (multi-image)
+  - LTV (single video + description)
+  - Stories (image/video, 24h expiry, supports multiple story assets)
+- Strict media preview ratios:
+  - 16:9 (`1920x1080` style)
+  - 9:16 (`1080x1920` style)
+  - with `object-fit: cover`
+- Home feed with lazy-loaded media and public interactions:
+  - like / comment / share
+  - full-screen post viewer with live comment thread updates
+- Channels dashboard (card-based):
+  - edit metadata
+  - re-open creative suite
+  - delete with confirmation modal
+- Chat module preserved (create/switch/delete chats, attachments, backup menu)
+
+## Performance notes
+
+- Feed media uses `loading="lazy"` to reduce initial load cost.
+- `cdnUrl()` abstraction is included in JS for future CDN URL swapping.
 
 ## Run locally
 
@@ -43,9 +40,3 @@ python3 -m http.server 4173
 ```
 
 Open: `http://localhost:4173`
-
-## Files
-
-- `index.html` – app structure, upload modes, story viewer, channel manager
-- `styles.css` – responsive styles and upload/home/story/channel visuals
-- `app.js` – auth, uploads, feed/story rendering, channel editing tools, chat and backup logic

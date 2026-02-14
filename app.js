@@ -23,13 +23,14 @@ const uploadCaption = document.getElementById('uploadCaption');
 const uploadDescription = document.getElementById('uploadDescription');
 const uploadFiles = document.getElementById('uploadFiles');
 const uploadHint = document.getElementById('uploadHint');
-const uploadStatus = document.getElementById('uploadStatus');
-const uploadList = document.getElementById('uploadList');
-const uploadProgressWrap = document.getElementById('uploadProgressWrap');
-const uploadProgressBar = document.getElementById('uploadProgressBar');
 const uploadDropZone = document.getElementById('uploadDropZone');
 const uploadSelectedPreview = document.getElementById('uploadSelectedPreview');
-const clearUploadSelectionBtn = document.getElementById('clearUploadSelection');
+const uploadStatus = document.getElementById('uploadStatus');
+const uploadProgressWrap = document.getElementById('uploadProgressWrap');
+const uploadProgressBar = document.getElementById('uploadProgressBar');
+const uploadList = document.getElementById('uploadList');
+const clearUploadSelection = document.getElementById('clearUploadSelection');
+const openCreativeSuite = document.getElementById('openCreativeSuite');
 
 const channelContentList = document.getElementById('channelContentList');
 
@@ -56,24 +57,47 @@ const closeStoryViewer = document.getElementById('closeStoryViewer');
 const prevStory = document.getElementById('prevStory');
 const nextStory = document.getElementById('nextStory');
 
+const creativeSuiteModal = document.getElementById('creativeSuiteModal');
+const closeCreativeSuite = document.getElementById('closeCreativeSuite');
+const suiteAssetList = document.getElementById('suiteAssetList');
+const suitePreview = document.getElementById('suitePreview');
+const trimStartInput = document.getElementById('trimStartInput');
+const trimEndInput = document.getElementById('trimEndInput');
+const overlayTextInput = document.getElementById('overlayTextInput');
+const overlayColorInput = document.getElementById('overlayColorInput');
+const saveCreativeSuite = document.getElementById('saveCreativeSuite');
+
+const postViewer = document.getElementById('postViewer');
+const closePostViewer = document.getElementById('closePostViewer');
+const postViewerTitle = document.getElementById('postViewerTitle');
+const postViewerMedia = document.getElementById('postViewerMedia');
+const postViewerInteraction = document.getElementById('postViewerInteraction');
+
+const confirmModal = document.getElementById('confirmModal');
+const confirmMessage = document.getElementById('confirmMessage');
+const confirmCancel = document.getElementById('confirmCancel');
+const confirmOk = document.getElementById('confirmOk');
+
 const typeRules = {
   short: { accept: 'video/*', multiple: false, hint: 'Shorts: choose 1 short-form video.', captionRequired: true, descriptionRequired: false },
   carousel: { accept: 'image/*', multiple: true, hint: 'Carousel: choose multiple images.', captionRequired: true, descriptionRequired: false },
   ltv: { accept: 'video/*', multiple: false, hint: 'LTV: choose 1 long-form video.', captionRequired: true, descriptionRequired: true },
-  story: { accept: 'image/*,video/*', multiple: false, hint: 'Story: choose 1 image/video (expires in 24h). Title & description optional.', captionRequired: false, descriptionRequired: false }
+  story: { accept: 'image/*,video/*', multiple: true, hint: 'Story: one or many image/video files (24h).', captionRequired: false, descriptionRequired: false }
 };
 
 let selectedUploadType = 'short';
-let pendingFiles = [];
 let selectedUploadRawFiles = [];
-let chatStore = sanitizeChatStore(loadJson(CHAT_STORE_KEY, { General: [] }));
+let selectedUploadEdits = [];
+let activeSuiteIndex = 0;
+let pendingFiles = [];
+let chatStore = loadJson(CHAT_STORE_KEY, { General: [] });
 let activeChat = Object.keys(chatStore)[0] || 'General';
-let uploads = sanitizeUploads(loadJson(UPLOAD_STORE_KEY, []));
+let uploads = loadJson(UPLOAD_STORE_KEY, []);
 let activeSession = null;
 let activeStoryItems = [];
 let activeStoryIndex = 0;
-
-if (!chatStore[activeChat]) chatStore[activeChat] = [];
+let activePostViewerId = null;
+let confirmAction = null;
 
 bootstrapUsers();
 loadSession();
@@ -90,66 +114,15 @@ function loadJson(key, fallback) {
   if (!raw) return structuredClone(fallback);
   try { return JSON.parse(raw); } catch { return structuredClone(fallback); }
 }
-
-function saveJson(key, payload) {
-  localStorage.setItem(key, JSON.stringify(payload));
-}
-
-function bootstrapUsers() {
-  if (!localStorage.getItem(AUTH_USERS_KEY)) saveJson(AUTH_USERS_KEY, []);
-}
-
-function sanitizeChatStore(store) {
-  if (!store || typeof store !== 'object' || Array.isArray(store)) return { General: [] };
-  const cleaned = {};
-  for (const [chatName, entries] of Object.entries(store)) {
-    if (!Array.isArray(entries)) continue;
-    cleaned[chatName] = entries.map((entry) => ({
-      dir: entry?.dir === 'incoming' ? 'incoming' : 'outgoing',
-      text: typeof entry?.text === 'string' ? entry.text : '',
-      files: Array.isArray(entry?.files) ? entry.files.filter((f) => f?.name).map(normalizeStoredFile) : [],
-      ts: Number.isFinite(entry?.ts) ? entry.ts : Date.now()
-    }));
-  }
-  return Object.keys(cleaned).length ? cleaned : { General: [] };
-}
-
-function normalizeStoredFile(file) {
-  return {
-    name: file.name,
-    type: typeof file.type === 'string' ? file.type : 'application/octet-stream',
-    size: Number.isFinite(file.size) ? file.size : 0,
-    dataUrl: typeof file.dataUrl === 'string' ? file.dataUrl : ''
-  };
-}
-
-function sanitizeUploads(data) {
-  if (!Array.isArray(data)) return [];
-  return data
-    .filter((item) => item && typeof item === 'object' && typeof item.type === 'string')
-    .map((item) => ({
-      id: item.id || crypto.randomUUID(),
-      type: item.type,
-      userName: typeof item.userName === 'string' ? item.userName : 'User',
-      caption: typeof item.caption === 'string' ? item.caption : '',
-      description: typeof item.description === 'string' ? item.description : '',
-      createdAt: item.createdAt || new Date().toISOString(),
-      expiresAt: item.expiresAt || null,
-      thumbnail: item.thumbnail ? normalizeStoredFile(item.thumbnail) : null,
-      trimStart: Number.isFinite(item.trimStart) ? item.trimStart : 0,
-      trimEnd: Number.isFinite(item.trimEnd) ? item.trimEnd : 0,
-      musicTrack: item.musicTrack ? normalizeStoredFile(item.musicTrack) : null,
-      files: Array.isArray(item.files) ? item.files.filter((f) => f?.name).map(normalizeStoredFile) : []
-    }));
-}
+function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
+function bootstrapUsers() { if (!localStorage.getItem(AUTH_USERS_KEY)) saveJson(AUTH_USERS_KEY, []); }
 
 function bindEvents() {
   signupForm.addEventListener('submit', onSignup);
   loginForm.addEventListener('submit', onLogin);
   logoutBtn.addEventListener('click', onLogout);
   themeToggle.addEventListener('click', toggleTheme);
-
-  navButtons.forEach((button) => button.addEventListener('click', () => openTab(button.dataset.tab)));
+  navButtons.forEach((btn) => btn.addEventListener('click', () => openTab(btn.dataset.tab)));
 
   uploadTypeRow.addEventListener('click', (event) => {
     const btn = event.target.closest('.type-btn');
@@ -159,50 +132,86 @@ function bindEvents() {
     applyUploadType();
   });
 
-  uploadForm.addEventListener('submit', onUploadSubmit);
-  uploadFiles.addEventListener('change', (event) => setSelectedUploadFiles([...event.target.files]));
-  clearUploadSelectionBtn.addEventListener('click', clearUploadSelection);
-
   uploadDropZone.addEventListener('click', () => uploadFiles.click());
-  uploadDropZone.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
+  uploadDropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
       uploadFiles.click();
     }
   });
-
-  uploadDropZone.addEventListener('dragover', (event) => {
-    event.preventDefault();
+  uploadDropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
     uploadDropZone.classList.add('dragover');
   });
   uploadDropZone.addEventListener('dragleave', () => uploadDropZone.classList.remove('dragover'));
-  uploadDropZone.addEventListener('drop', (event) => {
-    event.preventDefault();
+  uploadDropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
     uploadDropZone.classList.remove('dragover');
-    setSelectedUploadFiles([...event.dataTransfer.files]);
+    setSelectedUploadFiles([...e.dataTransfer.files]);
+  });
+  uploadFiles.addEventListener('change', (e) => setSelectedUploadFiles([...e.target.files]));
+  clearUploadSelection.addEventListener('click', clearUploadSelectionState);
+  openCreativeSuite.addEventListener('click', () => {
+    if (!selectedUploadRawFiles.length) return;
+    openCreativeSuiteModal();
+  });
+  uploadForm.addEventListener('submit', onUploadSubmit);
+
+  closeCreativeSuite.addEventListener('click', () => (creativeSuiteModal.hidden = true));
+  saveCreativeSuite.addEventListener('click', () => {
+    syncSuiteFields();
+    creativeSuiteModal.hidden = true;
+  });
+  [trimStartInput, trimEndInput, overlayTextInput, overlayColorInput].forEach((input) => {
+    input.addEventListener('input', () => {
+      syncSuiteFields();
+      renderSuitePreview();
+    });
+  });
+
+  closePostViewer.addEventListener('click', () => (postViewer.hidden = true));
+
+  confirmCancel.addEventListener('click', () => {
+    confirmModal.hidden = true;
+    confirmAction = null;
+  });
+  confirmOk.addEventListener('click', () => {
+    if (confirmAction) confirmAction();
+    confirmModal.hidden = true;
+    confirmAction = null;
   });
 
   newChatBtn.addEventListener('click', createNewChat);
   deleteChatBtn.addEventListener('click', deleteCurrentChat);
-
-  chatMenuBtn.addEventListener('click', () => { chatMenu.hidden = !chatMenu.hidden; });
-  document.addEventListener('click', (event) => {
-    if (!chatMenu.contains(event.target) && event.target !== chatMenuBtn) chatMenu.hidden = true;
+  chatMenuBtn.addEventListener('click', () => (chatMenu.hidden = !chatMenu.hidden));
+  document.addEventListener('click', (e) => {
+    if (!chatMenu.contains(e.target) && e.target !== chatMenuBtn) chatMenu.hidden = true;
   });
 
-  fileInput.addEventListener('change', async (event) => {
-    pendingFiles = await normalizeFiles([...event.target.files]);
+  fileInput.addEventListener('change', async (e) => {
+    pendingFiles = await normalizeFiles([...e.target.files]);
     renderAttachmentPreview();
   });
+  chatForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await sendMessage();
+  });
 
-  chatForm.addEventListener('submit', async (event) => { event.preventDefault(); await sendMessage(); });
-
-  backupNowBtn.addEventListener('click', () => { exportBackupFile(); chatMenu.hidden = true; });
-  shareBackupBtn.addEventListener('click', async () => { await saveBackupToMobile(); chatMenu.hidden = true; });
-  importBackupBtn.addEventListener('click', () => { backupInput.click(); chatMenu.hidden = true; });
+  backupNowBtn.addEventListener('click', () => {
+    exportBackupFile();
+    chatMenu.hidden = true;
+  });
+  shareBackupBtn.addEventListener('click', async () => {
+    await saveBackupToMobile();
+    chatMenu.hidden = true;
+  });
+  importBackupBtn.addEventListener('click', () => {
+    backupInput.click();
+    chatMenu.hidden = true;
+  });
   backupInput.addEventListener('change', importBackupFile);
 
-  closeStoryViewer.addEventListener('click', () => { storyViewer.hidden = true; });
+  closeStoryViewer.addEventListener('click', () => (storyViewer.hidden = true));
   prevStory.addEventListener('click', () => showStoryByIndex(activeStoryIndex - 1));
   nextStory.addEventListener('click', () => showStoryByIndex(activeStoryIndex + 1));
 }
@@ -214,13 +223,6 @@ function applyUploadType() {
   uploadHint.textContent = rule.hint;
   uploadCaption.required = rule.captionRequired;
   uploadDescription.required = rule.descriptionRequired;
-  if (selectedUploadType === 'ltv') {
-    uploadDescription.placeholder = 'Description (required for LTV)';
-  } else if (selectedUploadType === 'story') {
-    uploadDescription.placeholder = 'Description optional for stories';
-  } else {
-    uploadDescription.placeholder = 'Description (optional)';
-  }
 }
 
 function onSignup(event) {
@@ -228,7 +230,6 @@ function onSignup(event) {
   const name = document.getElementById('signupName').value.trim();
   const email = document.getElementById('signupEmail').value.trim().toLowerCase();
   const password = document.getElementById('signupPassword').value;
-
   if (!name || !email || !password) return setAuthMessage('Please fill all signup fields.', false);
 
   const users = loadJson(AUTH_USERS_KEY, []);
@@ -246,7 +247,6 @@ function onLogin(event) {
   const password = document.getElementById('passwordInput').value;
   const users = loadJson(AUTH_USERS_KEY, []);
   const found = users.find((u) => u.email === email && u.password === password);
-
   if (!found) return setAuthMessage('Invalid email/password.', false);
 
   saveJson(AUTH_SESSION_KEY, { id: found.id, name: found.name, email: found.email, role: found.role });
@@ -286,105 +286,136 @@ function toggleTheme() {
 }
 
 function openTab(tabId) {
-  screens.forEach((screen) => screen.classList.toggle('active', screen.id === tabId));
-  navButtons.forEach((button) => button.classList.toggle('active', button.dataset.tab === tabId));
+  screens.forEach((s) => s.classList.toggle('active', s.id === tabId));
+  navButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === tabId));
 }
 
-function renderHome() {
-  renderStories();
-  renderFeed();
+function setSelectedUploadFiles(files) {
+  selectedUploadRawFiles = files;
+  selectedUploadEdits = files.map((f) => ({
+    name: f.name,
+    trimStart: 0,
+    trimEnd: 0,
+    overlayText: '',
+    overlayColor: '#ffffff',
+    overlayX: 10,
+    overlayY: 10
+  }));
+  renderUploadSelectedPreview();
 }
 
-function liveStories() {
-  const now = Date.now();
-  return uploads.filter((u) => u.type === 'story' && u.expiresAt && new Date(u.expiresAt).getTime() > now);
+function clearUploadSelectionState() {
+  selectedUploadRawFiles = [];
+  selectedUploadEdits = [];
+  uploadFiles.value = '';
+  uploadSelectedPreview.innerHTML = '';
 }
 
-function renderStories() {
-  const stories = liveStories();
-  storiesRow.innerHTML = '';
-
-  if (!stories.length) {
-    storiesRow.innerHTML = '<p>No stories yet from registered users.</p>';
-    return;
-  }
-
-  const byUser = new Map();
-  stories.forEach((s) => {
-    if (!byUser.has(s.userName)) byUser.set(s.userName, []);
-    byUser.get(s.userName).push(s);
-  });
-
-  for (const [userName, items] of byUser.entries()) {
-    const initials = userName.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase();
+function renderUploadSelectedPreview() {
+  uploadSelectedPreview.innerHTML = '';
+  selectedUploadRawFiles.forEach((file, i) => {
     const card = document.createElement('div');
-    card.className = 'story';
-    card.innerHTML = `<div class="avatar">${escapeHtml(initials || 'U')}</div><p>${escapeHtml(userName)}</p>`;
-    card.addEventListener('click', () => openStoryViewer(items, 0));
-    storiesRow.appendChild(card);
-  }
-}
-
-function renderFeed() {
-  feedList.innerHTML = '';
-  const items = uploads.filter((u) => u.type !== 'story').sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-  if (!items.length) {
-    feedList.innerHTML = '<article class="feed-card glass"><p>No uploads yet. Use Post tab to upload Shorts, Carousel, or LTV.</p></article>';
-    return;
-  }
-
-  items.forEach((item) => {
-    const article = document.createElement('article');
-    article.className = 'feed-card glass';
-
-    const media = renderFeedMedia(item);
-    article.innerHTML = `
-      <div class="feed-type">${item.type.toUpperCase()} · ${escapeHtml(item.userName)}</div>
-      ${media}
-      <div class="feed-meta">
-        <p><strong>${escapeHtml(item.caption || '(No title)')}</strong></p>
-        <p>${escapeHtml(item.description || '')}</p>
-      </div>
-    `;
-
-    feedList.appendChild(article);
-    attachVideoEnhancements(article, item);
+    card.className = 'selected-item';
+    card.innerHTML = `${renderMediaPreview(file, i)}<div>${fileIcon(file.type)} ${escapeHtml(file.name)}</div>`;
+    uploadSelectedPreview.appendChild(card);
   });
 }
 
-function renderFeedMedia(item) {
-  if (!item.files.length) return '<div class="media">No media</div>';
-
-  if (item.type === 'carousel') {
-    const imgs = item.files.map((f) => `<img src="${f.dataUrl}" alt="${escapeAttr(f.name)}" />`).join('');
-    return `<div class="carousel-row">${imgs}</div>`;
-  }
-
-  const first = item.files[0];
-  if (first.type.startsWith('image/')) return `<div class="media"><img src="${first.dataUrl}" alt="${escapeAttr(first.name)}" /></div>`;
-  if (first.type.startsWith('video/')) {
-    const poster = item.thumbnail?.dataUrl ? `poster="${item.thumbnail.dataUrl}"` : '';
-    return `<div class="media"><video src="${first.dataUrl}" controls ${poster}></video></div>`;
-  }
-  return `<div class="media">${fileIcon(first.type)} ${escapeHtml(first.name)}</div>`;
+function renderMediaPreview(file, i) {
+  const ratioClass = file.type.startsWith('image/') ? 'media-9x16' : 'media-16x9';
+  const src = URL.createObjectURL(file);
+  if (file.type.startsWith('image/')) return `<div class="${ratioClass}"><img src="${src}" alt="preview" loading="lazy" /></div>`;
+  if (file.type.startsWith('video/')) return `<div class="${ratioClass}"><video src="${src}" muted preload="metadata"></video></div>`;
+  return `<div class="media-16x9">${fileIcon(file.type)} file ${i + 1}</div>`;
 }
 
-function attachVideoEnhancements(container, item) {
-  const video = container.querySelector('video');
-  if (!video) return;
+function openCreativeSuiteModal() {
+  creativeSuiteModal.hidden = false;
+  activeSuiteIndex = 0;
+  renderSuiteAssetList();
+  loadSuiteFields();
+  renderSuitePreview();
+}
 
-  if (item.trimStart > 0) {
-    video.addEventListener('loadedmetadata', () => {
-      video.currentTime = Math.min(item.trimStart, video.duration || item.trimStart);
+function renderSuiteAssetList() {
+  suiteAssetList.innerHTML = '';
+  selectedUploadRawFiles.forEach((file, i) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = `suite-asset-item ${i === activeSuiteIndex ? 'active' : ''}`;
+    item.textContent = `${i + 1}. ${file.name}`;
+    item.addEventListener('click', () => {
+      syncSuiteFields();
+      activeSuiteIndex = i;
+      renderSuiteAssetList();
+      loadSuiteFields();
+      renderSuitePreview();
     });
+    suiteAssetList.appendChild(item);
+  });
+}
+
+function loadSuiteFields() {
+  const edit = selectedUploadEdits[activeSuiteIndex];
+  if (!edit) return;
+  trimStartInput.value = edit.trimStart;
+  trimEndInput.value = edit.trimEnd;
+  overlayTextInput.value = edit.overlayText;
+  overlayColorInput.value = edit.overlayColor;
+}
+
+function syncSuiteFields() {
+  const edit = selectedUploadEdits[activeSuiteIndex];
+  if (!edit) return;
+  edit.trimStart = Number(trimStartInput.value || 0);
+  edit.trimEnd = Number(trimEndInput.value || 0);
+  edit.overlayText = overlayTextInput.value;
+  edit.overlayColor = overlayColorInput.value;
+}
+
+function renderSuitePreview() {
+  const file = selectedUploadRawFiles[activeSuiteIndex];
+  const edit = selectedUploadEdits[activeSuiteIndex];
+  if (!file || !edit) {
+    suitePreview.innerHTML = '';
+    return;
   }
 
-  if (item.trimEnd > 0) {
-    video.addEventListener('timeupdate', () => {
-      if (video.currentTime >= item.trimEnd) video.pause();
-    });
+  const src = URL.createObjectURL(file);
+  const ratioClass = file.type.startsWith('image/') ? 'media-9x16' : 'media-16x9';
+  suitePreview.innerHTML = file.type.startsWith('image/')
+    ? `<div class="${ratioClass}"><img src="${src}" alt="suite" /></div>`
+    : `<div class="${ratioClass}"><video src="${src}" controls muted></video></div>`;
+
+  if (edit.overlayText) {
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay-text';
+    overlay.textContent = edit.overlayText;
+    overlay.style.color = edit.overlayColor;
+    overlay.style.left = `${edit.overlayX}%`;
+    overlay.style.top = `${edit.overlayY}%`;
+    makeOverlayDraggable(overlay, edit);
+    suitePreview.appendChild(overlay);
   }
+}
+
+function makeOverlayDraggable(el, edit) {
+  let dragging = false;
+  el.addEventListener('pointerdown', () => {
+    dragging = true;
+    el.setPointerCapture?.(1);
+  });
+  suitePreview.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const r = suitePreview.getBoundingClientRect();
+    edit.overlayX = Math.max(0, Math.min(90, ((e.clientX - r.left) / r.width) * 100));
+    edit.overlayY = Math.max(0, Math.min(90, ((e.clientY - r.top) / r.height) * 100));
+    el.style.left = `${edit.overlayX}%`;
+    el.style.top = `${edit.overlayY}%`;
+  });
+  const stop = () => (dragging = false);
+  suitePreview.addEventListener('pointerup', stop);
+  suitePreview.addEventListener('pointerleave', stop);
 }
 
 async function onUploadSubmit(event) {
@@ -398,36 +429,48 @@ async function onUploadSubmit(event) {
     uploadStatus.textContent = 'Add required files.';
     return;
   }
-
   if (!validateUploadForType(selectedUploadType, files, caption, description)) return;
 
   uploadProgressWrap.hidden = false;
   uploadProgressBar.style.width = '0%';
-  await fakeSmoothProgress();
 
-  const prepared = await normalizeFiles(files);
-  const record = {
-    id: crypto.randomUUID(),
+  const prepared = await chunkedConcurrentUpload(files, updateProgress);
+  const edits = structuredClone(selectedUploadEdits);
+
+  const baseRecord = {
     type: selectedUploadType,
     userName: activeSession.name,
     caption,
     description,
     createdAt: new Date().toISOString(),
-    expiresAt: selectedUploadType === 'story' ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null,
-    thumbnail: null,
-    trimStart: 0,
-    trimEnd: 0,
-    musicTrack: null,
-    files: prepared
+    interactions: { likes: 0, likedBy: [], comments: [] }
   };
 
-  uploads.unshift(record);
-  saveJson(UPLOAD_STORE_KEY, uploads);
+  if (selectedUploadType === 'story') {
+    prepared.forEach((file, idx) => {
+      uploads.unshift({
+        ...baseRecord,
+        id: crypto.randomUUID(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        files: [file],
+        edits: [edits[idx] || defaultEdit(file.name)]
+      });
+    });
+  } else {
+    uploads.unshift({
+      ...baseRecord,
+      id: crypto.randomUUID(),
+      expiresAt: null,
+      files: prepared,
+      edits
+    });
+  }
 
+  saveJson(UPLOAD_STORE_KEY, uploads);
   uploadForm.reset();
-  clearUploadSelection();
+  clearUploadSelectionState();
   applyUploadType();
-  uploadStatus.textContent = `Uploaded ${selectedUploadType.toUpperCase()} successfully.`;
+  uploadStatus.textContent = 'Upload complete.';
   uploadProgressWrap.hidden = true;
   uploadProgressBar.style.width = '0%';
   renderUploads();
@@ -435,103 +478,243 @@ async function onUploadSubmit(event) {
   renderChannelManager();
 }
 
-
-function setSelectedUploadFiles(files) {
-  selectedUploadRawFiles = files;
-  renderUploadSelectedPreview(files);
+function updateProgress(fraction) {
+  uploadProgressBar.style.width = `${Math.round(fraction * 100)}%`;
 }
 
-function clearUploadSelection() {
-  selectedUploadRawFiles = [];
-  uploadFiles.value = '';
-  uploadSelectedPreview.innerHTML = '';
-}
+async function chunkedConcurrentUpload(files, onProgress) {
+  const chunkSize = 1024 * 512;
+  const queues = [];
+  let done = 0;
+  const total = files.reduce((sum, f) => sum + Math.max(1, Math.ceil(f.size / chunkSize)), 0);
 
-function renderUploadSelectedPreview(files) {
-  uploadSelectedPreview.innerHTML = '';
-  if (!files.length) return;
-
-  files.forEach((file) => {
-    const card = document.createElement('div');
-    card.className = 'selected-item';
-
-    if (file.type.startsWith('image/')) {
-      const img = document.createElement('img');
-      img.src = URL.createObjectURL(file);
-      img.alt = file.name;
-      card.appendChild(img);
-    } else if (file.type.startsWith('video/')) {
-      const video = document.createElement('video');
-      video.src = URL.createObjectURL(file);
-      video.muted = true;
-      card.appendChild(video);
+  for (const file of files) {
+    const chunks = Math.max(1, Math.ceil(file.size / chunkSize));
+    for (let i = 0; i < chunks; i += 1) {
+      queues.push(async () => {
+        await new Promise((r) => setTimeout(r, 18));
+        done += 1;
+        onProgress(done / total);
+      });
     }
+  }
 
-    const meta = document.createElement('div');
-    meta.textContent = `${fileIcon(file.type)} ${file.name}`;
-    card.appendChild(meta);
-    uploadSelectedPreview.appendChild(card);
+  const workers = Array.from({ length: Math.min(4, queues.length) }, async () => {
+    while (queues.length) {
+      const task = queues.shift();
+      if (task) await task();
+    }
   });
+  await Promise.all(workers);
+
+  return normalizeFiles(files);
+}
+
+function defaultEdit(name) {
+  return { name, trimStart: 0, trimEnd: 0, overlayText: '', overlayColor: '#ffffff', overlayX: 10, overlayY: 10 };
 }
 
 function validateUploadForType(type, files, caption, description) {
-  const invalid = (msg) => {
+  const bad = (msg) => {
     uploadStatus.textContent = msg;
     return false;
   };
 
-  if (type !== 'story' && !caption) return invalid('Title/caption is required for this content type.');
-  if (type === 'short' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return invalid('Shorts require exactly 1 video.');
-  if (type === 'carousel' && (!files.length || files.some((f) => !f.type.startsWith('image/')))) return invalid('Carousel requires image files only.');
-  if (type === 'ltv' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return invalid('LTV requires exactly 1 video.');
-  if (type === 'ltv' && !description) return invalid('LTV requires description.');
-  if (type === 'story' && files.length !== 1) return invalid('Story requires exactly 1 image/video.');
-  if (type === 'story' && !files[0].type.startsWith('image/') && !files[0].type.startsWith('video/')) return invalid('Story must be image or video.');
+  if (type !== 'story' && !caption) return bad('Title/caption is required for this content type.');
+  if (type === 'short' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return bad('Shorts require exactly 1 video.');
+  if (type === 'carousel' && files.some((f) => !f.type.startsWith('image/'))) return bad('Carousel requires image files only.');
+  if (type === 'ltv' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return bad('LTV requires exactly 1 video.');
+  if (type === 'ltv' && !description) return bad('LTV requires description.');
+  if (type === 'story' && files.some((f) => !f.type.startsWith('image/') && !f.type.startsWith('video/'))) return bad('Story accepts only image/video.');
   return true;
-}
-
-function fakeSmoothProgress() {
-  return new Promise((resolve) => {
-    let val = 0;
-    const int = setInterval(() => {
-      val += 12;
-      uploadProgressBar.style.width = `${Math.min(val, 96)}%`;
-      if (val >= 96) {
-        clearInterval(int);
-        setTimeout(() => {
-          uploadProgressBar.style.width = '100%';
-          setTimeout(resolve, 120);
-        }, 120);
-      }
-    }, 70);
-  });
 }
 
 function renderUploads() {
   uploadList.innerHTML = '';
   const mine = activeSession ? uploads.filter((u) => u.userName === activeSession.name) : [];
-
   if (!mine.length) {
     uploadList.innerHTML = '<div class="upload-item glass"><p>No uploads yet for your account.</p></div>';
     return;
   }
-
-  mine.forEach((item) => {
+  mine.slice(0, 8).forEach((item) => {
     const card = document.createElement('div');
     card.className = 'upload-item glass';
-    const files = item.files
-      .map((f) => `<li>${fileIcon(f.type)} <a href="${f.dataUrl || '#'}" download="${escapeAttr(f.name)}">${escapeHtml(f.name)}</a></li>`)
-      .join('');
-
-    card.innerHTML = `<p><strong>${item.type.toUpperCase()}:</strong> ${escapeHtml(item.caption || '(No title)')}</p><ul>${files}</ul>`;
+    card.innerHTML = `<p><strong>${item.type.toUpperCase()}:</strong> ${escapeHtml(item.caption || '(No title)')}</p>`;
     uploadList.appendChild(card);
   });
+}
+
+function renderHome() {
+  renderStories();
+  renderFeed();
+}
+
+function liveStories() {
+  const now = Date.now();
+  return uploads.filter((u) => u.type === 'story' && u.expiresAt && new Date(u.expiresAt).getTime() > now);
+}
+
+function renderStories() {
+  storiesRow.innerHTML = '';
+  const stories = liveStories();
+  if (!stories.length) {
+    storiesRow.innerHTML = '<p>No stories yet from registered users.</p>';
+    return;
+  }
+
+  const byUser = new Map();
+  stories.forEach((s) => {
+    if (!byUser.has(s.userName)) byUser.set(s.userName, []);
+    byUser.get(s.userName).push(s);
+  });
+
+  for (const [name, items] of byUser.entries()) {
+    const initials = name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+    const el = document.createElement('div');
+    el.className = 'story';
+    el.innerHTML = `<div class="avatar">${escapeHtml(initials || 'U')}</div><p>${escapeHtml(name)}</p>`;
+    el.addEventListener('click', () => openStoryViewer(items, 0));
+    storiesRow.appendChild(el);
+  }
+}
+
+function renderFeed() {
+  feedList.innerHTML = '';
+  const items = uploads.filter((u) => u.type !== 'story').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  if (!items.length) {
+    feedList.innerHTML = '<article class="feed-card glass"><p>No uploads yet. Use Post tab to publish.</p></article>';
+    return;
+  }
+
+  items.forEach((item) => {
+    const card = document.createElement('article');
+    card.className = 'feed-card glass';
+    card.innerHTML = `
+      <div class="feed-type">${item.type.toUpperCase()} · ${escapeHtml(item.userName)}</div>
+      ${renderFeedMedia(item)}
+      <div class="feed-meta">
+        <p><strong>${escapeHtml(item.caption || '(No title)')}</strong></p>
+        <p>${escapeHtml(item.description || '')}</p>
+      </div>
+      ${renderInteractionBlock(item)}
+    `;
+    bindInteractionEvents(card, item.id);
+    bindCardOpenViewer(card, item.id);
+    feedList.appendChild(card);
+  });
+}
+
+function renderFeedMedia(item) {
+  const files = item.files || [];
+  if (!files.length) return '<div class="media-16x9">No media</div>';
+
+  if (item.type === 'carousel') {
+    return `<div class="carousel-row">${files.map((f) => `<div class="media-9x16"><img src="${cdnUrl(f.dataUrl)}" loading="lazy" alt="${escapeAttr(f.name)}" /></div>`).join('')}</div>`;
+  }
+
+  const first = files[0];
+  const edit = item.edits?.[0] || defaultEdit(first.name);
+  const ratioClass = first.type.startsWith('image/') ? 'media-9x16' : 'media-16x9';
+  const media = first.type.startsWith('video/')
+    ? `<video src="${cdnUrl(first.dataUrl)}" loading="lazy" controls></video>`
+    : `<img src="${cdnUrl(first.dataUrl)}" loading="lazy" alt="${escapeAttr(first.name)}" />`;
+  const overlay = edit.overlayText ? `<div class="overlay-text" style="left:${edit.overlayX}%;top:${edit.overlayY}%;color:${edit.overlayColor}">${escapeHtml(edit.overlayText)}</div>` : '';
+  return `<div class="${ratioClass}">${media}${overlay}</div>`;
+}
+
+function renderInteractionBlock(item) {
+  const likes = item.interactions?.likes || 0;
+  const comments = item.interactions?.comments || [];
+  return `
+    <div class="post-interaction" data-post-id="${item.id}">
+      <div class="interaction-row">
+        <button data-action="like">👍 ${likes}</button>
+        <button data-action="share">↗ Share</button>
+      </div>
+      <div class="comment-list">${comments.map((c) => `<div class="comment-item"><strong>${escapeHtml(c.user)}</strong>: ${escapeHtml(c.text)}</div>`).join('')}</div>
+      <div class="interaction-row">
+        <input data-action="comment-input" type="text" placeholder="Add comment" />
+        <button data-action="comment-send">Comment</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindInteractionEvents(root, postId) {
+  const block = root.querySelector('.post-interaction');
+  if (!block) return;
+  block.querySelector('[data-action="like"]').addEventListener('click', () => likePost(postId));
+  block.querySelector('[data-action="share"]').addEventListener('click', () => sharePost(postId));
+  block.querySelector('[data-action="comment-send"]').addEventListener('click', () => addComment(postId, block.querySelector('[data-action="comment-input"]').value));
+}
+
+function bindCardOpenViewer(card, postId) {
+  card.querySelectorAll('.media-16x9,.media-9x16,.carousel-row').forEach((el) => {
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', () => openPostViewer(postId));
+  });
+}
+
+function likePost(postId) {
+  const userId = activeSession?.id;
+  if (!userId) return;
+  uploads = uploads.map((u) => {
+    if (u.id !== postId) return u;
+    const interactions = u.interactions || { likes: 0, likedBy: [], comments: [] };
+    const liked = interactions.likedBy.includes(userId);
+    const likedBy = liked ? interactions.likedBy.filter((id) => id !== userId) : [...interactions.likedBy, userId];
+    return { ...u, interactions: { ...interactions, likedBy, likes: likedBy.length } };
+  });
+  persistAndRerender(postId);
+}
+
+function addComment(postId, text) {
+  const content = String(text || '').trim();
+  if (!content || !activeSession) return;
+  uploads = uploads.map((u) => {
+    if (u.id !== postId) return u;
+    const interactions = u.interactions || { likes: 0, likedBy: [], comments: [] };
+    return {
+      ...u,
+      interactions: { ...interactions, comments: [...interactions.comments, { user: activeSession.name, text: content, ts: Date.now() }] }
+    };
+  });
+  persistAndRerender(postId);
+}
+
+async function sharePost(postId) {
+  const post = uploads.find((u) => u.id === postId);
+  if (!post) return;
+  const text = `${post.userName} · ${post.caption || '(No title)'}`;
+  if (navigator.share) {
+    try { await navigator.share({ title: 'ChatBhar Post', text }); } catch {}
+  } else {
+    alert('Share copied simulation: ' + text);
+  }
+}
+
+function openPostViewer(postId) {
+  activePostViewerId = postId;
+  const post = uploads.find((u) => u.id === postId);
+  if (!post) return;
+  postViewerTitle.textContent = `${post.type.toUpperCase()} · ${post.userName}`;
+  postViewerMedia.innerHTML = renderFeedMedia(post);
+  postViewerInteraction.innerHTML = renderInteractionBlock(post);
+  bindInteractionEvents(postViewer, postId);
+  postViewer.hidden = false;
+}
+
+function persistAndRerender(postId) {
+  saveJson(UPLOAD_STORE_KEY, uploads);
+  renderHome();
+  renderChannelManager();
+  renderUploads();
+  if (!postViewer.hidden && activePostViewerId === postId) openPostViewer(postId);
 }
 
 function renderChannelManager() {
   channelContentList.innerHTML = '';
   if (!activeSession) return;
-
   const mine = uploads.filter((u) => u.userName === activeSession.name);
   if (!mine.length) {
     channelContentList.innerHTML = '<div class="channel-card glass"><p>No channel content yet.</p></div>';
@@ -541,73 +724,60 @@ function renderChannelManager() {
   mine.forEach((item) => {
     const card = document.createElement('div');
     card.className = 'channel-card glass';
-
-    const isVideo = item.files[0]?.type?.startsWith('video/');
-
     card.innerHTML = `
       <h4>${item.type.toUpperCase()} · ${escapeHtml(item.caption || '(No title)')}</h4>
-      <div class="video-meta">${escapeHtml(item.description || '')}</div>
       <div class="channel-actions">
-        <input data-action="title" value="${escapeAttr(item.caption || '')}" placeholder="Edit title" />
-        <textarea data-action="description" placeholder="Edit description">${escapeHtml(item.description || '')}</textarea>
-        <button data-action="save-meta">Save title/description</button>
-        ${isVideo ? '<input type="file" data-action="thumbnail" accept="image/*" />' : ''}
-        ${isVideo ? '<input type="number" step="0.1" min="0" data-action="trim-start" placeholder="Trim start (sec)" />' : ''}
-        ${isVideo ? '<input type="number" step="0.1" min="0" data-action="trim-end" placeholder="Trim end (sec)" />' : ''}
-        ${isVideo ? '<input type="file" data-action="music" accept="audio/*" />' : ''}
-        ${isVideo ? '<button data-action="save-video-tools">Save trim/music/thumbnail</button>' : ''}
-        <button data-action="delete" class="danger">Delete content</button>
+        <input data-field="caption" value="${escapeAttr(item.caption || '')}" placeholder="Title" />
+        <textarea data-field="description" placeholder="Description">${escapeHtml(item.description || '')}</textarea>
+        <button data-action="save">Save metadata</button>
+        <button data-action="suite">Edit in Creative Suite</button>
+        <button data-action="delete">Delete post</button>
       </div>
     `;
 
-    bindChannelCardActions(card, item.id, isVideo);
+    card.querySelector('[data-action="save"]').addEventListener('click', () => {
+      const caption = card.querySelector('[data-field="caption"]').value.trim();
+      const description = card.querySelector('[data-field="description"]').value.trim();
+      updateUpload(item.id, { caption, description });
+    });
+
+    card.querySelector('[data-action="suite"]').addEventListener('click', async () => {
+      selectedUploadRawFiles = await dataFilesToBlobs(item.files);
+      selectedUploadEdits = item.edits?.length ? structuredClone(item.edits) : selectedUploadRawFiles.map((f) => defaultEdit(f.name));
+      openCreativeSuiteModal();
+      const saveHandler = () => {
+        syncSuiteFields();
+        updateUpload(item.id, { edits: structuredClone(selectedUploadEdits) });
+        saveCreativeSuite.removeEventListener('click', saveHandler);
+      };
+      saveCreativeSuite.addEventListener('click', saveHandler);
+    });
+
+    card.querySelector('[data-action="delete"]').addEventListener('click', () => openConfirm('Delete this post permanently?', () => {
+      uploads = uploads.filter((u) => u.id !== item.id);
+      persistAllViews();
+    }));
+
     channelContentList.appendChild(card);
   });
 }
 
-function bindChannelCardActions(card, id, isVideo) {
-  card.querySelector('[data-action="save-meta"]').addEventListener('click', () => {
-    const title = card.querySelector('[data-action="title"]').value.trim();
-    const desc = card.querySelector('[data-action="description"]').value.trim();
-    updateUpload(id, { caption: title, description: desc });
-  });
-
-  card.querySelector('[data-action="delete"]').addEventListener('click', () => {
-    if (!confirm('Delete this content from your channel?')) return;
-    uploads = uploads.filter((u) => u.id !== id);
-    persistUploadViews();
-  });
-
-  if (!isVideo) return;
-
-  card.querySelector('[data-action="save-video-tools"]').addEventListener('click', async () => {
-    const trimStart = Number(card.querySelector('[data-action="trim-start"]').value || 0);
-    const trimEnd = Number(card.querySelector('[data-action="trim-end"]').value || 0);
-
-    const thumbInput = card.querySelector('[data-action="thumbnail"]');
-    const musicInput = card.querySelector('[data-action="music"]');
-
-    const thumbFile = thumbInput.files[0] ? (await normalizeFiles([thumbInput.files[0]]))[0] : null;
-    const musicFile = musicInput.files[0] ? (await normalizeFiles([musicInput.files[0]]))[0] : null;
-
-    const patch = { trimStart: Math.max(trimStart, 0), trimEnd: Math.max(trimEnd, 0) };
-    if (thumbFile) patch.thumbnail = thumbFile;
-    if (musicFile) patch.musicTrack = musicFile;
-
-    updateUpload(id, patch);
-  });
+function openConfirm(message, action) {
+  confirmMessage.textContent = message;
+  confirmAction = action;
+  confirmModal.hidden = false;
 }
 
 function updateUpload(id, patch) {
   uploads = uploads.map((u) => (u.id === id ? { ...u, ...patch } : u));
-  persistUploadViews();
+  persistAllViews();
 }
 
-function persistUploadViews() {
+function persistAllViews() {
   saveJson(UPLOAD_STORE_KEY, uploads);
-  renderUploads();
   renderHome();
   renderChannelManager();
+  renderUploads();
 }
 
 function openStoryViewer(items, index) {
@@ -615,33 +785,23 @@ function openStoryViewer(items, index) {
   showStoryByIndex(index);
   storyViewer.hidden = false;
 }
-
 function showStoryByIndex(index) {
   if (!activeStoryItems.length) return;
   activeStoryIndex = (index + activeStoryItems.length) % activeStoryItems.length;
   const story = activeStoryItems[activeStoryIndex];
-  storyViewerUser.textContent = `${story.userName} · story ${activeStoryIndex + 1}/${activeStoryItems.length}`;
-
-  const media = story.files[0];
-  if (!media) {
-    storyViewerMedia.innerHTML = '<p>No media</p>';
-    return;
-  }
-
-  if (media.type.startsWith('image/')) storyViewerMedia.innerHTML = `<img src="${media.dataUrl}" alt="story" />`;
-  else if (media.type.startsWith('video/')) storyViewerMedia.innerHTML = `<video src="${media.dataUrl}" controls autoplay></video>`;
-  else storyViewerMedia.innerHTML = `<p>${fileIcon(media.type)} ${escapeHtml(media.name)}</p>`;
+  storyViewerUser.textContent = `${story.userName} · ${activeStoryIndex + 1}/${activeStoryItems.length}`;
+  storyViewerMedia.innerHTML = renderFeedMedia(story);
 }
 
 function renderChatUsers() {
   chatUsersWrap.innerHTML = '';
-  Object.keys(chatStore).forEach((chatName) => {
-    const latest = chatStore[chatName].at(-1);
+  Object.keys(chatStore).forEach((name) => {
+    const latest = chatStore[name].at(-1);
     const btn = document.createElement('button');
-    btn.className = `chat-user ${chatName === activeChat ? 'active' : ''}`;
-    btn.innerHTML = `${escapeHtml(chatName)}<small>${escapeHtml(latest?.text || latest?.files?.[0]?.name || 'No messages yet')}</small>`;
+    btn.className = `chat-user ${name === activeChat ? 'active' : ''}`;
+    btn.innerHTML = `${escapeHtml(name)}<small>${escapeHtml(latest?.text || latest?.files?.[0]?.name || 'No messages yet')}</small>`;
     btn.addEventListener('click', () => {
-      activeChat = chatName;
+      activeChat = name;
       renderChatUsers();
       renderMessages();
     });
@@ -653,17 +813,13 @@ function renderMessages() {
   if (!chatStore[activeChat]) chatStore[activeChat] = [];
   activeChatTitle.textContent = activeChat;
   messages.innerHTML = '';
-
   chatStore[activeChat].forEach((msg) => {
     const bubble = document.createElement('div');
     bubble.className = `bubble ${msg.dir}`;
-    const fileMarkup = msg.files.length
-      ? `<ul class="file-list">${msg.files.map((f) => `<li>${fileIcon(f.type)} <a href="${f.dataUrl || '#'}" download="${escapeAttr(f.name)}" target="_blank" rel="noopener noreferrer">${escapeHtml(f.name)}</a></li>`).join('')}</ul>`
-      : '';
-    bubble.innerHTML = `${escapeHtml(msg.text || '')}${fileMarkup}`;
+    const files = msg.files?.length ? `<ul>${msg.files.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>` : '';
+    bubble.innerHTML = `${escapeHtml(msg.text || '')}${files}`;
     messages.appendChild(bubble);
   });
-
   messages.scrollTop = messages.scrollHeight;
 }
 
@@ -673,17 +829,15 @@ function renderAttachmentPreview() {
     attachmentPreview.innerHTML = '';
     return;
   }
-  const rows = pendingFiles.map((file) => `<li>${fileIcon(file.type)} ${escapeHtml(file.name)} <small>(${Math.ceil(file.size / 1024)} KB)</small></li>`).join('');
-  attachmentPreview.innerHTML = `<strong>Attachments (${pendingFiles.length})</strong><ul>${rows}</ul>`;
   attachmentPreview.hidden = false;
+  attachmentPreview.innerHTML = `<strong>Attachments</strong><ul>${pendingFiles.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>`;
 }
 
 async function sendMessage() {
   const text = messageInput.value.trim();
   if (!text && !pendingFiles.length) return;
   if (!chatStore[activeChat]) chatStore[activeChat] = [];
-
-  chatStore[activeChat].push({ dir: 'outgoing', text, files: [...pendingFiles], ts: Date.now() });
+  chatStore[activeChat].push({ dir: 'outgoing', text, files: pendingFiles, ts: Date.now() });
   saveJson(CHAT_STORE_KEY, chatStore);
   messageInput.value = '';
   fileInput.value = '';
@@ -694,45 +848,44 @@ async function sendMessage() {
 }
 
 function createNewChat() {
-  const name = prompt('Enter chat name (person/group/channel):');
+  const name = prompt('Enter chat name:');
   if (!name) return;
-  const trimmed = name.trim();
-  if (!trimmed) return;
-  if (!chatStore[trimmed]) chatStore[trimmed] = [];
-  activeChat = trimmed;
+  const n = name.trim();
+  if (!n) return;
+  if (!chatStore[n]) chatStore[n] = [];
+  activeChat = n;
   saveJson(CHAT_STORE_KEY, chatStore);
   renderChatUsers();
   renderMessages();
 }
 
 function deleteCurrentChat() {
-  if (!confirm(`Delete chat '${activeChat}'?`)) return;
-  delete chatStore[activeChat];
-  if (!Object.keys(chatStore).length) chatStore = { General: [] };
-  activeChat = Object.keys(chatStore)[0];
-  saveJson(CHAT_STORE_KEY, chatStore);
-  renderChatUsers();
-  renderMessages();
-  chatMenu.hidden = true;
+  openConfirm(`Delete chat '${activeChat}'?`, () => {
+    delete chatStore[activeChat];
+    if (!Object.keys(chatStore).length) chatStore = { General: [] };
+    activeChat = Object.keys(chatStore)[0];
+    saveJson(CHAT_STORE_KEY, chatStore);
+    renderChatUsers();
+    renderMessages();
+  });
 }
 
 function exportBackupFile() {
-  const payload = { exportedAt: new Date().toISOString(), source: 'chatbhar-local-web', chatStore, uploads };
+  const payload = { exportedAt: new Date().toISOString(), chatStore, uploads };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `chatbhar-backup-${Date.now()}.json`;
-  link.click();
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `chatbhar-backup-${Date.now()}.json`;
+  a.click();
   URL.revokeObjectURL(url);
 }
 
 async function saveBackupToMobile() {
-  const payload = { exportedAt: new Date().toISOString(), source: 'chatbhar-local-web', chatStore, uploads };
+  const payload = { exportedAt: new Date().toISOString(), chatStore, uploads };
   const file = new File([JSON.stringify(payload, null, 2)], 'chatbhar-mobile-backup.json', { type: 'application/json' });
-
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    await navigator.share({ title: 'ChatBhar backup', text: 'Save this backup to your mobile files.', files: [file] });
+    await navigator.share({ title: 'ChatBhar backup', files: [file] });
     return;
   }
   exportBackupFile();
@@ -745,16 +898,15 @@ function importBackupFile(event) {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(String(reader.result));
-      chatStore = sanitizeChatStore(parsed.chatStore);
-      uploads = sanitizeUploads(parsed.uploads);
+      chatStore = parsed.chatStore || { General: [] };
+      uploads = parsed.uploads || [];
       activeChat = Object.keys(chatStore)[0] || 'General';
-      if (!chatStore[activeChat]) chatStore[activeChat] = [];
       saveJson(CHAT_STORE_KEY, chatStore);
       saveJson(UPLOAD_STORE_KEY, uploads);
       renderChatUsers();
       renderMessages();
-      renderUploads();
       renderHome();
+      renderUploads();
       renderChannelManager();
     } catch {
       authMessage.textContent = 'Backup import failed.';
@@ -763,25 +915,33 @@ function importBackupFile(event) {
   reader.readAsText(selected);
 }
 
+function cdnUrl(url) {
+  return url; // CDN-ready abstraction for future remote delivery
+}
+
 function normalizeFiles(files) {
-  return Promise.all(
-    files.map((file) =>
-      new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve({ name: file.name, type: file.type || 'application/octet-stream', size: file.size, dataUrl: String(reader.result || '') });
-        reader.onerror = () => resolve({ name: file.name, type: file.type || 'application/octet-stream', size: file.size, dataUrl: '' });
-        reader.readAsDataURL(file);
-      })
-    )
-  );
+  return Promise.all(files.map((file) => new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, type: file.type || 'application/octet-stream', size: file.size, dataUrl: String(reader.result || '') });
+    reader.onerror = () => resolve({ name: file.name, type: file.type || 'application/octet-stream', size: file.size, dataUrl: '' });
+    reader.readAsDataURL(file);
+  })));
+}
+
+async function dataFilesToBlobs(files) {
+  const blobs = [];
+  for (const f of files || []) {
+    const res = await fetch(f.dataUrl);
+    const blob = await res.blob();
+    blobs.push(new File([blob], f.name, { type: f.type }));
+  }
+  return blobs;
 }
 
 function fileIcon(type) {
-  if (type.startsWith('image/')) return '🖼️';
-  if (type.startsWith('video/')) return '🎞️';
-  if (type.startsWith('audio/')) return '🎵';
-  if (type.includes('pdf')) return '📕';
-  if (type.includes('zip') || type.includes('rar') || type.includes('7z')) return '🗜️';
+  if ((type || '').startsWith('image/')) return '🖼️';
+  if ((type || '').startsWith('video/')) return '🎞️';
+  if ((type || '').startsWith('audio/')) return '🎵';
   return '📄';
 }
 
@@ -793,7 +953,4 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 }
-
-function escapeAttr(value) {
-  return String(value).replaceAll('"', '&quot;');
-}
+function escapeAttr(value) { return String(value).replaceAll('"', '&quot;'); }
