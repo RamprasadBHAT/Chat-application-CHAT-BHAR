@@ -25,6 +25,10 @@ const uploadFiles = document.getElementById('uploadFiles');
 const uploadHint = document.getElementById('uploadHint');
 const uploadStatus = document.getElementById('uploadStatus');
 const uploadList = document.getElementById('uploadList');
+const uploadProgressWrap = document.getElementById('uploadProgressWrap');
+const uploadProgressBar = document.getElementById('uploadProgressBar');
+
+const channelContentList = document.getElementById('channelContentList');
 
 const activeChatTitle = document.getElementById('activeChatTitle');
 const messages = document.getElementById('messages');
@@ -50,10 +54,10 @@ const prevStory = document.getElementById('prevStory');
 const nextStory = document.getElementById('nextStory');
 
 const typeRules = {
-  short: { accept: 'video/*', multiple: false, hint: 'Shorts: choose 1 short-form video.' },
-  carousel: { accept: 'image/*', multiple: true, hint: 'Carousel: choose multiple images.' },
-  ltv: { accept: 'video/*', multiple: false, hint: 'LTV: choose 1 long-form video.' },
-  story: { accept: 'image/*,video/*', multiple: false, hint: 'Story: choose 1 image/video (expires in 24h).' }
+  short: { accept: 'video/*', multiple: false, hint: 'Shorts: choose 1 short-form video.', captionRequired: true, descriptionRequired: false },
+  carousel: { accept: 'image/*', multiple: true, hint: 'Carousel: choose multiple images.', captionRequired: true, descriptionRequired: false },
+  ltv: { accept: 'video/*', multiple: false, hint: 'LTV: choose 1 long-form video.', captionRequired: true, descriptionRequired: true },
+  story: { accept: 'image/*,video/*', multiple: false, hint: 'Story: choose 1 image/video (expires in 24h). Title & description optional.', captionRequired: false, descriptionRequired: false }
 };
 
 let selectedUploadType = 'short';
@@ -75,6 +79,7 @@ renderChatUsers();
 renderMessages();
 renderUploads();
 renderHome();
+renderChannelManager();
 
 function loadJson(key, fallback) {
   const raw = localStorage.getItem(key);
@@ -126,6 +131,10 @@ function sanitizeUploads(data) {
       description: typeof item.description === 'string' ? item.description : '',
       createdAt: item.createdAt || new Date().toISOString(),
       expiresAt: item.expiresAt || null,
+      thumbnail: item.thumbnail ? normalizeStoredFile(item.thumbnail) : null,
+      trimStart: Number.isFinite(item.trimStart) ? item.trimStart : 0,
+      trimEnd: Number.isFinite(item.trimEnd) ? item.trimEnd : 0,
+      musicTrack: item.musicTrack ? normalizeStoredFile(item.musicTrack) : null,
       files: Array.isArray(item.files) ? item.files.filter((f) => f?.name).map(normalizeStoredFile) : []
     }));
 }
@@ -178,12 +187,14 @@ function applyUploadType() {
   uploadFiles.accept = rule.accept;
   uploadFiles.multiple = rule.multiple;
   uploadHint.textContent = rule.hint;
+  uploadCaption.required = rule.captionRequired;
+  uploadDescription.required = rule.descriptionRequired;
   if (selectedUploadType === 'ltv') {
-    uploadDescription.required = true;
     uploadDescription.placeholder = 'Description (required for LTV)';
+  } else if (selectedUploadType === 'story') {
+    uploadDescription.placeholder = 'Description optional for stories';
   } else {
-    uploadDescription.required = false;
-    uploadDescription.placeholder = 'Description (optional for LTV)';
+    uploadDescription.placeholder = 'Description (optional)';
   }
 }
 
@@ -235,6 +246,7 @@ function loadSession() {
   appShell.hidden = false;
   renderHome();
   renderUploads();
+  renderChannelManager();
 }
 
 function onLogout() {
@@ -290,9 +302,7 @@ function renderStories() {
 
 function renderFeed() {
   feedList.innerHTML = '';
-  const items = uploads
-    .filter((u) => u.type !== 'story')
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const items = uploads.filter((u) => u.type !== 'story').sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   if (!items.length) {
     feedList.innerHTML = '<article class="feed-card glass"><p>No uploads yet. Use Post tab to upload Shorts, Carousel, or LTV.</p></article>';
@@ -308,12 +318,13 @@ function renderFeed() {
       <div class="feed-type">${item.type.toUpperCase()} · ${escapeHtml(item.userName)}</div>
       ${media}
       <div class="feed-meta">
-        <p><strong>${escapeHtml(item.caption)}</strong></p>
+        <p><strong>${escapeHtml(item.caption || '(No title)')}</strong></p>
         <p>${escapeHtml(item.description || '')}</p>
       </div>
     `;
 
     feedList.appendChild(article);
+    attachVideoEnhancements(article, item);
   });
 }
 
@@ -327,8 +338,28 @@ function renderFeedMedia(item) {
 
   const first = item.files[0];
   if (first.type.startsWith('image/')) return `<div class="media"><img src="${first.dataUrl}" alt="${escapeAttr(first.name)}" /></div>`;
-  if (first.type.startsWith('video/')) return `<div class="media"><video src="${first.dataUrl}" controls></video></div>`;
+  if (first.type.startsWith('video/')) {
+    const poster = item.thumbnail?.dataUrl ? `poster="${item.thumbnail.dataUrl}"` : '';
+    return `<div class="media"><video src="${first.dataUrl}" controls ${poster}></video></div>`;
+  }
   return `<div class="media">${fileIcon(first.type)} ${escapeHtml(first.name)}</div>`;
+}
+
+function attachVideoEnhancements(container, item) {
+  const video = container.querySelector('video');
+  if (!video) return;
+
+  if (item.trimStart > 0) {
+    video.addEventListener('loadedmetadata', () => {
+      video.currentTime = Math.min(item.trimStart, video.duration || item.trimStart);
+    });
+  }
+
+  if (item.trimEnd > 0) {
+    video.addEventListener('timeupdate', () => {
+      if (video.currentTime >= item.trimEnd) video.pause();
+    });
+  }
 }
 
 async function onUploadSubmit(event) {
@@ -338,23 +369,30 @@ async function onUploadSubmit(event) {
   const caption = uploadCaption.value.trim();
   const description = uploadDescription.value.trim();
   const files = [...uploadFiles.files];
-  if (!caption || !files.length) {
-    uploadStatus.textContent = 'Add caption and required files.';
+  if (!files.length) {
+    uploadStatus.textContent = 'Add required files.';
     return;
   }
 
-  if (!validateUploadForType(selectedUploadType, files, description)) return;
+  if (!validateUploadForType(selectedUploadType, files, caption, description)) return;
+
+  uploadProgressWrap.hidden = false;
+  uploadProgressBar.style.width = '0%';
+  await fakeSmoothProgress();
 
   const prepared = await normalizeFiles(files);
-  const createdAt = new Date().toISOString();
   const record = {
     id: crypto.randomUUID(),
     type: selectedUploadType,
     userName: activeSession.name,
     caption,
     description,
-    createdAt,
+    createdAt: new Date().toISOString(),
     expiresAt: selectedUploadType === 'story' ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null,
+    thumbnail: null,
+    trimStart: 0,
+    trimEnd: 0,
+    musicTrack: null,
     files: prepared
   };
 
@@ -364,16 +402,20 @@ async function onUploadSubmit(event) {
   uploadForm.reset();
   applyUploadType();
   uploadStatus.textContent = `Uploaded ${selectedUploadType.toUpperCase()} successfully.`;
+  uploadProgressWrap.hidden = true;
+  uploadProgressBar.style.width = '0%';
   renderUploads();
   renderHome();
+  renderChannelManager();
 }
 
-function validateUploadForType(type, files, description) {
+function validateUploadForType(type, files, caption, description) {
   const invalid = (msg) => {
     uploadStatus.textContent = msg;
     return false;
   };
 
+  if (type !== 'story' && !caption) return invalid('Title/caption is required for this content type.');
   if (type === 'short' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return invalid('Shorts require exactly 1 video.');
   if (type === 'carousel' && (!files.length || files.some((f) => !f.type.startsWith('image/')))) return invalid('Carousel requires image files only.');
   if (type === 'ltv' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return invalid('LTV requires exactly 1 video.');
@@ -381,6 +423,23 @@ function validateUploadForType(type, files, description) {
   if (type === 'story' && files.length !== 1) return invalid('Story requires exactly 1 image/video.');
   if (type === 'story' && !files[0].type.startsWith('image/') && !files[0].type.startsWith('video/')) return invalid('Story must be image or video.');
   return true;
+}
+
+function fakeSmoothProgress() {
+  return new Promise((resolve) => {
+    let val = 0;
+    const int = setInterval(() => {
+      val += 12;
+      uploadProgressBar.style.width = `${Math.min(val, 96)}%`;
+      if (val >= 96) {
+        clearInterval(int);
+        setTimeout(() => {
+          uploadProgressBar.style.width = '100%';
+          setTimeout(resolve, 120);
+        }, 120);
+      }
+    }, 70);
+  });
 }
 
 function renderUploads() {
@@ -396,12 +455,94 @@ function renderUploads() {
     const card = document.createElement('div');
     card.className = 'upload-item glass';
     const files = item.files
-      .map((f) => `<li>${fileIcon(f.type)} <a href="${f.dataUrl || '#'}" download="${escapeAttr(f.name)}">${escapeHtml(f.name)}</a> (${Math.ceil((f.size || 0) / 1024)} KB)</li>`)
+      .map((f) => `<li>${fileIcon(f.type)} <a href="${f.dataUrl || '#'}" download="${escapeAttr(f.name)}">${escapeHtml(f.name)}</a></li>`)
       .join('');
 
-    card.innerHTML = `<p><strong>${item.type.toUpperCase()}:</strong> ${escapeHtml(item.caption)}</p><ul>${files}</ul>`;
+    card.innerHTML = `<p><strong>${item.type.toUpperCase()}:</strong> ${escapeHtml(item.caption || '(No title)')}</p><ul>${files}</ul>`;
     uploadList.appendChild(card);
   });
+}
+
+function renderChannelManager() {
+  channelContentList.innerHTML = '';
+  if (!activeSession) return;
+
+  const mine = uploads.filter((u) => u.userName === activeSession.name);
+  if (!mine.length) {
+    channelContentList.innerHTML = '<div class="channel-card glass"><p>No channel content yet.</p></div>';
+    return;
+  }
+
+  mine.forEach((item) => {
+    const card = document.createElement('div');
+    card.className = 'channel-card glass';
+
+    const isVideo = item.files[0]?.type?.startsWith('video/');
+
+    card.innerHTML = `
+      <h4>${item.type.toUpperCase()} · ${escapeHtml(item.caption || '(No title)')}</h4>
+      <div class="video-meta">${escapeHtml(item.description || '')}</div>
+      <div class="channel-actions">
+        <input data-action="title" value="${escapeAttr(item.caption || '')}" placeholder="Edit title" />
+        <textarea data-action="description" placeholder="Edit description">${escapeHtml(item.description || '')}</textarea>
+        <button data-action="save-meta">Save title/description</button>
+        ${isVideo ? '<input type="file" data-action="thumbnail" accept="image/*" />' : ''}
+        ${isVideo ? '<input type="number" step="0.1" min="0" data-action="trim-start" placeholder="Trim start (sec)" />' : ''}
+        ${isVideo ? '<input type="number" step="0.1" min="0" data-action="trim-end" placeholder="Trim end (sec)" />' : ''}
+        ${isVideo ? '<input type="file" data-action="music" accept="audio/*" />' : ''}
+        ${isVideo ? '<button data-action="save-video-tools">Save trim/music/thumbnail</button>' : ''}
+        <button data-action="delete" class="danger">Delete content</button>
+      </div>
+    `;
+
+    bindChannelCardActions(card, item.id, isVideo);
+    channelContentList.appendChild(card);
+  });
+}
+
+function bindChannelCardActions(card, id, isVideo) {
+  card.querySelector('[data-action="save-meta"]').addEventListener('click', () => {
+    const title = card.querySelector('[data-action="title"]').value.trim();
+    const desc = card.querySelector('[data-action="description"]').value.trim();
+    updateUpload(id, { caption: title, description: desc });
+  });
+
+  card.querySelector('[data-action="delete"]').addEventListener('click', () => {
+    if (!confirm('Delete this content from your channel?')) return;
+    uploads = uploads.filter((u) => u.id !== id);
+    persistUploadViews();
+  });
+
+  if (!isVideo) return;
+
+  card.querySelector('[data-action="save-video-tools"]').addEventListener('click', async () => {
+    const trimStart = Number(card.querySelector('[data-action="trim-start"]').value || 0);
+    const trimEnd = Number(card.querySelector('[data-action="trim-end"]').value || 0);
+
+    const thumbInput = card.querySelector('[data-action="thumbnail"]');
+    const musicInput = card.querySelector('[data-action="music"]');
+
+    const thumbFile = thumbInput.files[0] ? (await normalizeFiles([thumbInput.files[0]]))[0] : null;
+    const musicFile = musicInput.files[0] ? (await normalizeFiles([musicInput.files[0]]))[0] : null;
+
+    const patch = { trimStart: Math.max(trimStart, 0), trimEnd: Math.max(trimEnd, 0) };
+    if (thumbFile) patch.thumbnail = thumbFile;
+    if (musicFile) patch.musicTrack = musicFile;
+
+    updateUpload(id, patch);
+  });
+}
+
+function updateUpload(id, patch) {
+  uploads = uploads.map((u) => (u.id === id ? { ...u, ...patch } : u));
+  persistUploadViews();
+}
+
+function persistUploadViews() {
+  saveJson(UPLOAD_STORE_KEY, uploads);
+  renderUploads();
+  renderHome();
+  renderChannelManager();
 }
 
 function openStoryViewer(items, index) {
@@ -422,13 +563,9 @@ function showStoryByIndex(index) {
     return;
   }
 
-  if (media.type.startsWith('image/')) {
-    storyViewerMedia.innerHTML = `<img src="${media.dataUrl}" alt="story" />`;
-  } else if (media.type.startsWith('video/')) {
-    storyViewerMedia.innerHTML = `<video src="${media.dataUrl}" controls autoplay></video>`;
-  } else {
-    storyViewerMedia.innerHTML = `<p>${fileIcon(media.type)} ${escapeHtml(media.name)}</p>`;
-  }
+  if (media.type.startsWith('image/')) storyViewerMedia.innerHTML = `<img src="${media.dataUrl}" alt="story" />`;
+  else if (media.type.startsWith('video/')) storyViewerMedia.innerHTML = `<video src="${media.dataUrl}" controls autoplay></video>`;
+  else storyViewerMedia.innerHTML = `<p>${fileIcon(media.type)} ${escapeHtml(media.name)}</p>`;
 }
 
 function renderChatUsers() {
@@ -553,6 +690,7 @@ function importBackupFile(event) {
       renderMessages();
       renderUploads();
       renderHome();
+      renderChannelManager();
     } catch {
       authMessage.textContent = 'Backup import failed.';
     }

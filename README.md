@@ -13,12 +13,20 @@ A modern, glassmorphism-inspired responsive web app prototype for ChatBhar.
   - Multi-carousel image posts (multiple images)
   - Long-form video / LTV (single video + required description)
   - 24-hour Story (single image/video with 24h expiry)
+- Story upload UX:
+  - title and description are optional for Stories
+  - smooth upload progress bar simulation
 - Home reflection of uploaded content:
-  - Story row now uses uploaded stories from registered users
-  - Feed shows uploaded Shorts/Carousel/LTV content
-- Story viewer:
-  - open stories by clicking user avatar
-  - next/prev story navigation
+  - Story row uses uploaded stories from registered users only
+  - Feed shows uploaded Shorts/Carousel/LTV
+  - Story viewer supports next/prev + image/video
+- Channel (profile) management in **Channels** tab:
+  - manage only logged-in user uploads
+  - edit title and description
+  - upload thumbnail after upload
+  - set video trim start/end values
+  - add music file from device (stored for future processing)
+  - delete uploaded content
 - Chat features:
   - create/switch/delete chats
   - send text + multi-format attachments
@@ -34,6 +42,6 @@ Open: `http://localhost:4173`
 
 ## Files
 
-- `index.html` – app structure, upload modes, story viewer
-- `styles.css` – responsive styles and upload/home/story visuals
-- `app.js` – auth, uploads, feed/story rendering, chat and backup logic
+- `index.html` – app structure, upload modes, story viewer, channel manager
+- `styles.css` – responsive styles and upload/home/story/channel visuals
+- `app.js` – auth, uploads, feed/story rendering, channel editing tools, chat and backup logic

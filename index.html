@@ -87,20 +87,22 @@
             </div>
 
             <form id="uploadForm" class="glass upload-form">
-              <input id="uploadCaption" type="text" placeholder="Write caption / title" required />
+              <input id="uploadCaption" type="text" placeholder="Write caption / title" />
               <textarea id="uploadDescription" placeholder="Description (optional for LTV)"></textarea>
               <input id="uploadFiles" type="file" multiple required />
-              <small id="uploadHint">Shorts: 1 video · Carousel: multiple images · LTV: 1 video · Story: image/video (24h)</small>
+              <small id="uploadHint">Shorts: 1 video · Carousel: multiple images · LTV: 1 video · Story: image/video (24h, title/description optional)</small>
               <button type="submit">Upload content</button>
             </form>
 
             <div id="uploadStatus" class="status-text"></div>
+            <div class="upload-progress" id="uploadProgressWrap" hidden><div id="uploadProgressBar"></div></div>
             <div id="uploadList" class="upload-list"></div>
           </section>
 
           <section id="channels" class="screen">
-            <h2>Channels</h2>
-            <p>Subscribed creators, livestreams, and community updates.</p>
+            <h2>My Channel</h2>
+            <p>Manage your uploaded content, thumbnails, trims, music, and metadata.</p>
+            <div id="channelContentList" class="channel-content-list"></div>
           </section>
 
           <section id="chat" class="screen">

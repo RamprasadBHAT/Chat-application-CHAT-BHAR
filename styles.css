@@ -198,3 +198,56 @@ main { padding: 8px 2px 10px; overflow: auto; }
   .chat-layout { grid-template-columns: 260px 1fr; min-height: 72vh; }
   .chat-list { border-right: 1px solid var(--border); border-bottom: 0; }
 }
+
+.upload-progress {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(99, 91, 255, 0.15);
+  margin: 0 2px 8px;
+}
+
+#uploadProgressBar {
+  width: 0;
+  height: 100%;
+  background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
+  transition: width 180ms linear;
+}
+
+.channel-content-list {
+  display: grid;
+  gap: 10px;
+}
+
+.channel-card {
+  padding: 12px;
+}
+
+.channel-card h4 {
+  margin: 0 0 8px;
+}
+
+.channel-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.channel-actions input,
+.channel-actions textarea,
+.channel-actions button {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 8px;
+  background: rgba(255,255,255,0.42);
+  color: var(--text);
+}
+
+.channel-actions textarea { min-height: 70px; }
+.channel-actions .danger { color: #d14343; }
+
+.video-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 6px;
+}
