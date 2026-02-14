@@ -1,23 +1,28 @@
 # ChatBhar Web (Responsive Social + Chat App)
 
-A modern, glassmorphism-inspired **responsive** web app prototype for ChatBhar.
+A modern, glassmorphism-inspired responsive web app prototype for ChatBhar.
 
 ## What is implemented
 
-- **Login-first flow** (signup/login shown first; app opens after auth)
-- **Device-adaptive UI**:
-  - Mobile-first default (app-like form factor)
-  - Desktop/web layout with left navigation rail + wider content + side panel (WhatsApp Web style)
-- **Chat features**:
-  - create, switch, and delete chats
-  - send text and multi-format attachments
-  - attached files shown as downloadable links
-  - 3-dot menu for backup/import/save-to-phone/delete
-- **Content upload features**:
-  - upload caption + multiple files in Post tab
-  - uploaded files rendered as downloadable list
-  - uploads persisted locally
-- Light/dark mode toggle
+- Login-first flow (signup/login shown first; app opens after auth)
+- Device-adaptive UI:
+  - Mobile-first app form factor
+  - Desktop/web layout with left nav + wider main panel
+- Instagram-style upload modes in **Post**:
+  - Shorts (single video)
+  - Multi-carousel image posts (multiple images)
+  - Long-form video / LTV (single video + required description)
+  - 24-hour Story (single image/video with 24h expiry)
+- Home reflection of uploaded content:
+  - Story row now uses uploaded stories from registered users
+  - Feed shows uploaded Shorts/Carousel/LTV content
+- Story viewer:
+  - open stories by clicking user avatar
+  - next/prev story navigation
+- Chat features:
+  - create/switch/delete chats
+  - send text + multi-format attachments
+  - 3-dot menu for backup/import/save/delete
 
 ## Run locally
 
@@ -29,6 +34,6 @@ Open: `http://localhost:4173`
 
 ## Files
 
-- `index.html` – responsive structure, auth, tabs, chat and upload sections
-- `styles.css` – mobile + desktop adaptive styling
-- `app.js` – auth, chat, file handling, upload handling, backup actions
+- `index.html` – app structure, upload modes, story viewer
+- `styles.css` – responsive styles and upload/home/story visuals
+- `app.js` – auth, uploads, feed/story rendering, chat and backup logic

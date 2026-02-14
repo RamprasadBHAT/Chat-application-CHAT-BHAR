@@ -67,27 +67,8 @@
               <input placeholder="Search creators, channels, tags…" />
             </div>
 
-            <div class="stories glass">
-              <div class="story"><div class="avatar">YS</div><p>Your Story</p></div>
-              <div class="story"><div class="avatar">AN</div><p>@anaya</p></div>
-              <div class="story"><div class="avatar">RV</div><p>@ravi</p></div>
-              <div class="story"><div class="avatar">+ </div><p>Add</p></div>
-            </div>
-
-            <article class="feed-card glass">
-              <div class="media">Trending Reel Preview</div>
-              <div class="feed-meta">
-                <div>
-                  <h3>@creator</h3>
-                  <p>caption text... #trending #chatbhar</p>
-                </div>
-                <div class="actions">
-                  <button>♡ 1,234</button>
-                  <button>💬 56</button>
-                  <button>↗ Share</button>
-                </div>
-              </div>
-            </article>
+            <div class="stories glass" id="storiesRow"></div>
+            <div id="feedList" class="feed-list"></div>
           </section>
 
           <section id="explore" class="screen">
@@ -97,11 +78,22 @@
 
           <section id="post" class="screen">
             <h2>Create Upload</h2>
+
+            <div class="glass upload-type-row" id="uploadTypeRow">
+              <button class="type-btn active" data-type="short">Shorts</button>
+              <button class="type-btn" data-type="carousel">Carousel Post</button>
+              <button class="type-btn" data-type="ltv">Long Video (LTV)</button>
+              <button class="type-btn" data-type="story">24h Story</button>
+            </div>
+
             <form id="uploadForm" class="glass upload-form">
-              <input id="uploadCaption" type="text" placeholder="Write a caption" required />
+              <input id="uploadCaption" type="text" placeholder="Write caption / title" required />
+              <textarea id="uploadDescription" placeholder="Description (optional for LTV)"></textarea>
               <input id="uploadFiles" type="file" multiple required />
+              <small id="uploadHint">Shorts: 1 video · Carousel: multiple images · LTV: 1 video · Story: image/video (24h)</small>
               <button type="submit">Upload content</button>
             </form>
+
             <div id="uploadStatus" class="status-text"></div>
             <div id="uploadList" class="upload-list"></div>
           </section>
@@ -158,6 +150,20 @@
             <li>Split chat list + thread</li>
           </ul>
         </aside>
+      </div>
+    </div>
+
+    <div id="storyViewer" class="story-viewer" hidden>
+      <div class="story-viewer-card glass">
+        <div class="story-viewer-top">
+          <strong id="storyViewerUser">Story</strong>
+          <button id="closeStoryViewer" class="icon-btn">✕</button>
+        </div>
+        <div id="storyViewerMedia" class="story-viewer-media"></div>
+        <div class="story-viewer-actions">
+          <button id="prevStory">← Prev</button>
+          <button id="nextStory">Next →</button>
+        </div>
       </div>
     </div>
 
