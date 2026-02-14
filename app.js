@@ -1,6 +1,7 @@
 const AUTH_USERS_KEY = 'chatbhar.users';
 const AUTH_SESSION_KEY = 'chatbhar.session';
 const CHAT_STORE_KEY = 'chatbhar.chatStore';
+const UPLOAD_STORE_KEY = 'chatbhar.uploads';
 
 const authGate = document.getElementById('authGate');
 const appShell = document.getElementById('appShell');
@@ -13,6 +14,7 @@ const themeToggle = document.getElementById('themeToggle');
 const screens = [...document.querySelectorAll('.screen')];
 const navButtons = [...document.querySelectorAll('.nav-btn')];
 const quickButtons = [...document.querySelectorAll('.quick-card')];
+
 const activeChatTitle = document.getElementById('activeChatTitle');
 const messages = document.getElementById('messages');
 const chatForm = document.getElementById('chatForm');
@@ -29,9 +31,16 @@ const deleteChatBtn = document.getElementById('deleteChatBtn');
 const chatMenuBtn = document.getElementById('chatMenuBtn');
 const chatMenu = document.getElementById('chatMenu');
 
+const uploadForm = document.getElementById('uploadForm');
+const uploadCaption = document.getElementById('uploadCaption');
+const uploadFiles = document.getElementById('uploadFiles');
+const uploadStatus = document.getElementById('uploadStatus');
+const uploadList = document.getElementById('uploadList');
+
 let pendingFiles = [];
 let chatStore = sanitizeChatStore(loadJson(CHAT_STORE_KEY, { General: [] }));
 let activeChat = Object.keys(chatStore)[0] || 'General';
+let uploads = loadJson(UPLOAD_STORE_KEY, []);
 
 if (!chatStore[activeChat]) chatStore[activeChat] = [];
 
@@ -40,6 +49,7 @@ loadSession();
 bindEvents();
 renderChatUsers();
 renderMessages();
+renderUploads();
 
 function loadJson(key, fallback) {
   const raw = localStorage.getItem(key);
@@ -86,8 +96,7 @@ function sanitizeChatStore(store) {
       }));
   }
 
-  if (!Object.keys(cleaned).length) return { General: [] };
-  return cleaned;
+  return Object.keys(cleaned).length ? cleaned : { General: [] };
 }
 
 function bindEvents() {
@@ -123,6 +132,8 @@ function bindEvents() {
     await sendMessage();
   });
 
+  uploadForm.addEventListener('submit', onUploadSubmit);
+
   backupNowBtn.addEventListener('click', () => {
     exportBackupFile();
     chatMenu.hidden = true;
@@ -149,12 +160,14 @@ function onSignup(event) {
 
   if (!name || !email || !password) {
     authMessage.textContent = 'Please fill all signup fields.';
+    authMessage.style.color = '#d14343';
     return;
   }
 
   const users = loadJson(AUTH_USERS_KEY, []);
   if (users.some((u) => u.email === email)) {
     authMessage.textContent = 'Email already exists. Please login.';
+    authMessage.style.color = '#d14343';
     return;
   }
 
@@ -258,9 +271,7 @@ function renderAttachmentPreview() {
     return;
   }
 
-  const rows = pendingFiles
-    .map((file) => `<li>${fileIcon(file.type)} ${escapeHtml(file.name)} <small>(${Math.ceil(file.size / 1024)} KB)</small></li>`)
-    .join('');
+  const rows = pendingFiles.map((file) => `<li>${fileIcon(file.type)} ${escapeHtml(file.name)} <small>(${Math.ceil(file.size / 1024)} KB)</small></li>`).join('');
 
   attachmentPreview.innerHTML = `<strong>Attachments (${pendingFiles.length})</strong><ul>${rows}</ul>`;
   attachmentPreview.hidden = false;
@@ -302,17 +313,9 @@ function createNewChat() {
 }
 
 function deleteCurrentChat() {
-  const allChats = Object.keys(chatStore);
-  if (!allChats.length) return;
-
   if (!confirm(`Delete chat '${activeChat}'?`)) return;
-
   delete chatStore[activeChat];
-
-  if (!Object.keys(chatStore).length) {
-    chatStore = { General: [] };
-  }
-
+  if (!Object.keys(chatStore).length) chatStore = { General: [] };
   activeChat = Object.keys(chatStore)[0];
   saveJson(CHAT_STORE_KEY, chatStore);
   renderChatUsers();
@@ -320,11 +323,55 @@ function deleteCurrentChat() {
   chatMenu.hidden = true;
 }
 
+async function onUploadSubmit(event) {
+  event.preventDefault();
+  const caption = uploadCaption.value.trim();
+  const files = [...uploadFiles.files];
+  if (!caption || !files.length) {
+    uploadStatus.textContent = 'Add caption and at least one file to upload.';
+    return;
+  }
+
+  const prepared = await normalizeFiles(files);
+  const record = {
+    id: crypto.randomUUID(),
+    caption,
+    createdAt: new Date().toISOString(),
+    files: prepared
+  };
+
+  uploads.unshift(record);
+  saveJson(UPLOAD_STORE_KEY, uploads);
+  uploadForm.reset();
+  uploadStatus.textContent = `Uploaded ${prepared.length} file(s) successfully.`;
+  renderUploads();
+}
+
+function renderUploads() {
+  uploadList.innerHTML = '';
+  if (!uploads.length) {
+    uploadList.innerHTML = '<div class="upload-item glass"><p>No uploads yet.</p></div>';
+    return;
+  }
+
+  uploads.forEach((item) => {
+    const card = document.createElement('div');
+    card.className = 'upload-item glass';
+    const files = item.files
+      .map((f) => `<li>${fileIcon(f.type)} <a href="${f.dataUrl || '#'}" download="${escapeAttr(f.name)}">${escapeHtml(f.name)}</a> (${Math.ceil((f.size || 0) / 1024)} KB)</li>`)
+      .join('');
+
+    card.innerHTML = `<p><strong>${escapeHtml(item.caption)}</strong></p><ul>${files}</ul>`;
+    uploadList.appendChild(card);
+  });
+}
+
 function exportBackupFile() {
   const payload = {
     exportedAt: new Date().toISOString(),
     source: 'chatbhar-local-web',
-    chatStore
+    chatStore,
+    uploads
   };
 
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -340,19 +387,14 @@ async function saveBackupToMobile() {
   const payload = {
     exportedAt: new Date().toISOString(),
     source: 'chatbhar-local-web',
-    chatStore
+    chatStore,
+    uploads
   };
 
-  const file = new File([JSON.stringify(payload, null, 2)], 'chatbhar-mobile-backup.json', {
-    type: 'application/json'
-  });
+  const file = new File([JSON.stringify(payload, null, 2)], 'chatbhar-mobile-backup.json', { type: 'application/json' });
 
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    await navigator.share({
-      title: 'ChatBhar backup',
-      text: 'Save this backup to your mobile files.',
-      files: [file]
-    });
+    await navigator.share({ title: 'ChatBhar backup', text: 'Save this backup to your mobile files.', files: [file] });
     return;
   }
 
@@ -368,11 +410,14 @@ function importBackupFile(event) {
     try {
       const parsed = JSON.parse(String(reader.result));
       chatStore = sanitizeChatStore(parsed.chatStore);
+      uploads = Array.isArray(parsed.uploads) ? parsed.uploads : uploads;
       activeChat = Object.keys(chatStore)[0] || 'General';
       if (!chatStore[activeChat]) chatStore[activeChat] = [];
       saveJson(CHAT_STORE_KEY, chatStore);
+      saveJson(UPLOAD_STORE_KEY, uploads);
       renderChatUsers();
       renderMessages();
+      renderUploads();
     } catch {
       authMessage.textContent = 'Backup import failed.';
     }
