@@ -16,6 +16,8 @@ const navButtons = [...document.querySelectorAll('.nav-btn')];
 
 const storiesRow = document.getElementById('storiesRow');
 const feedList = document.getElementById('feedList');
+const exploreSearchInput = document.getElementById('exploreSearchInput');
+const exploreUsersList = document.getElementById('exploreUsersList');
 
 const uploadTypeRow = document.getElementById('uploadTypeRow');
 const uploadForm = document.getElementById('uploadForm');
@@ -107,6 +109,7 @@ renderChatUsers();
 renderMessages();
 renderUploads();
 renderHome();
+renderExploreUsers();
 renderChannelManager();
 
 function loadJson(key, fallback) {
@@ -123,6 +126,7 @@ function bindEvents() {
   logoutBtn.addEventListener('click', onLogout);
   themeToggle.addEventListener('click', toggleTheme);
   navButtons.forEach((btn) => btn.addEventListener('click', () => openTab(btn.dataset.tab)));
+  exploreSearchInput.addEventListener('input', () => renderExploreUsers(exploreSearchInput.value));
 
   uploadTypeRow.addEventListener('click', (event) => {
     const btn = event.target.closest('.type-btn');
@@ -239,6 +243,7 @@ function onSignup(event) {
   saveJson(AUTH_USERS_KEY, users);
   signupForm.reset();
   setAuthMessage('Signup successful. You can now login.', true);
+  renderExploreUsers();
 }
 
 function onLogin(event) {
@@ -270,6 +275,7 @@ function loadSession() {
   authGate.hidden = true;
   appShell.hidden = false;
   renderHome();
+  renderExploreUsers();
   renderUploads();
   renderChannelManager();
 }
@@ -529,6 +535,57 @@ function validateUploadForType(type, files, caption, description) {
   return true;
 }
 
+
+function renderExploreUsers(query = '') {
+  const users = loadJson(AUTH_USERS_KEY, []);
+  const normalizedQuery = String(query).trim().toLowerCase();
+  const now = Date.now();
+
+  const byUserLatestUpload = new Map();
+  uploads.forEach((item) => {
+    if (!item?.userName) return;
+    const ts = new Date(item.createdAt || 0).getTime() || 0;
+    if (!byUserLatestUpload.has(item.userName) || ts > byUserLatestUpload.get(item.userName)) {
+      byUserLatestUpload.set(item.userName, ts);
+    }
+  });
+
+  const rows = users
+    .filter((u) => {
+      if (!normalizedQuery) return true;
+      return u.name.toLowerCase().includes(normalizedQuery) || u.email.toLowerCase().includes(normalizedQuery);
+    })
+    .map((u) => {
+      const lastUploadTs = byUserLatestUpload.get(u.name) || 0;
+      const isActive = u.id === activeSession?.id || (lastUploadTs && now - lastUploadTs < 24 * 60 * 60 * 1000);
+      return { ...u, isActive, lastUploadTs };
+    })
+    .sort((a, b) => Number(b.isActive) - Number(a.isActive) || (b.lastUploadTs - a.lastUploadTs));
+
+  exploreUsersList.innerHTML = '';
+  if (!rows.length) {
+    exploreUsersList.innerHTML = '<div class="explore-user-card glass"><p>No users found.</p></div>';
+    return;
+  }
+
+  rows.forEach((u) => {
+    const initials = u.name.split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
+    const card = document.createElement('div');
+    card.className = 'explore-user-card glass';
+    card.innerHTML = `
+      <div class="explore-user-head">
+        <div class="avatar">${escapeHtml(initials || 'U')}</div>
+        <div>
+          <strong>${escapeHtml(u.name)}</strong>
+          <p>${escapeHtml(u.email)}</p>
+        </div>
+      </div>
+      <span class="status-pill ${u.isActive ? 'active' : 'inactive'}">${u.isActive ? 'Active now' : 'Offline'}</span>
+    `;
+    exploreUsersList.appendChild(card);
+  });
+}
+
 function renderUploads() {
   uploadList.innerHTML = '';
   const mine = activeSession ? uploads.filter((u) => u.userName === activeSession.name) : [];
@@ -707,6 +764,7 @@ function openPostViewer(postId) {
 function persistAndRerender(postId) {
   saveJson(UPLOAD_STORE_KEY, uploads);
   renderHome();
+  renderExploreUsers();
   renderChannelManager();
   renderUploads();
   if (!postViewer.hidden && activePostViewerId === postId) openPostViewer(postId);
@@ -776,6 +834,7 @@ function updateUpload(id, patch) {
 function persistAllViews() {
   saveJson(UPLOAD_STORE_KEY, uploads);
   renderHome();
+  renderExploreUsers();
   renderChannelManager();
   renderUploads();
 }
@@ -906,6 +965,7 @@ function importBackupFile(event) {
       renderChatUsers();
       renderMessages();
       renderHome();
+      renderExploreUsers();
       renderUploads();
       renderChannelManager();
     } catch {

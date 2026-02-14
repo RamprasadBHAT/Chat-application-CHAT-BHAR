@@ -19,6 +19,7 @@ A responsive social media prototype with a CMS-style upload pipeline, creative s
   - 16:9 (`1920x1080` style)
   - 9:16 (`1080x1920` style)
   - with `object-fit: cover`
+- Explore tab with active-user search (name/email) and active status sorting
 - Home feed with lazy-loaded media and public interactions:
   - like / comment / share
   - full-screen post viewer with live comment thread updates
