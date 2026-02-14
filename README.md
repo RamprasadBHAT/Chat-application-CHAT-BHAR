@@ -16,6 +16,10 @@ A modern, glassmorphism-inspired responsive web app prototype for ChatBhar.
 - Story upload UX:
   - title and description are optional for Stories
   - smooth upload progress bar simulation
+- Upload UI improvements:
+  - drag-and-drop upload box (browse or drop files)
+  - selected file previews before publish
+  - YouTube publish-inspired button styling
 - Home reflection of uploaded content:
   - Story row uses uploaded stories from registered users only
   - Feed shows uploaded Shorts/Carousel/LTV

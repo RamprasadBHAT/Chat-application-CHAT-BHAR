@@ -89,9 +89,17 @@
             <form id="uploadForm" class="glass upload-form">
               <input id="uploadCaption" type="text" placeholder="Write caption / title" />
               <textarea id="uploadDescription" placeholder="Description (optional for LTV)"></textarea>
-              <input id="uploadFiles" type="file" multiple required />
-              <small id="uploadHint">Shorts: 1 video · Carousel: multiple images · LTV: 1 video · Story: image/video (24h, title/description optional)</small>
-              <button type="submit">Upload content</button>
+              <input id="uploadFiles" type="file" multiple hidden />
+              <div id="uploadDropZone" class="upload-dropzone" role="button" tabindex="0" aria-label="Upload files">
+                <div class="drop-icon">☁️</div>
+                <p><strong>Click to browse</strong> or drag files here</p>
+                <small id="uploadHint">Shorts: 1 video · Carousel: multiple images · LTV: 1 video · Story: image/video (24h, title/description optional)</small>
+              </div>
+              <div id="uploadSelectedPreview" class="upload-selected-preview"></div>
+              <div class="upload-btn-row">
+                <button type="button" id="clearUploadSelection">Cancel</button>
+                <button type="submit" id="publishUploadBtn">Create post</button>
+              </div>
             </form>
 
             <div id="uploadStatus" class="status-text"></div>

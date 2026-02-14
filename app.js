@@ -27,6 +27,9 @@ const uploadStatus = document.getElementById('uploadStatus');
 const uploadList = document.getElementById('uploadList');
 const uploadProgressWrap = document.getElementById('uploadProgressWrap');
 const uploadProgressBar = document.getElementById('uploadProgressBar');
+const uploadDropZone = document.getElementById('uploadDropZone');
+const uploadSelectedPreview = document.getElementById('uploadSelectedPreview');
+const clearUploadSelectionBtn = document.getElementById('clearUploadSelection');
 
 const channelContentList = document.getElementById('channelContentList');
 
@@ -62,6 +65,7 @@ const typeRules = {
 
 let selectedUploadType = 'short';
 let pendingFiles = [];
+let selectedUploadRawFiles = [];
 let chatStore = sanitizeChatStore(loadJson(CHAT_STORE_KEY, { General: [] }));
 let activeChat = Object.keys(chatStore)[0] || 'General';
 let uploads = sanitizeUploads(loadJson(UPLOAD_STORE_KEY, []));
@@ -156,6 +160,27 @@ function bindEvents() {
   });
 
   uploadForm.addEventListener('submit', onUploadSubmit);
+  uploadFiles.addEventListener('change', (event) => setSelectedUploadFiles([...event.target.files]));
+  clearUploadSelectionBtn.addEventListener('click', clearUploadSelection);
+
+  uploadDropZone.addEventListener('click', () => uploadFiles.click());
+  uploadDropZone.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      uploadFiles.click();
+    }
+  });
+
+  uploadDropZone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    uploadDropZone.classList.add('dragover');
+  });
+  uploadDropZone.addEventListener('dragleave', () => uploadDropZone.classList.remove('dragover'));
+  uploadDropZone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    uploadDropZone.classList.remove('dragover');
+    setSelectedUploadFiles([...event.dataTransfer.files]);
+  });
 
   newChatBtn.addEventListener('click', createNewChat);
   deleteChatBtn.addEventListener('click', deleteCurrentChat);
@@ -368,7 +393,7 @@ async function onUploadSubmit(event) {
 
   const caption = uploadCaption.value.trim();
   const description = uploadDescription.value.trim();
-  const files = [...uploadFiles.files];
+  const files = [...selectedUploadRawFiles];
   if (!files.length) {
     uploadStatus.textContent = 'Add required files.';
     return;
@@ -400,6 +425,7 @@ async function onUploadSubmit(event) {
   saveJson(UPLOAD_STORE_KEY, uploads);
 
   uploadForm.reset();
+  clearUploadSelection();
   applyUploadType();
   uploadStatus.textContent = `Uploaded ${selectedUploadType.toUpperCase()} successfully.`;
   uploadProgressWrap.hidden = true;
@@ -407,6 +433,45 @@ async function onUploadSubmit(event) {
   renderUploads();
   renderHome();
   renderChannelManager();
+}
+
+
+function setSelectedUploadFiles(files) {
+  selectedUploadRawFiles = files;
+  renderUploadSelectedPreview(files);
+}
+
+function clearUploadSelection() {
+  selectedUploadRawFiles = [];
+  uploadFiles.value = '';
+  uploadSelectedPreview.innerHTML = '';
+}
+
+function renderUploadSelectedPreview(files) {
+  uploadSelectedPreview.innerHTML = '';
+  if (!files.length) return;
+
+  files.forEach((file) => {
+    const card = document.createElement('div');
+    card.className = 'selected-item';
+
+    if (file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file);
+      img.alt = file.name;
+      card.appendChild(img);
+    } else if (file.type.startsWith('video/')) {
+      const video = document.createElement('video');
+      video.src = URL.createObjectURL(file);
+      video.muted = true;
+      card.appendChild(video);
+    }
+
+    const meta = document.createElement('div');
+    meta.textContent = `${fileIcon(file.type)} ${file.name}`;
+    card.appendChild(meta);
+    uploadSelectedPreview.appendChild(card);
+  });
 }
 
 function validateUploadForType(type, files, caption, description) {
