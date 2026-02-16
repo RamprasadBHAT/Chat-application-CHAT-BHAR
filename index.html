@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatBhar — Social + Messaging</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+
+    <section id="authGate" class="auth-gate">
+      <div class="auth-card glass">
+        <div class="brand auth-brand">
+          <div class="brand-logo">💬</div>
+          <h1>ChatBhar</h1>
+        </div>
+        <p>Create account or login to continue</p>
+
+        <form id="signupForm" class="auth-form">
+          <input id="signupName" type="text" placeholder="Full name" required />
+          <input id="signupEmail" type="email" placeholder="Email" required />
+          <input id="signupPassword" type="password" placeholder="Create password" required />
+          <button type="submit">Sign up</button>
+        </form>
+
+        <form id="loginForm" class="auth-form">
+          <input id="emailInput" type="email" placeholder="Email" required />
+          <input id="passwordInput" type="password" placeholder="Password" required />
+          <button type="submit">Login</button>
+        </form>
+
+        <small id="authMessage"></small>
+      </div>
+    </section>
+
+    <div class="app-shell" id="appShell" hidden>
+      <header class="topbar glass">
+        <div class="brand">
+          <div class="brand-logo">💬</div>
+          <h1>ChatBhar</h1>
+        </div>
+        <div class="top-actions">
+          <button id="themeToggle" class="icon-btn" title="Toggle theme">🌙</button>
+          <button id="logoutBtn" class="admin-btn">Logout</button>
+        </div>
+      </header>
+
+      <div class="app-layout">
+        <nav class="bottom-nav glass">
+          <button class="nav-btn active" data-tab="home">🏠<span>Home</span></button>
+          <button class="nav-btn" data-tab="explore">🔍<span>Explore</span></button>
+          <button class="nav-btn" data-tab="post">➕<span>Post</span></button>
+          <button class="nav-btn" data-tab="channels">🎥<span>Channels</span></button>
+          <button class="nav-btn" data-tab="chat">💬<span>Chat</span></button>
+        </nav>
+
+        <main>
+          <section id="home" class="screen active">
+            <div class="search-row glass">
+              <span>🔍</span>
+              <input placeholder="Search creators, channels, tags…" />
+            </div>
+            <div class="stories glass" id="storiesRow"></div>
+            <div id="feedList" class="feed-list"></div>
+          </section>
+
+          <section id="explore" class="screen">
+            <h2>Explore</h2>
+            <p>Search users and discover who is currently active.</p>
+            <div class="search-row glass">
+              <span>🔎</span>
+              <input id="exploreSearchInput" placeholder="Search by name or email..." />
+            </div>
+            <div id="exploreUsersList" class="explore-users-list"></div>
+          </section>
+
+          <section id="post" class="screen">
+            <h2>Create Upload</h2>
+            <div class="glass upload-type-row" id="uploadTypeRow">
+              <button class="type-btn active" data-type="short">Shorts</button>
+              <button class="type-btn" data-type="carousel">Carousel Post</button>
+              <button class="type-btn" data-type="ltv">Long Video (LTV)</button>
+              <button class="type-btn" data-type="story">24h Story</button>
+            </div>
+
+            <form id="uploadForm" class="glass upload-form">
+              <input id="uploadCaption" type="text" placeholder="Write caption / title" />
+              <textarea id="uploadDescription" placeholder="Description"></textarea>
+              <input id="uploadFiles" type="file" multiple hidden />
+
+              <div id="uploadDropZone" class="upload-dropzone" role="button" tabindex="0">
+                <div class="drop-icon">☁️</div>
+                <p><strong>Click to browse your computer</strong> or drag file(s) here</p>
+                <small id="uploadHint">Shorts: 1 video · Carousel: multiple images · LTV: 1 video · Story: image/video (24h)</small>
+              </div>
+
+              <div id="uploadSelectedPreview" class="upload-selected-preview"></div>
+
+              <div class="upload-btn-row">
+                <button type="button" id="openCreativeSuite">Creative Suite</button>
+                <button type="button" id="clearUploadSelection">Cancel</button>
+                <button type="submit" id="publishUploadBtn">Create post</button>
+              </div>
+            </form>
+
+            <div id="uploadStatus" class="status-text"></div>
+            <div class="upload-progress" id="uploadProgressWrap" hidden><div id="uploadProgressBar"></div></div>
+            <div id="uploadList" class="upload-list"></div>
+          </section>
+
+          <section id="channels" class="screen">
+            <h2>My Channel</h2>
+            <p>Card-based dashboard to manage published content.</p>
+            <div id="channelContentList" class="channel-content-list"></div>
+          </section>
+
+          <section id="chat" class="screen">
+            <div class="chat-layout glass">
+              <aside class="chat-list">
+                <h3>Messages</h3>
+                <div id="chatUsersWrap"></div>
+                <div class="chat-list-actions"><button id="selectContactBtn" class="utility-btn">Select Contact</button><button id="createGroupBtn" class="utility-btn">Create Group</button></div>
+              </aside>
+              <section class="chat-panel">
+                <div class="chat-header">
+                  <h3 id="activeChatTitle">General</h3>
+                  <small id="typingIndicator" class="typing-indicator"></small>
+                  <div class="menu-wrap">
+                    <button id="chatMenuBtn" class="utility-btn">⋮</button>
+                    <div id="chatMenu" class="chat-menu" hidden>
+                      <button id="backupNowBtn">Export backup</button>
+                      <button id="importBackupBtn">Import backup</button>
+                      <button id="shareBackupBtn">Save to phone</button>
+                      <button id="deleteChatBtn" class="danger">Delete current chat</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="messages" class="messages"></div>
+                <div id="attachmentPreview" class="attachment-preview" hidden></div>
+                <input id="backupInput" type="file" accept="application/json" hidden />
+                <form id="chatForm" class="composer">
+                  <label class="attach-btn" for="fileInput">📎</label>
+                  <input id="fileInput" type="file" multiple />
+                  <input id="messageInput" type="text" placeholder="Type a message" />
+                  <label class="view-once-toggle" title="View once image"><input id="viewOnceToggle" type="checkbox" /> 1x</label>
+                  <button type="submit">Send</button>
+                </form>
+              </section>
+            </div>
+          </section>
+        </main>
+
+        <aside class="web-sidepanel glass">
+          <h3>ChatBhar Web</h3>
+          <p>Fast CMS + channels management with lazy-loaded feed.</p>
+        </aside>
+      </div>
+    </div>
+
+    <div id="storyViewer" class="story-viewer" hidden>
+      <div class="story-viewer-card glass">
+        <div class="story-viewer-top">
+          <strong id="storyViewerUser">Story</strong>
+          <button id="closeStoryViewer" class="icon-btn">✕</button>
+        </div>
+        <div id="storyViewerMedia" class="story-viewer-media"></div>
+        <div class="story-viewer-actions">
+          <button id="prevStory">← Prev</button>
+          <button id="nextStory">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="creativeSuiteModal" class="modal" hidden>
+      <div class="modal-card glass">
+        <div class="modal-top">
+          <h3>Creative Suite</h3>
+          <button id="closeCreativeSuite" class="icon-btn">✕</button>
+        </div>
+        <div class="suite-grid">
+          <aside id="suiteAssetList" class="suite-asset-list"></aside>
+          <section>
+            <div id="suitePreview" class="suite-preview"></div>
+            <div class="suite-controls">
+              <label>Trim Start (s)<input id="trimStartInput" type="number" min="0" step="0.1" /></label>
+              <label>Trim End (s)<input id="trimEndInput" type="number" min="0" step="0.1" /></label>
+              <label>Overlay Text<input id="overlayTextInput" type="text" placeholder="Add text" /></label>
+              <label>Text Color<input id="overlayColorInput" type="color" value="#ffffff" /></label>
+            </div>
+          </section>
+        </div>
+        <div class="upload-btn-row">
+          <button id="saveCreativeSuite" type="button">Save edits</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="postViewer" class="modal" hidden>
+      <div class="modal-card glass post-viewer-card">
+        <div class="modal-top">
+          <h3 id="postViewerTitle">Post</h3>
+          <button id="closePostViewer" class="icon-btn">✕</button>
+        </div>
+        <div id="postViewerMedia" class="post-viewer-media"></div>
+        <div id="postViewerInteraction" class="post-interaction"></div>
+      </div>
+    </div>
+
+    <div id="confirmModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <p id="confirmMessage">Are you sure?</p>
+        <div class="upload-btn-row">
+          <button id="confirmCancel" type="button">Cancel</button>
+          <button id="confirmOk" type="button">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="imagePreviewModal" class="modal" hidden>
+      <div class="modal-card glass post-viewer-card">
+        <div class="modal-top">
+          <h3>Preview image before sending</h3>
+          <button id="closeImagePreview" class="icon-btn">✕</button>
+        </div>
+        <div id="imagePreviewBody" class="post-viewer-media"></div>
+        <div class="upload-btn-row">
+          <button id="imagePreviewCancel" type="button">Cancel</button>
+          <button id="imagePreviewSend" type="button">Send image</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="contactModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top"><h3>Select Contact</h3><button id="closeContactModal" class="icon-btn">✕</button></div>
+        <div id="contactList" class="contact-list"></div>
+      </div>
+    </div>
+
+    <div id="groupModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top"><h3>Create Group</h3><button id="closeGroupModal" class="icon-btn">✕</button></div>
+        <input id="groupNameInput" placeholder="Group name" />
+        <div id="groupContactList" class="contact-list"></div>
+        <div class="upload-btn-row"><button id="createGroupConfirm" type="button">Create Group</button></div>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
