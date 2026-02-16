@@ -1,4 +1,5 @@
 const AUTH_USERS_KEY = 'chatbhar.users';
+const AUTH_RESET_DONE_KEY = 'chatbhar.authResetDone';
 const AUTH_SESSION_KEY = 'chatbhar.session';
 const CHAT_STORE_KEY = 'chatbhar.chatStore';
 const UPLOAD_STORE_KEY = 'chatbhar.uploads';
@@ -8,6 +9,12 @@ const appShell = document.getElementById('appShell');
 const signupForm = document.getElementById('signupForm');
 const loginForm = document.getElementById('loginForm');
 const authMessage = document.getElementById('authMessage');
+
+const usernameForm = document.getElementById('usernameForm');
+const usernameInput = document.getElementById('usernameInput');
+const existingUsernames = document.getElementById('existingUsernames');
+const usernameCheckBtn = document.getElementById('usernameCheckBtn');
+const usernameHint = document.getElementById('usernameHint');
 const logoutBtn = document.getElementById('logoutBtn');
 const themeToggle = document.getElementById('themeToggle');
 
@@ -120,6 +127,9 @@ let typingTimeout = null;
 const presenceBus = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('chatbhar-presence') : null;
 let uploads = loadJson(UPLOAD_STORE_KEY, []);
 let activeSession = null;
+let uploads = loadJson(UPLOAD_STORE_KEY, []);
+let activeSession = null;
+let authUsers = [];
 let activeStoryItems = [];
 let activeStoryIndex = 0;
 let activePostViewerId = null;
@@ -136,6 +146,20 @@ renderHome();
 renderExploreUsers();
 renderChannelManager();
 initEnhancedMessaging();
+initApp();
+
+async function initApp() {
+  bindEvents();
+  await bootstrapUsers();
+  await loadSession();
+  applyUploadType();
+  renderChatUsers();
+  renderMessages();
+  renderUploads();
+  renderHome();
+  await renderExploreUsers();
+  renderChannelManager();
+}
 
 function loadJson(key, fallback) {
   const raw = localStorage.getItem(key);
@@ -145,9 +169,195 @@ function loadJson(key, fallback) {
 function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
 function bootstrapUsers() { if (!localStorage.getItem(AUTH_USERS_KEY)) saveJson(AUTH_USERS_KEY, []); }
 
+
+function loadLocalAuthDb() {
+  const data = loadJson(AUTH_USERS_KEY, { users: [] });
+  if (Array.isArray(data)) return { users: [] };
+  if (!data || !Array.isArray(data.users)) return { users: [] };
+  return data;
+}
+
+function saveLocalAuthDb(db) {
+  saveJson(AUTH_USERS_KEY, db);
+}
+
+function monthKey(ts) {
+  const d = new Date(ts);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function ensureGmail(email) {
+  return /^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(String(email || '').toLowerCase());
+}
+
+function parseRequestBody(body) {
+  if (!body) return {};
+  if (typeof body === 'string') {
+    try { return JSON.parse(body); } catch { throw new Error('Invalid request payload. Please try again.'); }
+  }
+  if (typeof body === 'object') return body;
+  return {};
+}
+
+function usernameChangesThisMonth(user) {
+  const nowKey = monthKey(Date.now());
+  return (user.usernameChangeLogs || []).filter((entry) => monthKey(entry.ts) === nowKey).length;
+}
+
+async function localApiRequest(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const body = parseRequestBody(options.body);
+  const db = loadLocalAuthDb();
+
+  if (path === '/api/admin/reset-signups' && method === 'POST') {
+    saveLocalAuthDb({ users: [] });
+    return { ok: true, message: 'All existing signups removed for fresh Gmail registration.' };
+  }
+
+  if (path === '/api/auth/users' && method === 'GET') {
+    return {
+      users: db.users.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: 'user',
+        username: (u.usernames || []).find((x) => x.id === u.activeUsernameId)?.value || '',
+        usernames: u.usernames || []
+      }))
+    };
+  }
+
+  if (path === '/api/auth/signup' && method === 'POST') {
+    const email = String(body.email || '').trim().toLowerCase();
+    const password = String(body.password || '');
+    const name = String(body.name || '').trim();
+    if (!name || !email || !password) throw new Error('Please fill all signup fields.');
+    if (!ensureGmail(email)) throw new Error('Signup requires a valid @gmail.com address.');
+    if (password.length < 8) throw new Error('Password must be at least 8 characters.');
+    if (db.users.some((u) => u.email === email)) throw new Error('Email already exists. Please login.');
+
+    const user = { id: crypto.randomUUID(), name, email, password, usernames: [], usernameChangeLogs: [], activeUsernameId: null };
+    db.users.push(user);
+    saveLocalAuthDb(db);
+    return { user: { id: user.id, name: user.name, email: user.email, usernames: [], username: '' } };
+  }
+
+  if (path === '/api/auth/login' && method === 'POST') {
+    const email = String(body.email || '').trim().toLowerCase();
+    const password = String(body.password || '');
+    const user = db.users.find((u) => u.email === email && u.password === password);
+    if (!user) throw new Error('Invalid email/password.');
+    const username = (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '';
+    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username } };
+  }
+
+  if (path === '/api/usernames/check' && method === 'POST') {
+    const username = String(body.username || '').trim().toLowerCase();
+    if (!username) throw new Error('Username is required.');
+    const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username));
+    if (exists) throw new Error('Username already taken');
+    return { available: true };
+  }
+
+  if (path === '/api/usernames' && method === 'POST') {
+    const user = db.users.find((u) => u.id === String(body.userId || ''));
+    const username = String(body.username || '').trim();
+    if (!user || !username) throw new Error('User and username are required.');
+    if ((user.usernames || []).length >= 5) throw new Error('Maximum 5 usernames allowed per Gmail account.');
+    const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username.toLowerCase()));
+    if (exists) throw new Error('Username already taken');
+    const ts = Date.now();
+    const item = { id: crypto.randomUUID(), value: username, createdAt: ts, updatedAt: ts };
+    user.usernames.push(item);
+    user.activeUsernameId = item.id;
+    saveLocalAuthDb(db);
+    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: item.value } };
+  }
+
+  if (path === '/api/auth/session/select-username' && method === 'POST') {
+    const user = db.users.find((u) => u.id === String(body.userId || ''));
+    const username = String(body.username || '').trim();
+    if (!user) throw new Error('User not found.');
+    const selected = (user.usernames || []).find((u) => u.value === username);
+    if (!selected) throw new Error('Username not found for account.');
+    user.activeUsernameId = selected.id;
+    saveLocalAuthDb(db);
+    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: selected.value } };
+  }
+
+  if (path.startsWith('/api/usernames/') && method === 'PATCH') {
+    const user = db.users.find((u) => u.id === String(body.userId || ''));
+    const username = String(body.username || '').trim();
+    const usernameId = path.split('/').pop();
+    if (!user) throw new Error('User not found.');
+    if (usernameChangesThisMonth(user) >= 3) throw new Error('Username change limit reached: only 3 changes per month.');
+    const target = (user.usernames || []).find((u) => u.id === usernameId);
+    if (!target) throw new Error('Username not found.');
+    const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username.toLowerCase() && x.id !== usernameId));
+    if (exists) throw new Error('Username already taken');
+    user.usernameChangeLogs = user.usernameChangeLogs || [];
+    user.usernameChangeLogs.push({ ts: Date.now(), from: target.value, to: username });
+    target.value = username;
+    target.updatedAt = Date.now();
+    saveLocalAuthDb(db);
+    return { ok: true, username: target };
+  }
+
+  throw new Error('Request failed');
+}
+
+async function apiRequest(path, options = {}) {
+  const requestOptions = {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  };
+
+  let response;
+  try {
+    response = await fetch(path, requestOptions);
+  } catch (error) {
+    if (path.startsWith('/api/')) return localApiRequest(path, options);
+    throw error;
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const isApiPath = path.startsWith('/api/');
+  const isHtmlResponse = contentType.includes('text/html');
+
+  if (isApiPath && isHtmlResponse) {
+    return localApiRequest(path, options);
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (isApiPath && (!payload || !Object.keys(payload).length)) return localApiRequest(path, options);
+    throw new Error(payload.error || 'Request failed');
+  }
+  return payload;
+}
+
+async function syncAuthUsers() {
+  try {
+    const payload = await apiRequest('/api/auth/users');
+    authUsers = payload.users || [];
+  } catch {
+    authUsers = [];
+  }
+}
+async function bootstrapUsers() {
+  if (!localStorage.getItem(AUTH_RESET_DONE_KEY)) {
+    localStorage.removeItem(AUTH_USERS_KEY);
+    try { await apiRequest('/api/admin/reset-signups', { method: 'POST' }); } catch {}
+    localStorage.setItem(AUTH_RESET_DONE_KEY, '1');
+  }
+  await syncAuthUsers();
+}
+
 function bindEvents() {
   signupForm.addEventListener('submit', onSignup);
   loginForm.addEventListener('submit', onLogin);
+  usernameForm.addEventListener('submit', onCreateUsername);
+  usernameCheckBtn.addEventListener('click', onCheckUsername);
   logoutBtn.addEventListener('click', onLogout);
   themeToggle.addEventListener('click', toggleTheme);
   navButtons.forEach((btn) => btn.addEventListener('click', () => openTab(btn.dataset.tab)));
@@ -211,6 +421,7 @@ function bindEvents() {
   });
 
   if (newChatBtn) newChatBtn.addEventListener('click', createNewChat);
+  newChatBtn.addEventListener('click', createNewChat);
   deleteChatBtn.addEventListener('click', deleteCurrentChat);
   chatMenuBtn.addEventListener('click', () => (chatMenu.hidden = !chatMenu.hidden));
   document.addEventListener('click', (e) => {
@@ -245,6 +456,9 @@ function bindEvents() {
   nextStory.addEventListener('click', () => showStoryByIndex(activeStoryIndex + 1));
 }
 
+
+function activeHandle() { return activeSession?.username || activeSession?.name || 'User'; }
+
 function applyUploadType() {
   const rule = typeRules[selectedUploadType];
   uploadFiles.accept = rule.accept;
@@ -255,6 +469,7 @@ function applyUploadType() {
 }
 
 function onSignup(event) {
+async function onSignup(event) {
   event.preventDefault();
   const name = document.getElementById('signupName').value.trim();
   const email = document.getElementById('signupEmail').value.trim().toLowerCase();
@@ -283,6 +498,106 @@ function onLogin(event) {
   setAuthMessage('', false);
   loadSession();
   openTab('home');
+  if (!email.endsWith('@gmail.com')) return setAuthMessage('Signup requires a valid @gmail.com address.', false);
+  if (password.length < 8) return setAuthMessage('Password must be at least 8 characters.', false);
+
+  try {
+    const payload = await apiRequest('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ name, email, password })
+    });
+    signupForm.reset();
+    setAuthMessage('Account created. Choose your username to continue.', true);
+    await syncAuthUsers();
+    openOnboarding(payload.user);
+  } catch (error) {
+    setAuthMessage(error.message, false);
+  }
+}
+
+async function onLogin(event) {
+  event.preventDefault();
+  const email = document.getElementById('emailInput').value.trim().toLowerCase();
+  const password = document.getElementById('passwordInput').value;
+  try {
+    const payload = await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password })
+    });
+    saveJson(AUTH_SESSION_KEY, payload.session);
+    if (!payload.session.username) {
+      openOnboarding(payload.session);
+      setAuthMessage('Pick a username before entering ChatBhar.', true);
+      return;
+    }
+    setAuthMessage('', false);
+    await loadSession();
+    openTab('home');
+  } catch (error) {
+    setAuthMessage(error.message || 'Invalid email/password.', false);
+  }
+}
+
+function openOnboarding(user) {
+  activeSession = { id: user.id, name: user.name, email: user.email, role: user.role || 'user', username: user.username || '' };
+  signupForm.hidden = true;
+  loginForm.hidden = true;
+  usernameForm.hidden = false;
+  usernameHint.textContent = '';
+  usernameInput.value = '';
+  const usernames = user.usernames || [];
+  existingUsernames.innerHTML = '<option value="">Choose existing username</option>';
+  usernames.forEach((entry) => {
+    const option = document.createElement('option');
+    option.value = entry.value;
+    option.textContent = entry.value;
+    existingUsernames.appendChild(option);
+  });
+}
+
+async function onCheckUsername() {
+  const username = usernameInput.value.trim();
+  if (!username) return;
+  try {
+    await apiRequest('/api/usernames/check', { method: 'POST', body: JSON.stringify({ username }) });
+    usernameHint.textContent = 'Username is available.';
+    usernameHint.style.color = '#0f8a3a';
+  } catch (error) {
+    usernameHint.textContent = error.message;
+    usernameHint.style.color = '#d14343';
+  }
+}
+
+async function onCreateUsername(event) {
+  event.preventDefault();
+  const picked = existingUsernames.value.trim();
+  const username = usernameInput.value.trim();
+
+  try {
+    let payload;
+    if (picked) {
+      payload = await apiRequest('/api/auth/session/select-username', {
+        method: 'POST',
+        body: JSON.stringify({ userId: activeSession.id, username: picked })
+      });
+    } else {
+      payload = await apiRequest('/api/usernames', {
+        method: 'POST',
+        body: JSON.stringify({ userId: activeSession.id, username })
+      });
+    }
+
+    saveJson(AUTH_SESSION_KEY, payload.session);
+    usernameForm.hidden = true;
+    signupForm.hidden = false;
+    loginForm.hidden = false;
+    setAuthMessage('', false);
+    await syncAuthUsers();
+    await loadSession();
+    openTab('home');
+  } catch (error) {
+    setAuthMessage(error.message, false);
+  }
 }
 
 function setAuthMessage(message, success) {
@@ -291,6 +606,7 @@ function setAuthMessage(message, success) {
 }
 
 function loadSession() {
+async function loadSession() {
   activeSession = loadJson(AUTH_SESSION_KEY, null);
   if (!activeSession?.id) {
     authGate.hidden = false;
@@ -304,6 +620,35 @@ function loadSession() {
   renderUploads();
   renderChannelManager();
 initEnhancedMessaging();
+    usernameForm.hidden = true;
+    signupForm.hidden = false;
+    loginForm.hidden = false;
+    return;
+  }
+
+  await syncAuthUsers();
+  const dbUser = authUsers.find((u) => u.id === activeSession.id);
+  if (!dbUser) {
+    localStorage.removeItem(AUTH_SESSION_KEY);
+    activeSession = null;
+    authGate.hidden = false;
+    appShell.hidden = true;
+    return;
+  }
+
+  if (!activeSession.username) {
+    authGate.hidden = false;
+    appShell.hidden = true;
+    openOnboarding(dbUser);
+    return;
+  }
+
+  authGate.hidden = true;
+  appShell.hidden = false;
+  renderHome();
+  await renderExploreUsers();
+  renderUploads();
+  renderChannelManager();
 }
 
 function onLogout() {
@@ -472,6 +817,7 @@ async function onUploadSubmit(event) {
   const baseRecord = {
     type: selectedUploadType,
     userName: activeSession.name,
+    userName: activeHandle(),
     caption,
     description,
     createdAt: new Date().toISOString(),
@@ -565,6 +911,9 @@ function validateUploadForType(type, files, caption, description) {
 
 function renderExploreUsers(query = '') {
   const users = loadJson(AUTH_USERS_KEY, []);
+async function renderExploreUsers(query = '') {
+  if (!authUsers.length) await syncAuthUsers();
+  const users = authUsers;
   const normalizedQuery = String(query).trim().toLowerCase();
   const now = Date.now();
 
@@ -586,6 +935,13 @@ function renderExploreUsers(query = '') {
       const lastUploadTs = byUserLatestUpload.get(u.name) || 0;
       const isActive = u.id === activeSession?.id || (lastUploadTs && now - lastUploadTs < 24 * 60 * 60 * 1000);
       return { ...u, isActive, lastUploadTs };
+      return (u.name || '').toLowerCase().includes(normalizedQuery) || (u.email || '').toLowerCase().includes(normalizedQuery) || (u.username || '').toLowerCase().includes(normalizedQuery);
+    })
+    .map((u) => {
+      const displayName = u.username || u.name;
+      const lastUploadTs = byUserLatestUpload.get(displayName) || 0;
+      const isActive = u.id === activeSession?.id || (lastUploadTs && now - lastUploadTs < 24 * 60 * 60 * 1000);
+      return { ...u, displayName, isActive, lastUploadTs };
     })
     .sort((a, b) => Number(b.isActive) - Number(a.isActive) || (b.lastUploadTs - a.lastUploadTs));
 
@@ -597,6 +953,7 @@ function renderExploreUsers(query = '') {
 
   rows.forEach((u) => {
     const initials = u.name.split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
+    const initials = (u.displayName || 'User').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
     const card = document.createElement('div');
     card.className = 'explore-user-card glass';
     card.innerHTML = `
@@ -604,6 +961,7 @@ function renderExploreUsers(query = '') {
         <div class="avatar">${escapeHtml(initials || 'U')}</div>
         <div>
           <strong>${escapeHtml(u.name)}</strong>
+          <strong>${escapeHtml(u.displayName || u.name)}</strong>
           <p>${escapeHtml(u.email)}</p>
         </div>
       </div>
@@ -616,6 +974,7 @@ function renderExploreUsers(query = '') {
 function renderUploads() {
   uploadList.innerHTML = '';
   const mine = activeSession ? uploads.filter((u) => u.userName === activeSession.name) : [];
+  const mine = activeSession ? uploads.filter((u) => u.userName === activeHandle()) : [];
   if (!mine.length) {
     uploadList.innerHTML = '<div class="upload-item glass"><p>No uploads yet for your account.</p></div>';
     return;
@@ -761,6 +1120,7 @@ function addComment(postId, text) {
     return {
       ...u,
       interactions: { ...interactions, comments: [...interactions.comments, { user: activeSession.name, text: content, ts: Date.now() }] }
+      interactions: { ...interactions, comments: [...interactions.comments, { user: activeHandle(), text: content, ts: Date.now() }] }
     };
   });
   persistAndRerender(postId);
@@ -802,6 +1162,7 @@ function renderChannelManager() {
   channelContentList.innerHTML = '';
   if (!activeSession) return;
   const mine = uploads.filter((u) => u.userName === activeSession.name);
+  const mine = uploads.filter((u) => u.userName === activeHandle());
   if (!mine.length) {
     channelContentList.innerHTML = '<div class="channel-card glass"><p>No channel content yet.</p></div>';
     return;
@@ -906,6 +1267,20 @@ function renderMessages() {
     bubble.className = `bubble ${msg.dir}`;
     const files = msg.files?.length ? `<ul>${msg.files.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>` : '';
     bubble.innerHTML = `${escapeHtml(msg.text || '')}${files}`;
+    const messageText = document.createElement('span');
+    messageText.textContent = msg.text || '';
+    bubble.appendChild(messageText);
+
+    if (msg.files?.length) {
+      const fileList = document.createElement('ul');
+      msg.files.forEach((f) => {
+        const fileItem = document.createElement('li');
+        fileItem.textContent = f.name;
+        fileList.appendChild(fileItem);
+      });
+      bubble.appendChild(fileList);
+    }
+
     messages.appendChild(bubble);
   });
   messages.scrollTop = messages.scrollHeight;
@@ -1292,3 +1667,6 @@ async function sendMessage(prepared = null) {
 }
 
 function createNewChat() {}
+  
+  
+  
