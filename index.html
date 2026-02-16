@@ -138,11 +138,13 @@
               <aside class="chat-list">
                 <h3>Messages</h3>
                 <div id="chatUsersWrap"></div>
+                <div class="chat-list-actions"><button id="selectContactBtn" class="utility-btn">Select Contact</button><button id="createGroupBtn" class="utility-btn">Create Group</button></div>
                 <button id="newChatBtn" class="utility-btn">+ New chat</button>
               </aside>
               <section class="chat-panel">
                 <div class="chat-header">
                   <h3 id="activeChatTitle">General</h3>
+                  <small id="typingIndicator" class="typing-indicator"></small>
                   <div class="menu-wrap">
                     <button id="chatMenuBtn" class="utility-btn">⋮</button>
                     <div id="chatMenu" class="chat-menu" hidden>
@@ -160,6 +162,7 @@
                   <label class="attach-btn" for="fileInput">📎</label>
                   <input id="fileInput" type="file" multiple />
                   <input id="messageInput" type="text" placeholder="Type a message" />
+                  <label class="view-once-toggle" title="View once image"><input id="viewOnceToggle" type="checkbox" /> 1x</label>
                   <button type="submit">Send</button>
                 </form>
               </section>
@@ -230,6 +233,36 @@
           <button id="confirmCancel" type="button">Cancel</button>
           <button id="confirmOk" type="button">Delete</button>
         </div>
+      </div>
+    </div>
+
+    <div id="imagePreviewModal" class="modal" hidden>
+      <div class="modal-card glass post-viewer-card">
+        <div class="modal-top">
+          <h3>Preview image before sending</h3>
+          <button id="closeImagePreview" class="icon-btn">✕</button>
+        </div>
+        <div id="imagePreviewBody" class="post-viewer-media"></div>
+        <div class="upload-btn-row">
+          <button id="imagePreviewCancel" type="button">Cancel</button>
+          <button id="imagePreviewSend" type="button">Send image</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="contactModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top"><h3>Select Contact</h3><button id="closeContactModal" class="icon-btn">✕</button></div>
+        <div id="contactList" class="contact-list"></div>
+      </div>
+    </div>
+
+    <div id="groupModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top"><h3>Create Group</h3><button id="closeGroupModal" class="icon-btn">✕</button></div>
+        <input id="groupNameInput" placeholder="Group name" />
+        <div id="groupContactList" class="contact-list"></div>
+        <div class="upload-btn-row"><button id="createGroupConfirm" type="button">Create Group</button></div>
       </div>
     </div>
 
