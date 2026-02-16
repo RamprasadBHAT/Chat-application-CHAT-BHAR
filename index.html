@@ -34,6 +34,20 @@
           <button type="submit">Login</button>
         </form>
 
+
+        <form id="usernameForm" class="auth-form" hidden>
+          <label for="existingUsernames">Select existing username</label>
+          <select id="existingUsernames">
+            <option value="">Choose existing username</option>
+          </select>
+          <input id="usernameInput" type="text" placeholder="Create a unique username" />
+          <div class="upload-btn-row">
+            <button type="button" id="usernameCheckBtn">Check availability</button>
+            <button type="submit">Continue</button>
+          </div>
+          <small id="usernameHint"></small>
+        </form>
+
         <small id="authMessage"></small>
       </div>
     </section>
