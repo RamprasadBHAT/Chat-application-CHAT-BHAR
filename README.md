@@ -1,38 +1,68 @@
-# ChatBhar (Web Prototype)
+# ChatBhar Web — High-Performance Social CMS + Channels
 
-A WhatsApp-inspired messaging module built inside a modern social-app landing shell.
+A responsive social media prototype with a CMS-style upload pipeline, creative suite editing, channel management dashboard, interactive public feed, and Gmail-based authentication with username onboarding.
 
-## Implemented features
+## Implemented capabilities
 
-### Messaging core
-- Bubble-based DM and group chat layout
-- Contact picker (replaces old "New Chat")
-- Group creation flow with multi-select contacts
+- Strict authentication + profile management:
+  - Signup accepts only `@gmail.com` email IDs
+  - Manual credentials (email + password)
+  - Password minimum length validation
+  - Onboarding flow: account creation/login without active username redirects to username setup
+- Username business logic:
+  - up to 5 usernames per Gmail account
+  - global username uniqueness check via API (`POST /api/usernames/check`)
+  - timestamped username change logs
+  - middleware-style monthly policy enforcement (max 3 username changes/month) on username update endpoint
+- Backend user store (NoSQL JSON schema) linking one EmailID to many username records
+- Admin reset endpoint to clear historical signups for fresh Gmail registrations:
+  - `POST /api/admin/reset-signups`
+- Multi-story and multi-content uploader with drag-and-drop
+- Simulated **chunked + concurrent upload pipeline** for fast feedback
+- Creative Suite editing + channel dashboard + chat module
 
-### Enhanced media handling
-- Pre-send image preview modal (full-screen style dialog)
-- In-chat image rendering with aspect-ratio aware display
-- View Once option for image messages
-  - Once opened by receiver, media URL is removed from state
-  - Message is replaced by `Photo` placeholder
-- Dynamic naming
-  - Image filenames hidden for JPG/PNG/WEBP/GIF style media
-  - Filenames shown for docs/PDF
+## Database schema (NoSQL JSON)
 
-### Real-time indicators (socket-style)
-- Typing indicator (`[User] is typing...`) based on keypress events
-- Global online user count based on connection/disconnection events
-- Implemented with `BroadcastChannel` as a local WebSocket fallback due environment package-install restrictions
+`db/auth-db.json`
+
+```json
+{
+  "users": [
+    {
+      "id": "uuid",
+      "name": "Full Name",
+      "email": "user@gmail.com",
+      "password": "...",
+      "usernames": [
+        { "id": "uuid", "value": "handle", "createdAt": 0, "updatedAt": 0 }
+      ],
+      "usernameChangeLogs": [
+        { "ts": 0, "from": "oldHandle", "to": "newHandle" }
+      ],
+      "activeUsernameId": "uuid"
+    }
+  ]
+}
+```
 
 ## Run locally
 
+Preferred (full backend + API):
+
 ```bash
-python3 -m http.server 4173
+npm start
 ```
 
 Open: `http://localhost:4173`
 
-## Note on Socket.IO
+Static-only mode (`python3 -m http.server`) is also supported now via frontend local API fallback for signup/login/onboarding if backend endpoints are unavailable.
 
-This environment blocks npm package fetches, so Socket.IO server/client dependencies could not be installed.
-The code is structured around socket-style events (`presence:online`, `presence:offline`, `typing`) so it can be swapped to Socket.IO quickly when dependency install is available.
+## API highlights
+
+- `POST /api/auth/signup`
+- `POST /api/auth/login`
+- `GET /api/auth/users`
+- `POST /api/usernames/check`
+- `POST /api/usernames`
+- `PATCH /api/usernames/:usernameId` (3 changes/month rule)
+- `POST /api/admin/reset-signups`
