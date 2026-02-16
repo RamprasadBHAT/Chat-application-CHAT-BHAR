@@ -55,10 +55,6 @@ npm start
 
 Open: `http://localhost:4173`
 
-## Note on Socket.IO
-
-This environment blocks npm package fetches, so Socket.IO server/client dependencies could not be installed.
-The code is structured around socket-style events (`presence:online`, `presence:offline`, `typing`) so it can be swapped to Socket.IO quickly when dependency install is available.
 Static-only mode (`python3 -m http.server`) is also supported now via frontend local API fallback for signup/login/onboarding if backend endpoints are unavailable.
 Open: `http://localhost:4173`GIT
 
