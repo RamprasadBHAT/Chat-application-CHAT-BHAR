@@ -47,11 +47,13 @@ A responsive social media prototype with a CMS-style upload pipeline, creative s
 
 ## Run locally
 
+Preferred (full backend + API):
+
 ```bash
 npm start
 ```
 
-Open: `http://localhost:4173`
+Open: `http://localhost:4173`GIT
 
 ## API highlights
 
@@ -62,3 +64,7 @@ Open: `http://localhost:4173`
 - `POST /api/usernames`
 - `PATCH /api/usernames/:usernameId` (3 changes/month rule)
 - `POST /api/admin/reset-signups`
+
+
+
+
