@@ -132,13 +132,169 @@ function loadJson(key, fallback) {
 function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
 
 
+function loadLocalAuthDb() {
+  const data = loadJson(AUTH_USERS_KEY, { users: [] });
+  if (Array.isArray(data)) return { users: [] };
+  if (!data || !Array.isArray(data.users)) return { users: [] };
+  return data;
+}
+
+function saveLocalAuthDb(db) {
+  saveJson(AUTH_USERS_KEY, db);
+}
+
+function monthKey(ts) {
+  const d = new Date(ts);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function ensureGmail(email) {
+  return /^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(String(email || '').toLowerCase());
+}
+
+function parseRequestBody(body) {
+  if (!body) return {};
+  if (typeof body === 'string') {
+    try { return JSON.parse(body); } catch { throw new Error('Invalid request payload. Please try again.'); }
+  }
+  if (typeof body === 'object') return body;
+  return {};
+}
+
+function usernameChangesThisMonth(user) {
+  const nowKey = monthKey(Date.now());
+  return (user.usernameChangeLogs || []).filter((entry) => monthKey(entry.ts) === nowKey).length;
+}
+
+async function localApiRequest(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const body = parseRequestBody(options.body);
+  const db = loadLocalAuthDb();
+
+  if (path === '/api/admin/reset-signups' && method === 'POST') {
+    saveLocalAuthDb({ users: [] });
+    return { ok: true, message: 'All existing signups removed for fresh Gmail registration.' };
+  }
+
+  if (path === '/api/auth/users' && method === 'GET') {
+    return {
+      users: db.users.map((u) => ({
+        id: u.id,
+        email: u.email,
+        name: u.name,
+        role: 'user',
+        username: (u.usernames || []).find((x) => x.id === u.activeUsernameId)?.value || '',
+        usernames: u.usernames || []
+      }))
+    };
+  }
+
+  if (path === '/api/auth/signup' && method === 'POST') {
+    const email = String(body.email || '').trim().toLowerCase();
+    const password = String(body.password || '');
+    const name = String(body.name || '').trim();
+    if (!name || !email || !password) throw new Error('Please fill all signup fields.');
+    if (!ensureGmail(email)) throw new Error('Signup requires a valid @gmail.com address.');
+    if (password.length < 8) throw new Error('Password must be at least 8 characters.');
+    if (db.users.some((u) => u.email === email)) throw new Error('Email already exists. Please login.');
+
+    const user = { id: crypto.randomUUID(), name, email, password, usernames: [], usernameChangeLogs: [], activeUsernameId: null };
+    db.users.push(user);
+    saveLocalAuthDb(db);
+    return { user: { id: user.id, name: user.name, email: user.email, usernames: [], username: '' } };
+  }
+
+  if (path === '/api/auth/login' && method === 'POST') {
+    const email = String(body.email || '').trim().toLowerCase();
+    const password = String(body.password || '');
+    const user = db.users.find((u) => u.email === email && u.password === password);
+    if (!user) throw new Error('Invalid email/password.');
+    const username = (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '';
+    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username } };
+  }
+
+  if (path === '/api/usernames/check' && method === 'POST') {
+    const username = String(body.username || '').trim().toLowerCase();
+    if (!username) throw new Error('Username is required.');
+    const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username));
+    if (exists) throw new Error('Username already taken');
+    return { available: true };
+  }
+
+  if (path === '/api/usernames' && method === 'POST') {
+    const user = db.users.find((u) => u.id === String(body.userId || ''));
+    const username = String(body.username || '').trim();
+    if (!user || !username) throw new Error('User and username are required.');
+    if ((user.usernames || []).length >= 5) throw new Error('Maximum 5 usernames allowed per Gmail account.');
+    const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username.toLowerCase()));
+    if (exists) throw new Error('Username already taken');
+    const ts = Date.now();
+    const item = { id: crypto.randomUUID(), value: username, createdAt: ts, updatedAt: ts };
+    user.usernames.push(item);
+    user.activeUsernameId = item.id;
+    saveLocalAuthDb(db);
+    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: item.value } };
+  }
+
+  if (path === '/api/auth/session/select-username' && method === 'POST') {
+    const user = db.users.find((u) => u.id === String(body.userId || ''));
+    const username = String(body.username || '').trim();
+    if (!user) throw new Error('User not found.');
+    const selected = (user.usernames || []).find((u) => u.value === username);
+    if (!selected) throw new Error('Username not found for account.');
+    user.activeUsernameId = selected.id;
+    saveLocalAuthDb(db);
+    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: selected.value } };
+  }
+
+  if (path.startsWith('/api/usernames/') && method === 'PATCH') {
+    const user = db.users.find((u) => u.id === String(body.userId || ''));
+    const username = String(body.username || '').trim();
+    const usernameId = path.split('/').pop();
+    if (!user) throw new Error('User not found.');
+    if (usernameChangesThisMonth(user) >= 3) throw new Error('Username change limit reached: only 3 changes per month.');
+    const target = (user.usernames || []).find((u) => u.id === usernameId);
+    if (!target) throw new Error('Username not found.');
+    const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username.toLowerCase() && x.id !== usernameId));
+    if (exists) throw new Error('Username already taken');
+    user.usernameChangeLogs = user.usernameChangeLogs || [];
+    user.usernameChangeLogs.push({ ts: Date.now(), from: target.value, to: username });
+    target.value = username;
+    target.updatedAt = Date.now();
+    saveLocalAuthDb(db);
+    return { ok: true, username: target };
+  }
+
+  throw new Error('Request failed');
+}
+
 async function apiRequest(path, options = {}) {
-  const response = await fetch(path, {
+  const requestOptions = {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     ...options
-  });
+  };
+
+  let response;
+  try {
+    response = await fetch(path, requestOptions);
+  } catch (error) {
+    if (path.startsWith('/api/')) return localApiRequest(path, options);
+    throw error;
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const isApiPath = path.startsWith('/api/');
+  const isHtmlResponse = contentType.includes('text/html');
+
+  if (isApiPath && isHtmlResponse) {
+    return localApiRequest(path, options);
+  }
+
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || 'Request failed');
+  if (!response.ok) {
+    if (isApiPath && (!payload || !Object.keys(payload).length)) return localApiRequest(path, options);
+    throw new Error(payload.error || 'Request failed');
+  }
   return payload;
 }
 

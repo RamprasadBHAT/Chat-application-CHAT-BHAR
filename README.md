@@ -53,6 +53,9 @@ Preferred (full backend + API):
 npm start
 ```
 
+Open: `http://localhost:4173`
+
+Static-only mode (`python3 -m http.server`) is also supported now via frontend local API fallback for signup/login/onboarding if backend endpoints are unavailable.
 Open: `http://localhost:4173`GIT
 
 ## API highlights
