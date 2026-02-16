@@ -1,4 +1,5 @@
 const AUTH_USERS_KEY = 'chatbhar.users';
+const AUTH_RESET_DONE_KEY = 'chatbhar.authResetDone';
 const AUTH_SESSION_KEY = 'chatbhar.session';
 const CHAT_STORE_KEY = 'chatbhar.chatStore';
 const UPLOAD_STORE_KEY = 'chatbhar.uploads';
@@ -8,6 +9,12 @@ const appShell = document.getElementById('appShell');
 const signupForm = document.getElementById('signupForm');
 const loginForm = document.getElementById('loginForm');
 const authMessage = document.getElementById('authMessage');
+
+const usernameForm = document.getElementById('usernameForm');
+const usernameInput = document.getElementById('usernameInput');
+const existingUsernames = document.getElementById('existingUsernames');
+const usernameCheckBtn = document.getElementById('usernameCheckBtn');
+const usernameHint = document.getElementById('usernameHint');
 const logoutBtn = document.getElementById('logoutBtn');
 const themeToggle = document.getElementById('themeToggle');
 
@@ -96,21 +103,26 @@ let chatStore = loadJson(CHAT_STORE_KEY, { General: [] });
 let activeChat = Object.keys(chatStore)[0] || 'General';
 let uploads = loadJson(UPLOAD_STORE_KEY, []);
 let activeSession = null;
+let authUsers = [];
 let activeStoryItems = [];
 let activeStoryIndex = 0;
 let activePostViewerId = null;
 let confirmAction = null;
 
-bootstrapUsers();
-loadSession();
-bindEvents();
-applyUploadType();
-renderChatUsers();
-renderMessages();
-renderUploads();
-renderHome();
-renderExploreUsers();
-renderChannelManager();
+initApp();
+
+async function initApp() {
+  bindEvents();
+  await bootstrapUsers();
+  await loadSession();
+  applyUploadType();
+  renderChatUsers();
+  renderMessages();
+  renderUploads();
+  renderHome();
+  await renderExploreUsers();
+  renderChannelManager();
+}
 
 function loadJson(key, fallback) {
   const raw = localStorage.getItem(key);
@@ -118,11 +130,40 @@ function loadJson(key, fallback) {
   try { return JSON.parse(raw); } catch { return structuredClone(fallback); }
 }
 function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
-function bootstrapUsers() { if (!localStorage.getItem(AUTH_USERS_KEY)) saveJson(AUTH_USERS_KEY, []); }
+
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Request failed');
+  return payload;
+}
+
+async function syncAuthUsers() {
+  try {
+    const payload = await apiRequest('/api/auth/users');
+    authUsers = payload.users || [];
+  } catch {
+    authUsers = [];
+  }
+}
+async function bootstrapUsers() {
+  if (!localStorage.getItem(AUTH_RESET_DONE_KEY)) {
+    localStorage.removeItem(AUTH_USERS_KEY);
+    try { await apiRequest('/api/admin/reset-signups', { method: 'POST' }); } catch {}
+    localStorage.setItem(AUTH_RESET_DONE_KEY, '1');
+  }
+  await syncAuthUsers();
+}
 
 function bindEvents() {
   signupForm.addEventListener('submit', onSignup);
   loginForm.addEventListener('submit', onLogin);
+  usernameForm.addEventListener('submit', onCreateUsername);
+  usernameCheckBtn.addEventListener('click', onCheckUsername);
   logoutBtn.addEventListener('click', onLogout);
   themeToggle.addEventListener('click', toggleTheme);
   navButtons.forEach((btn) => btn.addEventListener('click', () => openTab(btn.dataset.tab)));
@@ -220,6 +261,9 @@ function bindEvents() {
   nextStory.addEventListener('click', () => showStoryByIndex(activeStoryIndex + 1));
 }
 
+
+function activeHandle() { return activeSession?.username || activeSession?.name || 'User'; }
+
 function applyUploadType() {
   const rule = typeRules[selectedUploadType];
   uploadFiles.accept = rule.accept;
@@ -229,35 +273,112 @@ function applyUploadType() {
   uploadDescription.required = rule.descriptionRequired;
 }
 
-function onSignup(event) {
+async function onSignup(event) {
   event.preventDefault();
   const name = document.getElementById('signupName').value.trim();
   const email = document.getElementById('signupEmail').value.trim().toLowerCase();
   const password = document.getElementById('signupPassword').value;
   if (!name || !email || !password) return setAuthMessage('Please fill all signup fields.', false);
+  if (!email.endsWith('@gmail.com')) return setAuthMessage('Signup requires a valid @gmail.com address.', false);
+  if (password.length < 8) return setAuthMessage('Password must be at least 8 characters.', false);
 
-  const users = loadJson(AUTH_USERS_KEY, []);
-  if (users.some((u) => u.email === email)) return setAuthMessage('Email already exists. Please login.', false);
-
-  users.push({ id: crypto.randomUUID(), name, email, password, role: 'user' });
-  saveJson(AUTH_USERS_KEY, users);
-  signupForm.reset();
-  setAuthMessage('Signup successful. You can now login.', true);
-  renderExploreUsers();
+  try {
+    const payload = await apiRequest('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ name, email, password })
+    });
+    signupForm.reset();
+    setAuthMessage('Account created. Choose your username to continue.', true);
+    await syncAuthUsers();
+    openOnboarding(payload.user);
+  } catch (error) {
+    setAuthMessage(error.message, false);
+  }
 }
 
-function onLogin(event) {
+async function onLogin(event) {
   event.preventDefault();
   const email = document.getElementById('emailInput').value.trim().toLowerCase();
   const password = document.getElementById('passwordInput').value;
-  const users = loadJson(AUTH_USERS_KEY, []);
-  const found = users.find((u) => u.email === email && u.password === password);
-  if (!found) return setAuthMessage('Invalid email/password.', false);
+  try {
+    const payload = await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password })
+    });
+    saveJson(AUTH_SESSION_KEY, payload.session);
+    if (!payload.session.username) {
+      openOnboarding(payload.session);
+      setAuthMessage('Pick a username before entering ChatBhar.', true);
+      return;
+    }
+    setAuthMessage('', false);
+    await loadSession();
+    openTab('home');
+  } catch (error) {
+    setAuthMessage(error.message || 'Invalid email/password.', false);
+  }
+}
 
-  saveJson(AUTH_SESSION_KEY, { id: found.id, name: found.name, email: found.email, role: found.role });
-  setAuthMessage('', false);
-  loadSession();
-  openTab('home');
+function openOnboarding(user) {
+  activeSession = { id: user.id, name: user.name, email: user.email, role: user.role || 'user', username: user.username || '' };
+  signupForm.hidden = true;
+  loginForm.hidden = true;
+  usernameForm.hidden = false;
+  usernameHint.textContent = '';
+  usernameInput.value = '';
+  const usernames = user.usernames || [];
+  existingUsernames.innerHTML = '<option value="">Choose existing username</option>';
+  usernames.forEach((entry) => {
+    const option = document.createElement('option');
+    option.value = entry.value;
+    option.textContent = entry.value;
+    existingUsernames.appendChild(option);
+  });
+}
+
+async function onCheckUsername() {
+  const username = usernameInput.value.trim();
+  if (!username) return;
+  try {
+    await apiRequest('/api/usernames/check', { method: 'POST', body: JSON.stringify({ username }) });
+    usernameHint.textContent = 'Username is available.';
+    usernameHint.style.color = '#0f8a3a';
+  } catch (error) {
+    usernameHint.textContent = error.message;
+    usernameHint.style.color = '#d14343';
+  }
+}
+
+async function onCreateUsername(event) {
+  event.preventDefault();
+  const picked = existingUsernames.value.trim();
+  const username = usernameInput.value.trim();
+
+  try {
+    let payload;
+    if (picked) {
+      payload = await apiRequest('/api/auth/session/select-username', {
+        method: 'POST',
+        body: JSON.stringify({ userId: activeSession.id, username: picked })
+      });
+    } else {
+      payload = await apiRequest('/api/usernames', {
+        method: 'POST',
+        body: JSON.stringify({ userId: activeSession.id, username })
+      });
+    }
+
+    saveJson(AUTH_SESSION_KEY, payload.session);
+    usernameForm.hidden = true;
+    signupForm.hidden = false;
+    loginForm.hidden = false;
+    setAuthMessage('', false);
+    await syncAuthUsers();
+    await loadSession();
+    openTab('home');
+  } catch (error) {
+    setAuthMessage(error.message, false);
+  }
 }
 
 function setAuthMessage(message, success) {
@@ -265,17 +386,38 @@ function setAuthMessage(message, success) {
   authMessage.textContent = message;
 }
 
-function loadSession() {
+async function loadSession() {
   activeSession = loadJson(AUTH_SESSION_KEY, null);
   if (!activeSession?.id) {
     authGate.hidden = false;
     appShell.hidden = true;
+    usernameForm.hidden = true;
+    signupForm.hidden = false;
+    loginForm.hidden = false;
     return;
   }
+
+  await syncAuthUsers();
+  const dbUser = authUsers.find((u) => u.id === activeSession.id);
+  if (!dbUser) {
+    localStorage.removeItem(AUTH_SESSION_KEY);
+    activeSession = null;
+    authGate.hidden = false;
+    appShell.hidden = true;
+    return;
+  }
+
+  if (!activeSession.username) {
+    authGate.hidden = false;
+    appShell.hidden = true;
+    openOnboarding(dbUser);
+    return;
+  }
+
   authGate.hidden = true;
   appShell.hidden = false;
   renderHome();
-  renderExploreUsers();
+  await renderExploreUsers();
   renderUploads();
   renderChannelManager();
 }
@@ -445,7 +587,7 @@ async function onUploadSubmit(event) {
 
   const baseRecord = {
     type: selectedUploadType,
-    userName: activeSession.name,
+    userName: activeHandle(),
     caption,
     description,
     createdAt: new Date().toISOString(),
@@ -536,8 +678,9 @@ function validateUploadForType(type, files, caption, description) {
 }
 
 
-function renderExploreUsers(query = '') {
-  const users = loadJson(AUTH_USERS_KEY, []);
+async function renderExploreUsers(query = '') {
+  if (!authUsers.length) await syncAuthUsers();
+  const users = authUsers;
   const normalizedQuery = String(query).trim().toLowerCase();
   const now = Date.now();
 
@@ -553,12 +696,13 @@ function renderExploreUsers(query = '') {
   const rows = users
     .filter((u) => {
       if (!normalizedQuery) return true;
-      return u.name.toLowerCase().includes(normalizedQuery) || u.email.toLowerCase().includes(normalizedQuery);
+      return (u.name || '').toLowerCase().includes(normalizedQuery) || (u.email || '').toLowerCase().includes(normalizedQuery) || (u.username || '').toLowerCase().includes(normalizedQuery);
     })
     .map((u) => {
-      const lastUploadTs = byUserLatestUpload.get(u.name) || 0;
+      const displayName = u.username || u.name;
+      const lastUploadTs = byUserLatestUpload.get(displayName) || 0;
       const isActive = u.id === activeSession?.id || (lastUploadTs && now - lastUploadTs < 24 * 60 * 60 * 1000);
-      return { ...u, isActive, lastUploadTs };
+      return { ...u, displayName, isActive, lastUploadTs };
     })
     .sort((a, b) => Number(b.isActive) - Number(a.isActive) || (b.lastUploadTs - a.lastUploadTs));
 
@@ -569,14 +713,14 @@ function renderExploreUsers(query = '') {
   }
 
   rows.forEach((u) => {
-    const initials = u.name.split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
+    const initials = (u.displayName || 'User').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
     const card = document.createElement('div');
     card.className = 'explore-user-card glass';
     card.innerHTML = `
       <div class="explore-user-head">
         <div class="avatar">${escapeHtml(initials || 'U')}</div>
         <div>
-          <strong>${escapeHtml(u.name)}</strong>
+          <strong>${escapeHtml(u.displayName || u.name)}</strong>
           <p>${escapeHtml(u.email)}</p>
         </div>
       </div>
@@ -588,7 +732,7 @@ function renderExploreUsers(query = '') {
 
 function renderUploads() {
   uploadList.innerHTML = '';
-  const mine = activeSession ? uploads.filter((u) => u.userName === activeSession.name) : [];
+  const mine = activeSession ? uploads.filter((u) => u.userName === activeHandle()) : [];
   if (!mine.length) {
     uploadList.innerHTML = '<div class="upload-item glass"><p>No uploads yet for your account.</p></div>';
     return;
@@ -733,7 +877,7 @@ function addComment(postId, text) {
     const interactions = u.interactions || { likes: 0, likedBy: [], comments: [] };
     return {
       ...u,
-      interactions: { ...interactions, comments: [...interactions.comments, { user: activeSession.name, text: content, ts: Date.now() }] }
+      interactions: { ...interactions, comments: [...interactions.comments, { user: activeHandle(), text: content, ts: Date.now() }] }
     };
   });
   persistAndRerender(postId);
@@ -773,7 +917,7 @@ function persistAndRerender(postId) {
 function renderChannelManager() {
   channelContentList.innerHTML = '';
   if (!activeSession) return;
-  const mine = uploads.filter((u) => u.userName === activeSession.name);
+  const mine = uploads.filter((u) => u.userName === activeHandle());
   if (!mine.length) {
     channelContentList.innerHTML = '<div class="channel-card glass"><p>No channel content yet.</p></div>';
     return;
@@ -875,8 +1019,20 @@ function renderMessages() {
   chatStore[activeChat].forEach((msg) => {
     const bubble = document.createElement('div');
     bubble.className = `bubble ${msg.dir}`;
-    const files = msg.files?.length ? `<ul>${msg.files.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>` : '';
-    bubble.innerHTML = `${escapeHtml(msg.text || '')}${files}`;
+    const messageText = document.createElement('span');
+    messageText.textContent = msg.text || '';
+    bubble.appendChild(messageText);
+
+    if (msg.files?.length) {
+      const fileList = document.createElement('ul');
+      msg.files.forEach((f) => {
+        const fileItem = document.createElement('li');
+        fileItem.textContent = f.name;
+        fileList.appendChild(fileItem);
+      });
+      bubble.appendChild(fileList);
+    }
+
     messages.appendChild(bubble);
   });
   messages.scrollTop = messages.scrollHeight;
