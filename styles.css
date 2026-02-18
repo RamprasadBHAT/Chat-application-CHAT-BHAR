@@ -30,11 +30,6 @@ button:hover{filter:brightness(1.03)}
 .auth-card{padding:20px;display:flex;flex-direction:column;gap:12px}
 .auth-form{display:flex;flex-direction:column;gap:10px}
 .auth-form input,.auth-form button{border-radius:12px;border:1px solid var(--border);padding:12px;background:rgba(255,255,255,.45);color:var(--text)}
-.show-password-container { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--muted); margin-top: -4px; margin-bottom: 4px; }
-.show-password-container input { width: auto; padding: 0; margin: 0; }
-.auth-toggle { text-align: center; font-size: 0.9rem; color: var(--muted); margin-top: 8px; }
-.auth-toggle a { color: var(--brand-a); font-weight: 600; text-decoration: none; }
-.auth-toggle a:hover { text-decoration: underline; }
 #authMessage{min-height:16px;color:#d14343}
 
 .app-shell{width:min(100%,480px);min-height:100vh;border-radius:0;padding:10px;border:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,.15));display:flex;flex-direction:column}

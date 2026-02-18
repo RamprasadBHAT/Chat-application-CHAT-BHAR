@@ -1,36 +1,3 @@
 {
-  "users": [
-    {
-      "id": "59d518f0-7d54-4c3f-a5cf-94db4e24e7e0",
-      "name": "Bob",
-      "email": "bob@gmail.com",
-      "password": "password123",
-      "usernames": [
-        {
-          "id": "f1774518-9531-4d33-9ea5-0619a29ce46d",
-          "value": "bob",
-          "createdAt": 1771429125779,
-          "updatedAt": 1771429125779
-        }
-      ],
-      "usernameChangeLogs": [],
-      "activeUsernameId": "f1774518-9531-4d33-9ea5-0619a29ce46d"
-    },
-    {
-      "id": "6ff65df8-35d6-4994-b0fd-289f3e24ff7c",
-      "name": "Alice",
-      "email": "alice@gmail.com",
-      "password": "password123",
-      "usernames": [
-        {
-          "id": "406ff1f2-219a-4043-bf0c-03b918a099a8",
-          "value": "alice",
-          "createdAt": 1771429127743,
-          "updatedAt": 1771429127743
-        }
-      ],
-      "usernameChangeLogs": [],
-      "activeUsernameId": "406ff1f2-219a-4043-bf0c-03b918a099a8"
-    }
-  ]
+  "users": []
 }

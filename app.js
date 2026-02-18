@@ -126,12 +126,25 @@ let typingTimeout = null;
 const presenceBus = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('chatbhar-presence') : null;
 let uploads = loadJson(UPLOAD_STORE_KEY, []);
 let activeSession = null;
+let uploads = loadJson(UPLOAD_STORE_KEY, []);
+let activeSession = null;
 let authUsers = [];
 let activeStoryItems = [];
 let activeStoryIndex = 0;
 let activePostViewerId = null;
 let confirmAction = null;
 
+bootstrapUsers();
+loadSession();
+bindEvents();
+applyUploadType();
+renderChatUsers();
+renderMessages();
+renderUploads();
+renderHome();
+renderExploreUsers();
+renderChannelManager();
+initEnhancedMessaging();
 initApp();
 
 async function initApp() {
@@ -145,7 +158,6 @@ async function initApp() {
   renderHome();
   await renderExploreUsers();
   renderChannelManager();
-  initEnhancedMessaging();
 }
 
 function loadJson(key, fallback) {
@@ -154,6 +166,8 @@ function loadJson(key, fallback) {
   try { return JSON.parse(raw); } catch { return structuredClone(fallback); }
 }
 function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
+function bootstrapUsers() { if (!localStorage.getItem(AUTH_USERS_KEY)) saveJson(AUTH_USERS_KEY, []); }
+
 
 function loadLocalAuthDb() {
   const data = loadJson(AUTH_USERS_KEY, { users: [] });
@@ -329,7 +343,6 @@ async function syncAuthUsers() {
     authUsers = [];
   }
 }
-
 async function bootstrapUsers() {
   await syncAuthUsers();
 }
@@ -343,41 +356,6 @@ function bindEvents() {
   themeToggle.addEventListener('click', toggleTheme);
   navButtons.forEach((btn) => btn.addEventListener('click', () => openTab(btn.dataset.tab)));
   exploreSearchInput.addEventListener('input', () => renderExploreUsers(exploreSearchInput.value));
-
-  const showSignupPassword = document.getElementById('showSignupPassword');
-  const showLoginPassword = document.getElementById('showLoginPassword');
-  if (showSignupPassword) {
-    showSignupPassword.addEventListener('change', (e) => {
-      const type = e.target.checked ? 'text' : 'password';
-      document.getElementById('signupPassword').type = type;
-      document.getElementById('signupConfirmPassword').type = type;
-    });
-  }
-  if (showLoginPassword) {
-    showLoginPassword.addEventListener('change', (e) => {
-      const type = e.target.checked ? 'text' : 'password';
-      document.getElementById('passwordInput').type = type;
-    });
-  }
-
-  const showLoginFormBtn = document.getElementById('showLoginForm');
-  const showSignupFormBtn = document.getElementById('showSignupForm');
-  if (showLoginFormBtn) {
-    showLoginFormBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      signupForm.hidden = true;
-      loginForm.hidden = false;
-      setAuthMessage('', false);
-    });
-  }
-  if (showSignupFormBtn) {
-    showSignupFormBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      loginForm.hidden = true;
-      signupForm.hidden = false;
-      setAuthMessage('', false);
-    });
-  }
 
   uploadTypeRow.addEventListener('click', (event) => {
     const btn = event.target.closest('.type-btn');
@@ -436,6 +414,8 @@ function bindEvents() {
     confirmAction = null;
   });
 
+  if (newChatBtn) newChatBtn.addEventListener('click', createNewChat);
+  newChatBtn.addEventListener('click', createNewChat);
   deleteChatBtn.addEventListener('click', deleteCurrentChat);
   chatMenuBtn.addEventListener('click', () => (chatMenu.hidden = !chatMenu.hidden));
   document.addEventListener('click', (e) => {
@@ -482,14 +462,38 @@ function applyUploadType() {
   uploadDescription.required = rule.descriptionRequired;
 }
 
+function onSignup(event) {
 async function onSignup(event) {
   event.preventDefault();
   const name = document.getElementById('signupName').value.trim();
   const email = document.getElementById('signupEmail').value.trim().toLowerCase();
   const password = document.getElementById('signupPassword').value;
-  const confirmPassword = document.getElementById('signupConfirmPassword').value;
-  if (!name || !email || !password || !confirmPassword) return setAuthMessage('Please fill all signup fields.', false);
-  if (password !== confirmPassword) return setAuthMessage('Passwords do not match.', false);
+  if (!name || !email || !password) return setAuthMessage('Please fill all signup fields.', false);
+
+  const users = loadJson(AUTH_USERS_KEY, []);
+  if (users.some((u) => u.email === email)) return setAuthMessage('Email already exists. Please login.', false);
+
+  users.push({ id: crypto.randomUUID(), name, email, password, role: 'user' });
+  saveJson(AUTH_USERS_KEY, users);
+  signupForm.reset();
+  setAuthMessage('Signup successful. You can now login.', true);
+  renderExploreUsers();
+}
+
+function onLogin(event) {
+  event.preventDefault();
+  const email = document.getElementById('emailInput').value.trim().toLowerCase();
+  const password = document.getElementById('passwordInput').value;
+  const users = loadJson(AUTH_USERS_KEY, []);
+  const found = users.find((u) => u.email === email && u.password === password);
+  if (!found) return setAuthMessage('Invalid email/password.', false);
+
+  saveJson(AUTH_SESSION_KEY, { id: found.id, name: found.name, email: found.email, role: found.role });
+  setAuthMessage('', false);
+  loadSession();
+  openTab('home');
+  if (!email.endsWith('@gmail.com')) return setAuthMessage('Signup requires a valid @gmail.com address.', false);
+  if (password.length < 8) return setAuthMessage('Password must be at least 8 characters.', false);
 
   try {
     const payload = await apiRequest('/api/auth/signup', {
@@ -595,11 +599,24 @@ function setAuthMessage(message, success) {
   authMessage.textContent = message;
 }
 
+function loadSession() {
 async function loadSession() {
   activeSession = loadJson(AUTH_SESSION_KEY, null);
   if (!activeSession?.id) {
     authGate.hidden = false;
     appShell.hidden = true;
+    return;
+  }
+  authGate.hidden = true;
+  appShell.hidden = false;
+  renderHome();
+  renderExploreUsers();
+  renderUploads();
+  renderChannelManager();
+initEnhancedMessaging();
+    usernameForm.hidden = true;
+    signupForm.hidden = false;
+    loginForm.hidden = false;
     return;
   }
 
@@ -793,6 +810,7 @@ async function onUploadSubmit(event) {
 
   const baseRecord = {
     type: selectedUploadType,
+    userName: activeSession.name,
     userName: activeHandle(),
     caption,
     description,
@@ -830,7 +848,7 @@ async function onUploadSubmit(event) {
   renderUploads();
   renderHome();
   renderChannelManager();
-  initEnhancedMessaging();
+initEnhancedMessaging();
 }
 
 function updateProgress(fraction) {
@@ -885,6 +903,8 @@ function validateUploadForType(type, files, caption, description) {
 }
 
 
+function renderExploreUsers(query = '') {
+  const users = loadJson(AUTH_USERS_KEY, []);
 async function renderExploreUsers(query = '') {
   if (!authUsers.length) await syncAuthUsers();
   const users = authUsers;
@@ -903,6 +923,12 @@ async function renderExploreUsers(query = '') {
   const rows = users
     .filter((u) => {
       if (!normalizedQuery) return true;
+      return u.name.toLowerCase().includes(normalizedQuery) || u.email.toLowerCase().includes(normalizedQuery);
+    })
+    .map((u) => {
+      const lastUploadTs = byUserLatestUpload.get(u.name) || 0;
+      const isActive = u.id === activeSession?.id || (lastUploadTs && now - lastUploadTs < 24 * 60 * 60 * 1000);
+      return { ...u, isActive, lastUploadTs };
       return (u.name || '').toLowerCase().includes(normalizedQuery) || (u.email || '').toLowerCase().includes(normalizedQuery) || (u.username || '').toLowerCase().includes(normalizedQuery);
     })
     .map((u) => {
@@ -920,6 +946,7 @@ async function renderExploreUsers(query = '') {
   }
 
   rows.forEach((u) => {
+    const initials = u.name.split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
     const initials = (u.displayName || 'User').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
     const card = document.createElement('div');
     card.className = 'explore-user-card glass';
@@ -927,6 +954,7 @@ async function renderExploreUsers(query = '') {
       <div class="explore-user-head">
         <div class="avatar">${escapeHtml(initials || 'U')}</div>
         <div>
+          <strong>${escapeHtml(u.name)}</strong>
           <strong>${escapeHtml(u.displayName || u.name)}</strong>
           <p>${escapeHtml(u.email)}</p>
         </div>
@@ -939,6 +967,7 @@ async function renderExploreUsers(query = '') {
 
 function renderUploads() {
   uploadList.innerHTML = '';
+  const mine = activeSession ? uploads.filter((u) => u.userName === activeSession.name) : [];
   const mine = activeSession ? uploads.filter((u) => u.userName === activeHandle()) : [];
   if (!mine.length) {
     uploadList.innerHTML = '<div class="upload-item glass"><p>No uploads yet for your account.</p></div>';
@@ -1084,6 +1113,7 @@ function addComment(postId, text) {
     const interactions = u.interactions || { likes: 0, likedBy: [], comments: [] };
     return {
       ...u,
+      interactions: { ...interactions, comments: [...interactions.comments, { user: activeSession.name, text: content, ts: Date.now() }] }
       interactions: { ...interactions, comments: [...interactions.comments, { user: activeHandle(), text: content, ts: Date.now() }] }
     };
   });
@@ -1117,7 +1147,7 @@ function persistAndRerender(postId) {
   renderHome();
   renderExploreUsers();
   renderChannelManager();
-  initEnhancedMessaging();
+initEnhancedMessaging();
   renderUploads();
   if (!postViewer.hidden && activePostViewerId === postId) openPostViewer(postId);
 }
@@ -1125,6 +1155,7 @@ function persistAndRerender(postId) {
 function renderChannelManager() {
   channelContentList.innerHTML = '';
   if (!activeSession) return;
+  const mine = uploads.filter((u) => u.userName === activeSession.name);
   const mine = uploads.filter((u) => u.userName === activeHandle());
   if (!mine.length) {
     channelContentList.innerHTML = '<div class="channel-card glass"><p>No channel content yet.</p></div>';
@@ -1188,7 +1219,7 @@ function persistAllViews() {
   renderHome();
   renderExploreUsers();
   renderChannelManager();
-  initEnhancedMessaging();
+initEnhancedMessaging();
   renderUploads();
 }
 
@@ -1197,7 +1228,6 @@ function openStoryViewer(items, index) {
   showStoryByIndex(index);
   storyViewer.hidden = false;
 }
-
 function showStoryByIndex(index) {
   if (!activeStoryItems.length) return;
   activeStoryIndex = (index + activeStoryItems.length) % activeStoryItems.length;
@@ -1207,18 +1237,14 @@ function showStoryByIndex(index) {
 }
 
 function renderChatUsers() {
-  if (!chatUsersWrap) return;
   chatUsersWrap.innerHTML = '';
-  Object.keys(chatStore).forEach((chatId) => {
-    const latest = chatStore[chatId].at(-1);
-    const meta = chatMeta[chatId] || { name: chatId, online: false };
+  Object.keys(chatStore).forEach((name) => {
+    const latest = chatStore[name].at(-1);
     const btn = document.createElement('button');
-    btn.className = `chat-user ${chatId === activeChat ? 'active' : ''}`;
-    const status = meta.online ? '🟢' : '⚪';
-    const preview = latest?.text || latest?.files?.[0]?.name || 'No messages yet';
-    btn.innerHTML = `${status} ${escapeHtml(meta.name)}<small>${escapeHtml(preview)}</small>`;
+    btn.className = `chat-user ${name === activeChat ? 'active' : ''}`;
+    btn.innerHTML = `${escapeHtml(name)}<small>${escapeHtml(latest?.text || latest?.files?.[0]?.name || 'No messages yet')}</small>`;
     btn.addEventListener('click', () => {
-      activeChat = chatId;
+      activeChat = name;
       renderChatUsers();
       renderMessages();
     });
@@ -1227,74 +1253,48 @@ function renderChatUsers() {
 }
 
 function renderMessages() {
-  if (!messages) return;
   if (!chatStore[activeChat]) chatStore[activeChat] = [];
-  const meta = chatMeta[activeChat] || { name: activeChat, online: false };
-  activeChatTitle.textContent = meta.name;
-  if (typingIndicator && !typingIndicator.textContent) typingIndicator.textContent = meta.online ? 'online' : 'offline';
-
+  activeChatTitle.textContent = activeChat;
   messages.innerHTML = '';
-  chatStore[activeChat].forEach((msg, idx) => {
+  chatStore[activeChat].forEach((msg) => {
     const bubble = document.createElement('div');
     bubble.className = `bubble ${msg.dir}`;
+    const files = msg.files?.length ? `<ul>${msg.files.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>` : '';
+    bubble.innerHTML = `${escapeHtml(msg.text || '')}${files}`;
+    const messageText = document.createElement('span');
+    messageText.textContent = msg.text || '';
+    bubble.appendChild(messageText);
 
-    let fileHtml = '';
-    (msg.files || []).forEach((f) => {
-      const ext = (f.name.split('.').pop() || '').toLowerCase();
-      const isImage = (f.type || '').startsWith('image/');
-      const hideName = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif'].includes(ext);
+    if (msg.files?.length) {
+      const fileList = document.createElement('ul');
+      msg.files.forEach((f) => {
+        const fileItem = document.createElement('li');
+        fileItem.textContent = f.name;
+        fileList.appendChild(fileItem);
+      });
+      bubble.appendChild(fileList);
+    }
 
-      if (isImage && msg.viewOnce && msg.viewOnceConsumed) {
-        fileHtml += '<div class="view-once-placeholder">📷 Photo</div>';
-        return;
-      }
-
-      if (isImage) {
-        const ratio = f.width && f.height && f.width > f.height ? 'landscape' : '';
-        fileHtml += `<div class="chat-image ${ratio}" data-open-img="${idx}"><img src="${f.dataUrl}" alt="img" loading="lazy" />${msg.viewOnce ? '<div class="view-once-badge">1x view once</div>' : ''}${hideName ? '' : `<small>${escapeHtml(f.name)}</small>`}</div>`;
-      } else {
-        const showName = ext === 'pdf' || !isImage;
-        fileHtml += `<div>${fileIcon(f.type)} ${showName ? `<a href="${f.dataUrl}" download="${escapeAttr(f.name)}">${escapeHtml(f.name)}</a>` : ''}</div>`;
-      }
-    });
-
-    bubble.innerHTML = `${escapeHtml(msg.text || '')}${fileHtml}`;
     messages.appendChild(bubble);
   });
-
-  messages.querySelectorAll('[data-open-img]').forEach((el) => {
-    el.addEventListener('click', () => {
-      const idx = Number(el.getAttribute('data-open-img'));
-      openImageFromMessage(idx);
-    });
-  });
-
   messages.scrollTop = messages.scrollHeight;
 }
 
-function openImageFromMessage(idx) {
-  const msg = chatStore[activeChat][idx];
-  const img = (msg.files || []).find((f) => (f.type || '').startsWith('image/'));
-  if (!img) return;
-  postViewerTitle.textContent = msg.viewOnce ? 'View Once Photo' : 'Photo';
-  postViewerMedia.innerHTML = `<div class="media-9x16"><img src="${img.dataUrl}" alt="photo" /></div>`;
-  postViewerInteraction.innerHTML = '';
-  postViewer.hidden = false;
-
-  if (msg.viewOnce && msg.dir === 'incoming' && !msg.viewOnceConsumed) {
-    msg.viewOnceConsumed = true;
-    msg.files = msg.files.map((f) => ({ ...f, dataUrl: '' }));
-    saveJson(CHAT_STORE_KEY, chatStore);
-    renderMessages();
+function renderAttachmentPreview() {
+  if (!pendingFiles.length) {
+    attachmentPreview.hidden = true;
+    attachmentPreview.innerHTML = '';
+    return;
   }
+  attachmentPreview.hidden = false;
+  attachmentPreview.innerHTML = `<strong>Attachments</strong><ul>${pendingFiles.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>`;
 }
 
-async function sendMessage(prepared = null) {
-  const payload = prepared || { text: messageInput.value.trim(), files: pendingFiles, viewOnce: Boolean(viewOnceToggle?.checked) };
-  if (!payload.text && !(payload.files || []).length) return;
-  const ts = Date.now();
+async function sendMessage() {
+  const text = messageInput.value.trim();
+  if (!text && !pendingFiles.length) return;
   if (!chatStore[activeChat]) chatStore[activeChat] = [];
-  chatStore[activeChat].push({ dir: 'outgoing', text: payload.text, files: payload.files, viewOnce: payload.viewOnce, viewOnceConsumed: false, ts });
+  chatStore[activeChat].push({ dir: 'outgoing', text, files: pendingFiles, ts: Date.now() });
   saveJson(CHAT_STORE_KEY, chatStore);
 
   if (presenceBus && activeSession) {
@@ -1320,21 +1320,21 @@ async function sendMessage(prepared = null) {
   messageInput.value = '';
   fileInput.value = '';
   pendingFiles = [];
-  if (viewOnceToggle) viewOnceToggle.checked = false;
   renderAttachmentPreview();
   renderChatUsers();
   renderMessages();
 }
 
-function renderAttachmentPreview() {
-  if (!attachmentPreview) return;
-  if (!pendingFiles.length) {
-    attachmentPreview.hidden = true;
-    attachmentPreview.innerHTML = '';
-    return;
-  }
-  attachmentPreview.hidden = false;
-  attachmentPreview.innerHTML = `<strong>Attachments</strong><ul>${pendingFiles.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>`;
+function createNewChat() {
+  const name = prompt('Enter chat name:');
+  if (!name) return;
+  const n = name.trim();
+  if (!n) return;
+  if (!chatStore[n]) chatStore[n] = [];
+  activeChat = n;
+  saveJson(CHAT_STORE_KEY, chatStore);
+  renderChatUsers();
+  renderMessages();
 }
 
 function deleteCurrentChat() {
@@ -1387,7 +1387,7 @@ function importBackupFile(event) {
       renderExploreUsers();
       renderUploads();
       renderChannelManager();
-      initEnhancedMessaging();
+initEnhancedMessaging();
     } catch {
       authMessage.textContent = 'Backup import failed.';
     }
@@ -1396,7 +1396,7 @@ function importBackupFile(event) {
 }
 
 function cdnUrl(url) {
-  return url;
+  return url; // CDN-ready abstraction for future remote delivery
 }
 
 function normalizeFiles(files) {
@@ -1433,8 +1433,8 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 }
-
 function escapeAttr(value) { return String(value).replaceAll('"', '&quot;'); }
+
 
 function initEnhancedMessaging() {
   ensureChatMeta();
@@ -1525,9 +1525,8 @@ function ensureChatMeta() {
   saveJson('chatbhar.chatMeta', chatMeta);
 }
 
-async function openContactModal() {
-  await syncAuthUsers();
-  const users = authUsers.filter((u) => u.id !== activeSession?.id);
+function openContactModal() {
+  const users = loadJson(AUTH_USERS_KEY, []).filter((u) => u.id !== activeSession?.id);
   contactList.innerHTML = '';
   users.forEach((u) => {
     const row = document.createElement('div');
@@ -1549,9 +1548,8 @@ async function openContactModal() {
   contactModal.hidden = false;
 }
 
-async function openGroupModal() {
-  await syncAuthUsers();
-  const users = authUsers.filter((u) => u.id !== activeSession?.id);
+function openGroupModal() {
+  const users = loadJson(AUTH_USERS_KEY, []).filter((u) => u.id !== activeSession?.id);
   groupContactList.innerHTML = '';
   users.forEach((u) => {
     const row = document.createElement('label');
@@ -1602,3 +1600,106 @@ function announcePresence(online) {
   if (!presenceBus || !activeSession) return;
   presenceBus.postMessage({ type: 'presence', userId: activeSession.id, online });
 }
+
+function renderChatUsers() {
+  if (!chatUsersWrap) return;
+  chatUsersWrap.innerHTML = '';
+  Object.keys(chatStore).forEach((chatId) => {
+    const latest = chatStore[chatId].at(-1);
+    const meta = chatMeta[chatId] || { name: chatId, online: false };
+    const btn = document.createElement('button');
+    btn.className = `chat-user ${chatId === activeChat ? 'active' : ''}`;
+    const status = meta.online ? '🟢' : '⚪';
+    const preview = latest?.text || latest?.files?.[0]?.name || 'No messages yet';
+    btn.innerHTML = `${status} ${escapeHtml(meta.name)}<small>${escapeHtml(preview)}</small>`;
+    btn.addEventListener('click', () => {
+      activeChat = chatId;
+      renderChatUsers();
+      renderMessages();
+    });
+    chatUsersWrap.appendChild(btn);
+  });
+}
+
+function renderMessages() {
+  if (!messages) return;
+  if (!chatStore[activeChat]) chatStore[activeChat] = [];
+  const meta = chatMeta[activeChat] || { name: activeChat, online: false };
+  activeChatTitle.textContent = meta.name;
+  if (typingIndicator && !typingIndicator.textContent) typingIndicator.textContent = meta.online ? 'online' : 'offline';
+
+  messages.innerHTML = '';
+  chatStore[activeChat].forEach((msg, idx) => {
+    const bubble = document.createElement('div');
+    bubble.className = `bubble ${msg.dir}`;
+
+    let fileHtml = '';
+    (msg.files || []).forEach((f) => {
+      const ext = (f.name.split('.').pop() || '').toLowerCase();
+      const isImage = (f.type || '').startsWith('image/');
+      const hideName = ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
+
+      if (isImage && msg.viewOnce && msg.viewOnceConsumed) {
+        fileHtml += '<div class="view-once-placeholder">📷 Photo</div>';
+        return;
+      }
+
+      if (isImage) {
+        const ratio = f.width && f.height && f.width > f.height ? 'landscape' : '';
+        fileHtml += `<div class="chat-image ${ratio}" data-open-img="${idx}"><img src="${f.dataUrl}" alt="img" loading="lazy" />${msg.viewOnce ? '<div class="view-once-badge">1x view once</div>' : ''}${hideName ? '' : `<small>${escapeHtml(f.name)}</small>`}</div>`;
+      } else {
+        const showName = ext === 'pdf' || !isImage;
+        fileHtml += `<div>${fileIcon(f.type)} ${showName ? `<a href="${f.dataUrl}" download="${escapeAttr(f.name)}">${escapeHtml(f.name)}</a>` : ''}</div>`;
+      }
+    });
+
+    bubble.innerHTML = `${escapeHtml(msg.text || '')}${fileHtml}`;
+    messages.appendChild(bubble);
+  });
+
+  messages.querySelectorAll('[data-open-img]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const idx = Number(el.getAttribute('data-open-img'));
+      openImageFromMessage(idx);
+    });
+  });
+
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function openImageFromMessage(idx) {
+  const msg = chatStore[activeChat][idx];
+  const img = (msg.files || []).find((f) => (f.type || '').startsWith('image/'));
+  if (!img) return;
+  postViewerTitle.textContent = msg.viewOnce ? 'View Once Photo' : 'Photo';
+  postViewerMedia.innerHTML = `<div class="media-9x16"><img src="${img.dataUrl}" alt="photo" /></div>`;
+  postViewerInteraction.innerHTML = '';
+  postViewer.hidden = false;
+
+  if (msg.viewOnce && msg.dir === 'incoming' && !msg.viewOnceConsumed) {
+    msg.viewOnceConsumed = true;
+    msg.files = msg.files.map((f) => ({ ...f, dataUrl: '' }));
+    saveJson(CHAT_STORE_KEY, chatStore);
+    renderMessages();
+  }
+}
+
+async function sendMessage(prepared = null) {
+  const payload = prepared || { text: messageInput.value.trim(), files: pendingFiles, viewOnce: Boolean(viewOnceToggle?.checked) };
+  if (!payload.text && !(payload.files || []).length) return;
+  if (!chatStore[activeChat]) chatStore[activeChat] = [];
+  chatStore[activeChat].push({ dir: 'outgoing', text: payload.text, files: payload.files, viewOnce: payload.viewOnce, viewOnceConsumed: false, ts: Date.now() });
+  saveJson(CHAT_STORE_KEY, chatStore);
+  messageInput.value = '';
+  fileInput.value = '';
+  pendingFiles = [];
+  if (viewOnceToggle) viewOnceToggle.checked = false;
+  renderAttachmentPreview();
+  renderChatUsers();
+  renderMessages();
+}
+
+function createNewChat() {}
+  
+  
+  
