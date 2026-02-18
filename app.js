@@ -54,7 +54,6 @@ const shareBackupBtn = document.getElementById('shareBackupBtn');
 const importBackupBtn = document.getElementById('importBackupBtn');
 const backupInput = document.getElementById('backupInput');
 const chatUsersWrap = document.getElementById('chatUsersWrap');
-const newChatBtn = document.getElementById('newChatBtn');
 const deleteChatBtn = document.getElementById('deleteChatBtn');
 const chatMenuBtn = document.getElementById('chatMenuBtn');
 const chatMenu = document.getElementById('chatMenu');
@@ -332,11 +331,6 @@ async function syncAuthUsers() {
 }
 
 async function bootstrapUsers() {
-  if (!localStorage.getItem(AUTH_RESET_DONE_KEY)) {
-    localStorage.removeItem(AUTH_USERS_KEY);
-    try { await apiRequest('/api/admin/reset-signups', { method: 'POST' }); } catch {}
-    localStorage.setItem(AUTH_RESET_DONE_KEY, '1');
-  }
   await syncAuthUsers();
 }
 
@@ -442,7 +436,6 @@ function bindEvents() {
     confirmAction = null;
   });
 
-  if (newChatBtn) newChatBtn.addEventListener('click', createNewChat);
   deleteChatBtn.addEventListener('click', deleteCurrentChat);
   chatMenuBtn.addEventListener('click', () => (chatMenu.hidden = !chatMenu.hidden));
   document.addEventListener('click', (e) => {
@@ -1249,7 +1242,7 @@ function renderMessages() {
     (msg.files || []).forEach((f) => {
       const ext = (f.name.split('.').pop() || '').toLowerCase();
       const isImage = (f.type || '').startsWith('image/');
-      const hideName = ['jpg', 'jpeg', 'png', 'webp'].includes(ext);
+      const hideName = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif'].includes(ext);
 
       if (isImage && msg.viewOnce && msg.viewOnceConsumed) {
         fileHtml += '<div class="view-once-placeholder">📷 Photo</div>';
@@ -1299,9 +1292,31 @@ function openImageFromMessage(idx) {
 async function sendMessage(prepared = null) {
   const payload = prepared || { text: messageInput.value.trim(), files: pendingFiles, viewOnce: Boolean(viewOnceToggle?.checked) };
   if (!payload.text && !(payload.files || []).length) return;
+  const ts = Date.now();
   if (!chatStore[activeChat]) chatStore[activeChat] = [];
-  chatStore[activeChat].push({ dir: 'outgoing', text: payload.text, files: payload.files, viewOnce: payload.viewOnce, viewOnceConsumed: false, ts: Date.now() });
+  chatStore[activeChat].push({ dir: 'outgoing', text: payload.text, files: payload.files, viewOnce: payload.viewOnce, viewOnceConsumed: false, ts });
   saveJson(CHAT_STORE_KEY, chatStore);
+
+  if (presenceBus && activeSession) {
+    const meta = chatMeta[activeChat];
+    if (meta) {
+      meta.participants.forEach(pId => {
+        if (pId !== activeSession.id) {
+          presenceBus.postMessage({
+            type: 'message',
+            toId: pId,
+            fromId: activeChat,
+            senderId: activeSession.id,
+            senderName: activeHandle(),
+            text: payload.text,
+            files: payload.files,
+            viewOnce: payload.viewOnce,
+            ts
+          });
+        }
+      });
+    }
+  }
   messageInput.value = '';
   fileInput.value = '';
   pendingFiles = [];
@@ -1320,18 +1335,6 @@ function renderAttachmentPreview() {
   }
   attachmentPreview.hidden = false;
   attachmentPreview.innerHTML = `<strong>Attachments</strong><ul>${pendingFiles.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>`;
-}
-
-function createNewChat() {
-  const name = prompt('Enter chat name:');
-  if (!name) return;
-  const n = name.trim();
-  if (!n) return;
-  if (!chatStore[n]) chatStore[n] = [];
-  activeChat = n;
-  saveJson(CHAT_STORE_KEY, chatStore);
-  renderChatUsers();
-  renderMessages();
 }
 
 function deleteCurrentChat() {
@@ -1455,6 +1458,24 @@ function initEnhancedMessaging() {
       if (msg.type === 'typing' && msg.chatId === activeChat && msg.userId !== activeSession?.id) {
         typingIndicator.textContent = msg.typing ? `${msg.name || 'User'} is typing...` : '';
       }
+      if (msg.type === 'message' && msg.toId === activeSession?.id) {
+        const chatId = msg.fromId.startsWith('group:') ? msg.fromId : `dm:${msg.senderId}`;
+        if (!chatStore[chatId]) chatStore[chatId] = [];
+        chatStore[chatId].push({
+          dir: 'incoming',
+          text: msg.text,
+          files: msg.files,
+          viewOnce: msg.viewOnce,
+          viewOnceConsumed: false,
+          ts: msg.ts,
+          senderName: msg.senderName
+        });
+        saveJson(CHAT_STORE_KEY, chatStore);
+        if (activeChat === chatId) {
+          renderMessages();
+        }
+        renderChatUsers();
+      }
     };
   }
 }
@@ -1467,10 +1488,10 @@ function bindMessagingUI() {
   if (createGroupConfirm) createGroupConfirm.addEventListener('click', createGroupChat);
 
   if (messageInput) {
-    messageInput.addEventListener('input', () => {
+    messageInput.addEventListener('keypress', () => {
       clearTimeout(typingTimeout);
       sendTyping(true);
-      typingTimeout = setTimeout(() => sendTyping(false), 800);
+      typingTimeout = setTimeout(() => sendTyping(false), 1200);
     });
   }
 
@@ -1504,8 +1525,9 @@ function ensureChatMeta() {
   saveJson('chatbhar.chatMeta', chatMeta);
 }
 
-function openContactModal() {
-  const users = loadJson(AUTH_USERS_KEY, { users: [] }).users.filter((u) => u.id !== activeSession?.id);
+async function openContactModal() {
+  await syncAuthUsers();
+  const users = authUsers.filter((u) => u.id !== activeSession?.id);
   contactList.innerHTML = '';
   users.forEach((u) => {
     const row = document.createElement('div');
@@ -1527,8 +1549,9 @@ function openContactModal() {
   contactModal.hidden = false;
 }
 
-function openGroupModal() {
-  const users = loadJson(AUTH_USERS_KEY, { users: [] }).users.filter((u) => u.id !== activeSession?.id);
+async function openGroupModal() {
+  await syncAuthUsers();
+  const users = authUsers.filter((u) => u.id !== activeSession?.id);
   groupContactList.innerHTML = '';
   users.forEach((u) => {
     const row = document.createElement('label');
