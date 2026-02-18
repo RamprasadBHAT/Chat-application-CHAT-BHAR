@@ -54,7 +54,6 @@ const shareBackupBtn = document.getElementById('shareBackupBtn');
 const importBackupBtn = document.getElementById('importBackupBtn');
 const backupInput = document.getElementById('backupInput');
 const chatUsersWrap = document.getElementById('chatUsersWrap');
-const newChatBtn = document.getElementById('newChatBtn');
 const deleteChatBtn = document.getElementById('deleteChatBtn');
 const chatMenuBtn = document.getElementById('chatMenuBtn');
 const chatMenu = document.getElementById('chatMenu');
@@ -345,11 +344,6 @@ async function syncAuthUsers() {
   }
 }
 async function bootstrapUsers() {
-  if (!localStorage.getItem(AUTH_RESET_DONE_KEY)) {
-    localStorage.removeItem(AUTH_USERS_KEY);
-    try { await apiRequest('/api/admin/reset-signups', { method: 'POST' }); } catch {}
-    localStorage.setItem(AUTH_RESET_DONE_KEY, '1');
-  }
   await syncAuthUsers();
 }
 
@@ -1302,6 +1296,27 @@ async function sendMessage() {
   if (!chatStore[activeChat]) chatStore[activeChat] = [];
   chatStore[activeChat].push({ dir: 'outgoing', text, files: pendingFiles, ts: Date.now() });
   saveJson(CHAT_STORE_KEY, chatStore);
+
+  if (presenceBus && activeSession) {
+    const meta = chatMeta[activeChat];
+    if (meta) {
+      meta.participants.forEach(pId => {
+        if (pId !== activeSession.id) {
+          presenceBus.postMessage({
+            type: 'message',
+            toId: pId,
+            fromId: activeChat,
+            senderId: activeSession.id,
+            senderName: activeHandle(),
+            text: payload.text,
+            files: payload.files,
+            viewOnce: payload.viewOnce,
+            ts
+          });
+        }
+      });
+    }
+  }
   messageInput.value = '';
   fileInput.value = '';
   pendingFiles = [];
@@ -1443,6 +1458,24 @@ function initEnhancedMessaging() {
       if (msg.type === 'typing' && msg.chatId === activeChat && msg.userId !== activeSession?.id) {
         typingIndicator.textContent = msg.typing ? `${msg.name || 'User'} is typing...` : '';
       }
+      if (msg.type === 'message' && msg.toId === activeSession?.id) {
+        const chatId = msg.fromId.startsWith('group:') ? msg.fromId : `dm:${msg.senderId}`;
+        if (!chatStore[chatId]) chatStore[chatId] = [];
+        chatStore[chatId].push({
+          dir: 'incoming',
+          text: msg.text,
+          files: msg.files,
+          viewOnce: msg.viewOnce,
+          viewOnceConsumed: false,
+          ts: msg.ts,
+          senderName: msg.senderName
+        });
+        saveJson(CHAT_STORE_KEY, chatStore);
+        if (activeChat === chatId) {
+          renderMessages();
+        }
+        renderChatUsers();
+      }
     };
   }
 }
@@ -1455,10 +1488,10 @@ function bindMessagingUI() {
   if (createGroupConfirm) createGroupConfirm.addEventListener('click', createGroupChat);
 
   if (messageInput) {
-    messageInput.addEventListener('input', () => {
+    messageInput.addEventListener('keypress', () => {
       clearTimeout(typingTimeout);
       sendTyping(true);
-      typingTimeout = setTimeout(() => sendTyping(false), 800);
+      typingTimeout = setTimeout(() => sendTyping(false), 1200);
     });
   }
 
