@@ -147,6 +147,18 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: selected.value } });
   }
 
+  if (url.pathname === '/api/auth/delete-account' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const email = String(body.email || '').toLowerCase().trim();
+    const password = String(body.password || '');
+    const db = readDb();
+    const idx = db.users.findIndex(u => u.email === email && u.password === password);
+    if (idx === -1) return json(res, 401, { error: 'Confirmation failed: Incorrect password.' });
+    db.users.splice(idx, 1);
+    writeDb(db);
+    return json(res, 200, { ok: true });
+  }
+
   if (url.pathname.startsWith('/api/usernames/') && req.method === 'PATCH') {
     const usernameId = url.pathname.split('/').pop();
     const body = await parseBody(req);

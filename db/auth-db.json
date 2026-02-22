@@ -1,3 +1,214 @@
 {
-  "users": []
+  "users": [
+    {
+      "id": "59d518f0-7d54-4c3f-a5cf-94db4e24e7e0",
+      "name": "Bob",
+      "email": "bob@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "f1774518-9531-4d33-9ea5-0619a29ce46d",
+          "value": "bob",
+          "createdAt": 1771429125779,
+          "updatedAt": 1771429125779
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "f1774518-9531-4d33-9ea5-0619a29ce46d"
+    },
+    {
+      "id": "6ff65df8-35d6-4994-b0fd-289f3e24ff7c",
+      "name": "Alice",
+      "email": "alice@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "406ff1f2-219a-4043-bf0c-03b918a099a8",
+          "value": "alice",
+          "createdAt": 1771429127743,
+          "updatedAt": 1771429127743
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "406ff1f2-219a-4043-bf0c-03b918a099a8"
+    },
+    {
+      "id": "f130d86f-c7e6-43e3-ac69-ceb85ca9ed7e",
+      "name": "Test User",
+      "email": "tester@gmail.com",
+      "password": "password123",
+      "usernames": [],
+      "usernameChangeLogs": [],
+      "activeUsernameId": null
+    },
+    {
+      "id": "60bd02a0-2044-46a5-912a-de17708325d0",
+      "name": "Tester User",
+      "email": "tester2@gmail.com",
+      "password": "Password123!",
+      "usernames": [],
+      "usernameChangeLogs": [],
+      "activeUsernameId": null
+    },
+    {
+      "id": "70f3819d-82e7-4853-a073-5912af503581",
+      "name": "Test User",
+      "email": "tester_0k7ehcqb@gmail.com",
+      "password": "Password123!",
+      "usernames": [
+        {
+          "id": "c91ad781-a5ff-4a0f-8559-48ec8481c9a1",
+          "value": "user_0k7ehcqb",
+          "createdAt": 1771753301787,
+          "updatedAt": 1771753301787
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "c91ad781-a5ff-4a0f-8559-48ec8481c9a1"
+    },
+    {
+      "id": "6fe51eed-eeb2-48d4-af9c-131de5be3814",
+      "name": "Test User",
+      "email": "tester_rtgmdi3j@gmail.com",
+      "password": "Password123!",
+      "usernames": [
+        {
+          "id": "3a570cae-3e49-4d14-8f41-44102b6eefe2",
+          "value": "user_rtgmdi3j",
+          "createdAt": 1771753346635,
+          "updatedAt": 1771753346635
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "3a570cae-3e49-4d14-8f41-44102b6eefe2"
+    },
+    {
+      "id": "8358ddbe-ff59-4828-b9d9-bd62c9ff60f8",
+      "name": "Test User",
+      "email": "tester_adsqdy4p@gmail.com",
+      "password": "Password123!",
+      "usernames": [
+        {
+          "id": "560a1508-f42f-4b52-b6cc-554875763e8f",
+          "value": "user_adsqdy4p",
+          "createdAt": 1771753401983,
+          "updatedAt": 1771753401983
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "560a1508-f42f-4b52-b6cc-554875763e8f"
+    },
+    {
+      "id": "ec2c22c5-d92f-451f-8448-b78d86676375",
+      "name": "Test User",
+      "email": "tester_gq7ncwmt@gmail.com",
+      "password": "Password123!",
+      "usernames": [
+        {
+          "id": "28941e22-86ef-47a7-a0d9-8acccc9ac074",
+          "value": "user_gq7ncwmt",
+          "createdAt": 1771753460530,
+          "updatedAt": 1771753460530
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "28941e22-86ef-47a7-a0d9-8acccc9ac074"
+    },
+    {
+      "id": "ecf17d26-9630-40d9-a092-b1c27ba8bc6e",
+      "name": "Test User",
+      "email": "tester_fh9h1wt4@gmail.com",
+      "password": "Password123!",
+      "usernames": [
+        {
+          "id": "b316f733-25c3-4b5d-98bb-13c53f220769",
+          "value": "user_fh9h1wt4",
+          "createdAt": 1771753510812,
+          "updatedAt": 1771753510812
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "b316f733-25c3-4b5d-98bb-13c53f220769"
+    },
+    {
+      "id": "f7f08f9a-ea90-4eab-87cc-f06faf501209",
+      "name": "Test User",
+      "email": "tester_zn7abyvr@gmail.com",
+      "password": "Password123!",
+      "usernames": [
+        {
+          "id": "0bdb305c-a05a-41cb-ab88-489332f346f2",
+          "value": "user_zn7abyvr",
+          "createdAt": 1771753563276,
+          "updatedAt": 1771753563276
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "0bdb305c-a05a-41cb-ab88-489332f346f2"
+    },
+    {
+      "id": "fa88028b-a038-4d9b-93e1-ec0385df13a5",
+      "name": "Test User",
+      "email": "tester_jr01ftfl@gmail.com",
+      "password": "Password123!",
+      "usernames": [
+        {
+          "id": "7365f3ba-4bd7-4290-a059-d8d9eb04df3f",
+          "value": "user_jr01ftfl",
+          "createdAt": 1771753618341,
+          "updatedAt": 1771753618341
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "7365f3ba-4bd7-4290-a059-d8d9eb04df3f"
+    },
+    {
+      "id": "63808c35-1b93-431c-8e47-2023d7789d58",
+      "name": "Test User",
+      "email": "tester_7e53aq1h@gmail.com",
+      "password": "Password123!",
+      "usernames": [
+        {
+          "id": "13b56675-616d-4acc-9b7b-7eee51e72c6b",
+          "value": "user_7e53aq1h",
+          "createdAt": 1771753672990,
+          "updatedAt": 1771753672990
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "13b56675-616d-4acc-9b7b-7eee51e72c6b"
+    },
+    {
+      "id": "25b64d56-d384-4312-9498-ebe48e354784",
+      "name": "Final Test",
+      "email": "final_lo14gl@gmail.com",
+      "password": "Password123",
+      "usernames": [
+        {
+          "id": "ebef0f0f-2454-45b5-b37d-8996c94922af",
+          "value": "final_lo14gl",
+          "createdAt": 1771754185902,
+          "updatedAt": 1771754185902
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "ebef0f0f-2454-45b5-b37d-8996c94922af"
+    },
+    {
+      "id": "ecae605e-ddf1-4bed-9aa8-a33462776796",
+      "name": "Final Test",
+      "email": "final_qu7rvm@gmail.com",
+      "password": "Password123",
+      "usernames": [
+        {
+          "id": "75d8ee5b-639a-4f4c-8ceb-d331438d2687",
+          "value": "final_qu7rvm",
+          "createdAt": 1771754237951,
+          "updatedAt": 1771754237951
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "75d8ee5b-639a-4f4c-8ceb-d331438d2687"
+    }
+  ]
 }
