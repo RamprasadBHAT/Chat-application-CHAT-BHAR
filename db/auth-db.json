@@ -1,0 +1,22 @@
+{
+  "users": [
+    {
+      "id": "a44ff266-77b7-4664-b629-b9b70d93c19b",
+      "name": "Test User",
+      "email": "testuser@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "06e12051-61b6-410f-8faa-60e8f28c680f",
+          "value": "testuser",
+          "createdAt": 1771775848437,
+          "updatedAt": 1771775848437
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "06e12051-61b6-410f-8faa-60e8f28c680f",
+      "profilePic": "",
+      "bio": ""
+    }
+  ]
+}

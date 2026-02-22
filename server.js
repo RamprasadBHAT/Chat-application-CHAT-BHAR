@@ -82,11 +82,13 @@ const server = http.createServer(async (req, res) => {
       password,
       usernames: [],
       usernameChangeLogs: [],
-      activeUsernameId: null
+      activeUsernameId: null,
+      profilePic: '',
+      bio: ''
     };
     db.users.push(user);
     writeDb(db);
-    return json(res, 201, { user: { id: user.id, name, email, usernames: [], username: '' } });
+    return json(res, 201, { user: { id: user.id, name, email, usernames: [], username: '', profilePic: '', bio: '' } });
   }
 
   if (url.pathname === '/api/auth/login' && req.method === 'POST') {
@@ -97,7 +99,7 @@ const server = http.createServer(async (req, res) => {
     const user = db.users.find((u) => u.email === email && u.password === password);
     if (!user) return json(res, 401, { error: 'Invalid email/password.' });
     const username = (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '';
-    return json(res, 200, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username }, usernames: user.usernames || [] });
+    return json(res, 200, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username, profilePic: user.profilePic, bio: user.bio }, usernames: user.usernames || [] });
   }
 
   if (url.pathname === '/api/usernames/check' && req.method === 'POST') {

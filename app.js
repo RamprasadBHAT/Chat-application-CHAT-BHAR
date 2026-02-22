@@ -57,6 +57,16 @@ const myChannelBio = document.getElementById('myChannelBio');
 const myPostCount = document.getElementById('myPostCount');
 const channelContentGrid = document.getElementById('channelContentGrid');
 const profileTabs = document.querySelectorAll('.profile-tab');
+const editProfileOpenBtn = document.querySelector('.edit-profile-btn');
+const editProfileModal = document.getElementById('editProfileModal');
+const closeEditProfile = document.getElementById('closeEditProfile');
+const cancelEditProfile = document.getElementById('cancelEditProfile');
+const editProfileForm = document.getElementById('editProfileForm');
+const profilePicInput = document.getElementById('profilePicInput');
+const changeProfilePicBtn = document.getElementById('changeProfilePicBtn');
+const editProfileAvatarPreview = document.getElementById('editProfileAvatarPreview');
+const editProfileName = document.getElementById('editProfileName');
+const editProfileBio = document.getElementById('editProfileBio');
 
 const activeChatTitle = document.getElementById('activeChatTitle');
 const messages = document.getElementById('messages');
@@ -237,10 +247,10 @@ async function localApiRequest(path, options = {}) {
     if (password.length < 8) throw new Error('Password must be at least 8 characters.');
     if (db.users.some((u) => u.email === email)) throw new Error('Email already exists. Please login.');
 
-    const user = { id: crypto.randomUUID(), name, email, password, usernames: [], usernameChangeLogs: [], activeUsernameId: null };
+    const user = { id: crypto.randomUUID(), name, email, password, usernames: [], usernameChangeLogs: [], activeUsernameId: null, profilePic: '', bio: '' };
     db.users.push(user);
     saveLocalAuthDb(db);
-    return { user: { id: user.id, name: user.name, email: user.email, usernames: [], username: '' } };
+    return { user: { id: user.id, name: user.name, email: user.email, usernames: [], username: '', profilePic: '', bio: '' } };
   }
 
   if (path === '/api/auth/login' && method === 'POST') {
@@ -249,7 +259,7 @@ async function localApiRequest(path, options = {}) {
     const user = db.users.find((u) => u.email === email && u.password === password);
     if (!user) throw new Error('Invalid email/password.');
     const username = (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '';
-    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username } };
+    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username, profilePic: user.profilePic, bio: user.bio } };
   }
 
   if (path === '/api/usernames/check' && method === 'POST') {
@@ -526,6 +536,71 @@ function bindEvents() {
       renderChannelManager();
     });
   });
+
+  if (editProfileOpenBtn) {
+    editProfileOpenBtn.addEventListener('click', () => {
+      editProfileName.value = activeSession.name || '';
+      editProfileBio.value = activeSession.bio || 'Digital Creator | Tech Enthusiast | Travel Lover 🌍';
+      renderProfileAvatar(editProfileAvatarPreview, activeSession);
+      editProfileModal.hidden = false;
+    });
+  }
+  if (closeEditProfile) closeEditProfile.addEventListener('click', () => editProfileModal.hidden = true);
+  if (cancelEditProfile) cancelEditProfile.addEventListener('click', () => editProfileModal.hidden = true);
+  if (changeProfilePicBtn) changeProfilePicBtn.addEventListener('click', () => profilePicInput.click());
+  if (profilePicInput) {
+    profilePicInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (re) => {
+          activeSession.pendingProfilePic = re.target.result;
+          renderProfileAvatar(editProfileAvatarPreview, { ...activeSession, profilePic: re.target.result });
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  }
+  if (editProfileForm) {
+    editProfileForm.addEventListener('submit', onSaveProfile);
+  }
+}
+
+function renderProfileAvatar(el, user) {
+  if (!el) return;
+  if (user?.profilePic) {
+    el.innerHTML = `<img src="${user.profilePic}" alt="avatar" />`;
+  } else {
+    const name = user?.name || user?.username || 'U';
+    el.textContent = (name[0] || 'U').toUpperCase();
+  }
+}
+
+async function onSaveProfile(e) {
+  e.preventDefault();
+  const name = editProfileName.value.trim();
+  const bio = editProfileBio.value.trim();
+  const profilePic = activeSession.pendingProfilePic || activeSession.profilePic;
+
+  activeSession.name = name;
+  activeSession.bio = bio;
+  activeSession.profilePic = profilePic;
+  delete activeSession.pendingProfilePic;
+
+  saveJson(AUTH_SESSION_KEY, activeSession);
+
+  // Update local DB if possible
+  const db = loadLocalAuthDb();
+  const uIdx = db.users.findIndex(u => u.id === activeSession.id);
+  if (uIdx !== -1) {
+    db.users[uIdx].name = name;
+    db.users[uIdx].bio = bio;
+    db.users[uIdx].profilePic = profilePic;
+    saveLocalAuthDb(db);
+  }
+
+  editProfileModal.hidden = true;
+  renderChannelManager();
 }
 
 
@@ -961,7 +1036,19 @@ function validateUploadForType(type, files, caption, description) {
 
 
 async function renderExploreUsers(query = '') {
-  if (!authUsers.length) await syncAuthUsers();
+  // Always reload users from DB to get latest profile pics/bios
+  const db = loadLocalAuthDb();
+  authUsers = db.users.map((u) => ({
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: 'user',
+    username: (u.usernames || []).find((x) => x.id === u.activeUsernameId)?.value || '',
+    usernames: u.usernames || [],
+    profilePic: u.profilePic,
+    bio: u.bio
+  }));
+
   const users = authUsers;
   const normalizedQuery = String(query).trim().toLowerCase();
   const now = Date.now();
@@ -995,12 +1082,20 @@ async function renderExploreUsers(query = '') {
   }
 
   rows.forEach((u) => {
-    const initials = (u.displayName || 'User').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
     const card = document.createElement('div');
     card.className = 'explore-user-card glass';
+
+    let avatarHtml = '';
+    if (u.profilePic) {
+      avatarHtml = `<div class="avatar" style="overflow:hidden"><img src="${u.profilePic}" style="width:100%;height:100%;object-fit:cover" /></div>`;
+    } else {
+      const initials = (u.displayName || 'User').split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase();
+      avatarHtml = `<div class="avatar">${escapeHtml(initials || 'U')}</div>`;
+    }
+
     card.innerHTML = `
       <div class="explore-user-head">
-        <div class="avatar">${escapeHtml(initials || 'U')}</div>
+        ${avatarHtml}
         <div>
           <strong>${escapeHtml(u.displayName || u.name)}</strong>
           <p>${escapeHtml(u.email)}</p>
@@ -1052,10 +1147,19 @@ function renderStories() {
   });
 
   for (const [name, items] of byUser.entries()) {
-    const initials = name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+    const user = authUsers.find(u => (u.username || u.name) === name);
     const el = document.createElement('div');
     el.className = 'story';
-    el.innerHTML = `<div class="avatar">${escapeHtml(initials || 'U')}</div><p>${escapeHtml(name)}</p>`;
+
+    let avatarHtml = '';
+    if (user?.profilePic) {
+      avatarHtml = `<div class="avatar" style="overflow:hidden"><img src="${user.profilePic}" style="width:100%;height:100%;object-fit:cover" /></div>`;
+    } else {
+      const initials = name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+      avatarHtml = `<div class="avatar">${escapeHtml(initials || 'U')}</div>`;
+    }
+
+    el.innerHTML = `${avatarHtml}<p>${escapeHtml(name)}</p>`;
     el.addEventListener('click', () => openStoryViewer(items, 0));
     storiesRow.appendChild(el);
   }
@@ -1255,8 +1359,9 @@ function renderChannelManager() {
   // Populate Header
   if (myChannelHandle) myChannelHandle.textContent = activeHandle();
   if (myChannelDisplayName) myChannelDisplayName.textContent = activeSession.name || activeHandle();
+  if (myChannelBio) myChannelBio.textContent = activeSession.bio || 'Digital Creator | Tech Enthusiast | Travel Lover 🌍';
   if (myPostCount) myPostCount.textContent = mine.length;
-  if (myChannelAvatar) myChannelAvatar.textContent = (activeHandle()[0] || 'U').toUpperCase();
+  renderProfileAvatar(myChannelAvatar, activeSession);
 
   // Populate Content Grid
   if (!channelContentGrid) return;
