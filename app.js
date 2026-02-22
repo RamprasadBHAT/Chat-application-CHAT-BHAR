@@ -1028,7 +1028,7 @@ function validateUploadForType(type, files, caption, description) {
   if (type !== 'story' && !caption) return bad('Title/caption is required for this content type.');
   if (type === 'short' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return bad('Shorts require exactly 1 video.');
   if (type === 'carousel' && files.some((f) => !f.type.startsWith('image/'))) return bad('Carousel requires image files only.');
-  if (type === 'ltv' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return bad('LTV require exactly 1 video.');
+  if (type === 'ltv' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return bad('LTV requires exactly 1 video.');
   if (type === 'ltv' && !description) return bad('LTV requires description.');
   if (type === 'story' && files.some((f) => !f.type.startsWith('image/') && !f.type.startsWith('video/'))) return bad('Story accepts only image/video.');
   return true;
