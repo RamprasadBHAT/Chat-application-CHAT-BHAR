@@ -50,6 +50,13 @@ const clearUploadSelection = document.getElementById('clearUploadSelection');
 const openCreativeSuite = document.getElementById('openCreativeSuite');
 
 const channelContentList = document.getElementById('channelContentList');
+const myChannelAvatar = document.getElementById('myChannelAvatar');
+const myChannelHandle = document.getElementById('myChannelHandle');
+const myChannelDisplayName = document.getElementById('myChannelDisplayName');
+const myChannelBio = document.getElementById('myChannelBio');
+const myPostCount = document.getElementById('myPostCount');
+const channelContentGrid = document.getElementById('channelContentGrid');
+const profileTabs = document.querySelectorAll('.profile-tab');
 
 const activeChatTitle = document.getElementById('activeChatTitle');
 const messages = document.getElementById('messages');
@@ -122,6 +129,7 @@ const typeRules = {
 };
 
 let selectedUploadType = 'short';
+let activeProfileTab = 'posts';
 let selectedUploadRawFiles = [];
 let selectedUploadEdits = [];
 let activeSuiteIndex = 0;
@@ -510,6 +518,14 @@ function bindEvents() {
   closeStoryViewer.addEventListener('click', () => (storyViewer.hidden = true));
   prevStory.addEventListener('click', () => showStoryByIndex(activeStoryIndex - 1));
   nextStory.addEventListener('click', () => showStoryByIndex(activeStoryIndex + 1));
+
+  profileTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      activeProfileTab = tab.dataset.profileTab;
+      profileTabs.forEach(t => t.classList.toggle('active', t === tab));
+      renderChannelManager();
+    });
+  });
 }
 
 
@@ -1166,8 +1182,59 @@ function openPostViewer(postId) {
   if (!post) return;
   postViewerTitle.textContent = `${post.type.toUpperCase()} · ${post.userName}`;
   postViewerMedia.innerHTML = renderFeedMedia(post);
-  postViewerInteraction.innerHTML = renderInteractionBlock(post);
-  bindInteractionEvents(postViewer, postId);
+
+  const isMine = post.userName === activeHandle();
+
+  if (isMine) {
+    postViewerInteraction.innerHTML = `
+      <div class="channel-actions glass" style="margin-top: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--brand-a);">
+        <label style="font-size: 0.8rem; font-weight: 700; color: var(--brand-a);">CONTENT MANAGEMENT</label>
+        <input id="editCaption" value="${escapeAttr(post.caption || '')}" placeholder="Title" style="width: 100%;" />
+        <textarea id="editDescription" placeholder="Description" style="width: 100%; min-height: 60px;">${escapeHtml(post.description || '')}</textarea>
+        <div class="upload-btn-row">
+          <button id="openSuiteBtn" style="background: var(--muted);">Creative Suite</button>
+          <button id="saveMetadataBtn">Save Changes</button>
+          <button id="deletePostBtn" class="danger">Delete Post</button>
+        </div>
+      </div>
+      <div style="margin-top: 16px;">
+        ${renderInteractionBlock(post)}
+      </div>
+    `;
+
+    document.getElementById('saveMetadataBtn').addEventListener('click', () => {
+      const caption = document.getElementById('editCaption').value.trim();
+      const description = document.getElementById('editDescription').value.trim();
+      updateUpload(post.id, { caption, description });
+      alert('Metadata saved!');
+    });
+
+    document.getElementById('openSuiteBtn').addEventListener('click', async () => {
+      selectedUploadRawFiles = await dataFilesToBlobs(post.files);
+      selectedUploadEdits = post.edits?.length ? structuredClone(post.edits) : selectedUploadRawFiles.map((f) => defaultEdit(f.name));
+      openCreativeSuiteModal();
+      const saveHandler = () => {
+        syncSuiteFields();
+        updateUpload(post.id, { edits: structuredClone(selectedUploadEdits) });
+        saveCreativeSuite.removeEventListener('click', saveHandler);
+      };
+      saveCreativeSuite.addEventListener('click', saveHandler);
+    });
+
+    document.getElementById('deletePostBtn').addEventListener('click', () => {
+      openConfirm('Delete this post permanently?', () => {
+        uploads = uploads.filter((u) => u.id !== post.id);
+        persistAllViews();
+        postViewer.hidden = true;
+      });
+    });
+
+    bindInteractionEvents(postViewer, postId);
+  } else {
+    postViewerInteraction.innerHTML = renderInteractionBlock(post);
+    bindInteractionEvents(postViewer, postId);
+  }
+
   postViewer.hidden = false;
 }
 
@@ -1182,53 +1249,48 @@ function persistAndRerender(postId) {
 }
 
 function renderChannelManager() {
-  channelContentList.innerHTML = '';
   if (!activeSession) return;
   const mine = uploads.filter((u) => u.userName === activeHandle());
-  if (!mine.length) {
-    channelContentList.innerHTML = '<div class="channel-card glass"><p>No channel content yet.</p></div>';
-    return;
+
+  // Populate Header
+  if (myChannelHandle) myChannelHandle.textContent = activeHandle();
+  if (myChannelDisplayName) myChannelDisplayName.textContent = activeSession.name || activeHandle();
+  if (myPostCount) myPostCount.textContent = mine.length;
+  if (myChannelAvatar) myChannelAvatar.textContent = (activeHandle()[0] || 'U').toUpperCase();
+
+  // Populate Content Grid
+  if (!channelContentGrid) return;
+  channelContentGrid.innerHTML = '';
+
+  let filtered = mine;
+  if (activeProfileTab === 'reels') {
+    filtered = mine.filter(u => u.type === 'short' || u.type === 'ltv');
+  } else {
+    filtered = mine.filter(u => u.type !== 'story');
   }
 
-  mine.forEach((item) => {
-    const card = document.createElement('div');
-    card.className = 'channel-card glass';
-    card.innerHTML = `
-      <h4>${item.type.toUpperCase()} · ${escapeHtml(item.caption || '(No title)')}</h4>
-      <div class="channel-actions">
-        <input data-field="caption" value="${escapeAttr(item.caption || '')}" placeholder="Title" />
-        <textarea data-field="description" placeholder="Description">${escapeHtml(item.description || '')}</textarea>
-        <button data-action="save">Save metadata</button>
-        <button data-action="suite">Edit in Creative Suite</button>
-        <button data-action="delete">Delete post</button>
-      </div>
-    `;
+  if (!filtered.length) {
+    channelContentGrid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--muted);">No content available in this section.</div>';
+  } else {
+    filtered.forEach(item => {
+      const firstFile = item.files[0];
+      if (!firstFile) return;
 
-    card.querySelector('[data-action="save"]').addEventListener('click', () => {
-      const caption = card.querySelector('[data-field="caption"]').value.trim();
-      const description = card.querySelector('[data-field="description"]').value.trim();
-      updateUpload(item.id, { caption, description });
+      const div = document.createElement('div');
+      div.className = 'grid-item';
+
+      const icon = item.type === 'carousel' ? '📁' : (item.type === 'ltv' ? '📺' : '🎬');
+
+      if (firstFile.type.startsWith('video/')) {
+        div.innerHTML = `<video src="${cdnUrl(firstFile.dataUrl)}"></video><span class="type-icon">${icon}</span>`;
+      } else {
+        div.innerHTML = `<img src="${cdnUrl(firstFile.dataUrl)}" loading="lazy" /><span class="type-icon">${icon}</span>`;
+      }
+
+      div.addEventListener('click', () => openPostViewer(item.id));
+      channelContentGrid.appendChild(div);
     });
-
-    card.querySelector('[data-action="suite"]').addEventListener('click', async () => {
-      selectedUploadRawFiles = await dataFilesToBlobs(item.files);
-      selectedUploadEdits = item.edits?.length ? structuredClone(item.edits) : selectedUploadRawFiles.map((f) => defaultEdit(f.name));
-      openCreativeSuiteModal();
-      const saveHandler = () => {
-        syncSuiteFields();
-        updateUpload(item.id, { edits: structuredClone(selectedUploadEdits) });
-        saveCreativeSuite.removeEventListener('click', saveHandler);
-      };
-      saveCreativeSuite.addEventListener('click', saveHandler);
-    });
-
-    card.querySelector('[data-action="delete"]').addEventListener('click', () => openConfirm('Delete this post permanently?', () => {
-      uploads = uploads.filter((u) => u.id !== item.id);
-      persistAllViews();
-    }));
-
-    channelContentList.appendChild(card);
-  });
+  }
 }
 
 function openConfirm(message, action) {
