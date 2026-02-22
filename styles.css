@@ -240,3 +240,131 @@ main{padding:8px 2px 10px;overflow:auto}
 .danger { color: #ef4444 !important; }
 button.danger { background: #ef4444; color: #fff; border: none; }
 button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Profile Page Styles */
+.profile-header {
+  padding: 20px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.profile-header-top {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+.profile-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--brand-a), var(--brand-b));
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 2rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.profile-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.profile-username-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.profile-username-row h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 400;
+}
+.edit-profile-btn {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  font-size: 0.85rem;
+  padding: 6px 12px;
+}
+.profile-stats {
+  display: flex;
+  gap: 20px;
+  font-size: 0.95rem;
+}
+.profile-bio {
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.profile-bio strong {
+  display: block;
+  margin-bottom: 2px;
+}
+.profile-bio p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.profile-tabs {
+  display: flex;
+  justify-content: center;
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
+}
+.profile-tab {
+  background: transparent;
+  border: 0;
+  border-top: 2px solid transparent;
+  color: var(--muted);
+  border-radius: 0;
+  padding: 12px 20px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  box-shadow: none;
+}
+.profile-tab.active {
+  border-top-color: var(--text);
+  color: var(--text);
+}
+
+.profile-content-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 10px 0;
+}
+.grid-item {
+  aspect-ratio: 1 / 1;
+  background: #000;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+}
+.grid-item img, .grid-item video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.grid-item .type-icon {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+
+@media (min-width: 768px) {
+  .profile-avatar {
+    width: 150px;
+    height: 150px;
+    font-size: 4rem;
+  }
+  .profile-header {
+    padding: 40px 20px;
+  }
+  .profile-username-row h2 {
+    font-size: 1.8rem;
+  }
+}

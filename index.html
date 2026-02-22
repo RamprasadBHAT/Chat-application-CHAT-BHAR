@@ -141,9 +141,35 @@
           </section>
 
           <section id="channels" class="screen">
-            <h2>My Channel</h2>
-            <p>Card-based dashboard to manage published content.</p>
-            <div id="channelContentList" class="channel-content-list"></div>
+            <div class="profile-header">
+              <div class="profile-header-top">
+                <div class="profile-avatar" id="myChannelAvatar">U</div>
+                <div class="profile-info">
+                  <div class="profile-username-row">
+                    <h2 id="myChannelHandle">Username</h2>
+                    <button class="edit-profile-btn">Edit Profile</button>
+                    <button class="settings-btn icon-btn">⚙️</button>
+                  </div>
+                  <div class="profile-stats">
+                    <span><strong id="myPostCount">0</strong> posts</span>
+                    <span><strong>128</strong> followers</span>
+                    <span><strong>256</strong> following</span>
+                  </div>
+                  <div class="profile-bio">
+                    <strong id="myChannelDisplayName">Full Name</strong>
+                    <p id="myChannelBio">Digital Creator | Tech Enthusiast | Travel Lover 🌍</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="profile-tabs">
+              <button class="profile-tab active" data-profile-tab="posts">▦ POSTS</button>
+              <button class="profile-tab" data-profile-tab="reels">🎬 REELS</button>
+            </div>
+
+            <div id="channelContentGrid" class="profile-content-grid"></div>
+            <div id="channelContentList" class="channel-content-list" hidden></div>
           </section>
 
           <section id="chat" class="screen">
