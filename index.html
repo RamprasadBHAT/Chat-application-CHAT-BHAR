@@ -335,6 +335,28 @@
       </div>
     </div>
 
+    <div id="editProfileModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top">
+          <h3>Edit Profile</h3>
+          <button id="closeEditProfile" class="icon-btn">✕</button>
+        </div>
+        <form id="editProfileForm" class="upload-form">
+          <div class="profile-avatar-upload">
+            <div class="profile-avatar" id="editProfileAvatarPreview">U</div>
+            <input type="file" id="profilePicInput" accept="image/*" hidden />
+            <button type="button" id="changeProfilePicBtn" class="edit-profile-btn">Change Photo</button>
+          </div>
+          <input id="editProfileName" type="text" placeholder="Full Name" required />
+          <textarea id="editProfileBio" placeholder="Bio"></textarea>
+          <div class="upload-btn-row">
+            <button id="cancelEditProfile" type="button">Cancel</button>
+            <button type="submit">Save Changes</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <script src="app.js"></script>
   </body>
 </html>
