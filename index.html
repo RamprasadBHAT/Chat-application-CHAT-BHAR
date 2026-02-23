@@ -166,9 +166,40 @@
             <div class="profile-tabs">
               <button class="profile-tab active" data-profile-tab="posts">▦ POSTS</button>
               <button class="profile-tab" data-profile-tab="reels">🎬 REELS</button>
+              <button class="profile-tab" data-profile-tab="analytics" id="analyticsTabBtn">📈 ANALYTICS</button>
             </div>
 
             <div id="channelContentGrid" class="profile-content-grid"></div>
+
+            <div id="analyticsSection" class="analytics-section" hidden>
+              <div class="analytics-overview">
+                <div class="analytics-card glass">
+                  <h4>Total Reach</h4>
+                  <div class="value" id="statReach">0</div>
+                  <div class="trend up">↑ 12% vs last month</div>
+                </div>
+                <div class="analytics-card glass">
+                  <h4>Engagement</h4>
+                  <div class="value" id="statEngagement">0%</div>
+                  <div class="trend up">↑ 5.4%</div>
+                </div>
+                <div class="analytics-card glass">
+                  <h4>Total Shares</h4>
+                  <div class="value" id="statShares">0</div>
+                  <div class="trend down">↓ 2%</div>
+                </div>
+              </div>
+
+              <div class="analytics-charts">
+                <div class="chart-container glass">
+                  <h4>Weekly Performance</h4>
+                  <div class="bar-chart" id="weeklyChart">
+                    <!-- Bars injected via JS -->
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div id="channelContentList" class="channel-content-list" hidden></div>
           </section>
 
@@ -331,6 +362,21 @@
         <div class="upload-btn-row">
           <button id="cancelDeleteBtn" type="button">Cancel</button>
           <button id="confirmDeleteBtn" class="danger" disabled>Delete Permanently</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="shareModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top">
+          <h3>Share to Chat</h3>
+          <button id="closeShareModal" class="icon-btn">✕</button>
+        </div>
+        <div class="contact-list" id="shareContactList">
+          <!-- Populated by JS -->
+        </div>
+        <div class="upload-btn-row">
+          <button id="cancelShareBtn" type="button">Cancel</button>
         </div>
       </div>
     </div>

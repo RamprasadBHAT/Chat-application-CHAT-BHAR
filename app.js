@@ -164,6 +164,7 @@ async function initApp() {
   bindEvents();
   await bootstrapUsers();
   await loadSession();
+  migrateOldUploads();
   applyUploadType();
   renderChatUsers();
   renderMessages();
@@ -533,9 +534,20 @@ function bindEvents() {
     tab.addEventListener('click', () => {
       activeProfileTab = tab.dataset.profileTab;
       profileTabs.forEach(t => t.classList.toggle('active', t === tab));
+
+      if (channelContentGrid) channelContentGrid.hidden = (activeProfileTab === 'analytics');
+      const analyticsSection = document.getElementById('analyticsSection');
+      if (analyticsSection) analyticsSection.hidden = (activeProfileTab !== 'analytics');
+
       renderChannelManager();
     });
   });
+
+  const closeShareModal = document.getElementById('closeShareModal');
+  const cancelShareBtn = document.getElementById('cancelShareBtn');
+  const shareModal = document.getElementById('shareModal');
+  if (closeShareModal) closeShareModal.onclick = () => shareModal.hidden = true;
+  if (cancelShareBtn) cancelShareBtn.onclick = () => shareModal.hidden = true;
 
   if (editProfileOpenBtn) {
     editProfileOpenBtn.addEventListener('click', () => {
@@ -944,10 +956,11 @@ async function onUploadSubmit(event) {
   const baseRecord = {
     type: selectedUploadType,
     userName: activeHandle(),
+    userId: activeSession.id,
     caption,
     description,
     createdAt: new Date().toISOString(),
-    interactions: { likes: 0, likedBy: [], comments: [] }
+    interactions: { likes: 0, likedBy: [], comments: [], shares: 0 }
   };
 
   if (selectedUploadType === 'story') {
@@ -1026,9 +1039,9 @@ function validateUploadForType(type, files, caption, description) {
   };
 
   if (type !== 'story' && !caption) return bad('Title/caption is required for this content type.');
-  if (type === 'short' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return bad('Shorts require exactly 1 video.');
+  if (type === 'short' && (files.length < 1 || files.some((f) => !f.type.startsWith('video/')))) return bad('Shorts require at least 1 video.');
   if (type === 'carousel' && files.some((f) => !f.type.startsWith('image/'))) return bad('Carousel requires image files only.');
-  if (type === 'ltv' && (files.length !== 1 || !files[0].type.startsWith('video/'))) return bad('LTV require exactly 1 video.');
+  if (type === 'ltv' && (files.length < 1 || files.some((f) => !f.type.startsWith('video/')))) return bad('LTV require at least 1 video.');
   if (type === 'ltv' && !description) return bad('LTV requires description.');
   if (type === 'story' && files.some((f) => !f.type.startsWith('image/') && !f.type.startsWith('video/'))) return bad('Story accepts only image/video.');
   return true;
@@ -1176,8 +1189,21 @@ function renderFeed() {
   items.forEach((item) => {
     const card = document.createElement('article');
     card.className = 'feed-card glass';
+
+    const user = authUsers.find(u => u.id === item.userId || (u.username === item.userName && !item.userId));
+    let avatarHtml = '';
+    if (user?.profilePic) {
+      avatarHtml = `<img src="${user.profilePic}" class="feed-avatar" />`;
+    } else {
+      const initials = (item.userName || 'U').split(' ').map(n => n[0]).join('').toUpperCase();
+      avatarHtml = `<div class="feed-avatar-initials">${initials}</div>`;
+    }
+
     card.innerHTML = `
-      <div class="feed-type">${item.type.toUpperCase()} · ${escapeHtml(item.userName)}</div>
+      <div class="feed-header">
+        ${avatarHtml}
+        <div class="feed-type">${item.type.toUpperCase()} · ${escapeHtml(item.userName)}</div>
+      </div>
       ${renderFeedMedia(item)}
       <div class="feed-meta">
         <p><strong>${escapeHtml(item.caption || '(No title)')}</strong></p>
@@ -1212,11 +1238,12 @@ function renderFeedMedia(item) {
 function renderInteractionBlock(item) {
   const likes = item.interactions?.likes || 0;
   const comments = item.interactions?.comments || [];
+  const shares = item.interactions?.shares || 0;
   return `
     <div class="post-interaction" data-post-id="${item.id}">
       <div class="interaction-row">
         <button data-action="like">👍 ${likes}</button>
-        <button data-action="share">↗ Share</button>
+        <button data-action="share">↗ Share (${shares})</button>
       </div>
       <div class="comment-list">${comments.map((c) => `<div class="comment-item"><strong>${escapeHtml(c.user)}</strong>: ${escapeHtml(c.text)}</div>`).join('')}</div>
       <div class="interaction-row">
@@ -1270,14 +1297,7 @@ function addComment(postId, text) {
 }
 
 async function sharePost(postId) {
-  const post = uploads.find((u) => u.id === postId);
-  if (!post) return;
-  const text = `${post.userName} · ${post.caption || '(No title)'}`;
-  if (navigator.share) {
-    try { await navigator.share({ title: 'ChatBhar Post', text }); } catch {}
-  } else {
-    alert('Share copied simulation: ' + text);
-  }
+  openShareModal(postId);
 }
 
 function openPostViewer(postId) {
@@ -1354,7 +1374,7 @@ function persistAndRerender(postId) {
 
 function renderChannelManager() {
   if (!activeSession) return;
-  const mine = uploads.filter((u) => u.userName === activeHandle());
+  const mine = uploads.filter((u) => u.userId === activeSession.id || (u.userName === activeHandle() && !u.userId));
 
   // Populate Header
   if (myChannelHandle) myChannelHandle.textContent = activeHandle();
@@ -1368,6 +1388,11 @@ function renderChannelManager() {
   channelContentGrid.innerHTML = '';
 
   let filtered = mine;
+  if (activeProfileTab === 'analytics') {
+    renderAnalytics(mine);
+    return;
+  }
+
   if (activeProfileTab === 'reels') {
     filtered = mine.filter(u => u.type === 'short' || u.type === 'ltv');
   } else {
@@ -1385,11 +1410,27 @@ function renderChannelManager() {
       div.className = 'grid-item';
 
       const icon = item.type === 'carousel' ? '📁' : (item.type === 'ltv' ? '📺' : '🎬');
+      const likes = item.interactions?.likes || 0;
+      const comments = item.interactions?.comments?.length || 0;
 
       if (firstFile.type.startsWith('video/')) {
-        div.innerHTML = `<video src="${cdnUrl(firstFile.dataUrl)}"></video><span class="type-icon">${icon}</span>`;
+        div.innerHTML = `
+          <video src="${cdnUrl(firstFile.dataUrl)}"></video>
+          <span class="type-icon">${icon}</span>
+          <div class="grid-item-overlay">
+            <span>❤️ ${likes}</span>
+            <span>💬 ${comments}</span>
+          </div>
+        `;
       } else {
-        div.innerHTML = `<img src="${cdnUrl(firstFile.dataUrl)}" loading="lazy" /><span class="type-icon">${icon}</span>`;
+        div.innerHTML = `
+          <img src="${cdnUrl(firstFile.dataUrl)}" loading="lazy" />
+          <span class="type-icon">${icon}</span>
+          <div class="grid-item-overlay">
+            <span>❤️ ${likes}</span>
+            <span>💬 ${comments}</span>
+          </div>
+        `;
       }
 
       div.addEventListener('click', () => openPostViewer(item.id));
@@ -1442,7 +1483,24 @@ function renderChatUsers() {
     btn.className = `chat-user ${chatId === activeChat ? 'active' : ''}`;
     const status = meta.online ? '🟢' : '⚪';
     const preview = latest?.text || latest?.files?.[0]?.name || 'No messages yet';
-    btn.innerHTML = `${status} ${escapeHtml(meta.name)}<small>${escapeHtml(preview)}</small>`;
+
+    const user = authUsers.find(u => u.name === meta.name || u.id === chatId.split(':').pop());
+    let avatarHtml = '';
+    if (user?.profilePic) {
+      avatarHtml = `<img src="${user.profilePic}" class="chat-avatar" />`;
+    } else {
+      avatarHtml = `<div class="chat-avatar" style="background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-size:12px">${(meta.name[0]||'U').toUpperCase()}</div>`;
+    }
+
+    btn.innerHTML = `
+      ${avatarHtml}
+      <div style="flex:1; text-align:left; overflow:hidden">
+        <div style="display:flex; justify-content:space-between">
+          <span>${status} ${escapeHtml(meta.name)}</span>
+        </div>
+        <small style="display:block; white-space:nowrap; text-overflow:ellipsis; overflow:hidden">${escapeHtml(preview)}</small>
+      </div>
+    `;
     btn.addEventListener('click', () => {
       activeChat = chatId;
       renderChatUsers();
@@ -1758,7 +1816,15 @@ async function openContactModal() {
   users.forEach((u) => {
     const row = document.createElement('div');
     row.className = 'contact-item';
-    row.innerHTML = `<span>${escapeHtml(u.name)}</span><button type="button">Select</button>`;
+
+    let avatarHtml = '';
+    if (u.profilePic) {
+      avatarHtml = `<img src="${u.profilePic}" class="chat-avatar" />`;
+    } else {
+      avatarHtml = `<div class="chat-avatar" style="background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-size:12px">${(u.name[0]||'U').toUpperCase()}</div>`;
+    }
+
+    row.innerHTML = `${avatarHtml} <span>${escapeHtml(u.name)}</span><button type="button" class="edit-profile-btn" style="margin-left:auto">Select</button>`;
     row.querySelector('button').addEventListener('click', () => {
       const id = `dm:${u.id}`;
       if (!chatStore[id]) chatStore[id] = [];
@@ -1827,4 +1893,135 @@ function sendTyping(typing) {
 function announcePresence(online) {
   if (!presenceBus || !activeSession) return;
   presenceBus.postMessage({ type: 'presence', userId: activeSession.id, online });
+}
+
+function migrateOldUploads() {
+  let changed = false;
+  uploads.forEach(u => {
+    if (!u.userId && activeSession && u.userName === activeHandle()) {
+      u.userId = activeSession.id;
+      changed = true;
+    }
+    if (!u.interactions) {
+      u.interactions = { likes: 0, likedBy: [], comments: [], shares: 0 };
+      changed = true;
+    } else if (u.interactions.shares === undefined) {
+      u.interactions.shares = 0;
+      changed = true;
+    }
+  });
+  if (changed) saveUploads();
+}
+
+function renderAnalytics(mine) {
+  channelContentGrid.hidden = true;
+  document.getElementById('analyticsSection').hidden = false;
+
+  const totalLikes = mine.reduce((sum, u) => sum + (u.interactions?.likes || 0), 0);
+  const totalComments = mine.reduce((sum, u) => sum + (u.interactions?.comments?.length || 0), 0);
+  const totalShares = mine.reduce((sum, u) => sum + (u.interactions?.shares || 0), 0);
+
+  const engagement = mine.length ? (((totalLikes + totalComments) / mine.length) * 10).toFixed(1) : 0;
+  const reach = (totalLikes * 5) + (totalComments * 10) + (totalShares * 20);
+
+  document.getElementById('statReach').textContent = reach.toLocaleString();
+  document.getElementById('statEngagement').textContent = engagement + '%';
+  document.getElementById('statShares').textContent = totalShares.toLocaleString();
+
+  const chart = document.getElementById('weeklyChart');
+  chart.innerHTML = '';
+
+  const now = new Date();
+  const dayBuckets = [];
+  for(let i=6; i>=0; i--) {
+    const d = new Date();
+    d.setDate(now.getDate() - i);
+    dayBuckets.push({
+      label: d.toLocaleDateString('en-US', { weekday: 'short' }),
+      date: d.toISOString().split('T')[0],
+      count: 0
+    });
+  }
+
+  mine.forEach(u => {
+    const d = (u.createdAt || '').split('T')[0];
+    const bucket = dayBuckets.find(b => b.date === d);
+    if(bucket) bucket.count++;
+  });
+
+  const max = Math.max(...dayBuckets.map(b => b.count), 1);
+
+  dayBuckets.forEach(bucket => {
+    const val = (bucket.count / max) * 100;
+    const barWrap = document.createElement('div');
+    barWrap.className = 'chart-bar-wrap';
+    barWrap.innerHTML = `
+      <div class="bar" style="height: ${Math.max(val, 5)}%" data-value="${bucket.count}"></div>
+      <span class="bar-label">${bucket.label}</span>
+    `;
+    chart.appendChild(barWrap);
+  });
+}
+
+function openShareModal(postId) {
+  const modal = document.getElementById('shareModal');
+  const list = document.getElementById('shareContactList');
+  if (!modal || !list) return;
+
+  list.innerHTML = '';
+  const others = authUsers.filter(u => u.id !== activeSession.id);
+
+  others.forEach(user => {
+    const div = document.createElement('div');
+    div.className = 'contact-item';
+
+    let avatarHtml = '';
+    if (user.profilePic) {
+      avatarHtml = `<img src="${user.profilePic}" class="chat-avatar" />`;
+    } else {
+      avatarHtml = `<div class="chat-avatar" style="background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-size:12px">${(user.name[0]||'U').toUpperCase()}</div>`;
+    }
+
+    div.innerHTML = `
+      ${avatarHtml}
+      <div class="contact-name">${user.name || user.username}</div>
+      <button class="edit-profile-btn" style="margin-left: auto;">Send</button>
+    `;
+    div.querySelector('button').onclick = () => {
+      sharePostToChat(postId, user.id);
+      modal.hidden = true;
+    };
+    list.appendChild(div);
+  });
+
+  modal.hidden = false;
+}
+
+function sharePostToChat(postId, targetUserId) {
+  const post = uploads.find(u => u.id === postId);
+  if (!post || !activeSession) return;
+
+  const msg = {
+    id: crypto.randomUUID(),
+    senderId: activeSession.id,
+    receiverId: targetUserId,
+    text: `Check out this post: ${post.caption || 'Untitled'}`,
+    files: [post.files[0]],
+    timestamp: new Date().toISOString(),
+    dir: 'out'
+  };
+
+  const chatId = `dm:${targetUserId}`;
+  if (!chatStore[chatId]) chatStore[chatId] = [];
+  chatStore[chatId].push(msg);
+  saveChatStore();
+
+  if (!post.interactions.shares) post.interactions.shares = 0;
+  post.interactions.shares++;
+  saveUploads();
+
+  if (presenceBus) {
+    presenceBus.postMessage({ type: 'message', chatId, message: { ...msg, dir: 'in' } });
+  }
+  alert('Post shared successfully!');
 }
