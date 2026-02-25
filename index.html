@@ -228,6 +228,13 @@
                   </div>
                 </div>
                 <div id="messages" class="messages"></div>
+                <div id="replyPreviewWrap" class="reply-preview-wrap glass" hidden>
+                  <div class="reply-preview-content">
+                    <strong id="replyUserName">Name</strong>
+                    <p id="replyText">Message text...</p>
+                  </div>
+                  <button id="closeReplyBtn" class="icon-btn">✕</button>
+                </div>
                 <div id="attachmentPreview" class="attachment-preview" hidden></div>
                 <input id="backupInput" type="file" accept="application/json" hidden />
                 <form id="chatForm" class="composer">
@@ -400,6 +407,22 @@
             <button type="submit">Save Changes</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <div id="msgContextMenu" class="msg-context-menu" hidden>
+      <div class="emoji-bar glass">
+        <button data-emoji="👍">👍</button>
+        <button data-emoji="❤️">❤️</button>
+        <button data-emoji="😂">😂</button>
+        <button data-emoji="😮">😮</button>
+        <button data-emoji="😢">😢</button>
+        <button data-emoji="🙏">🙏</button>
+      </div>
+      <div class="menu-actions glass">
+        <button id="contextReplyBtn">Reply</button>
+        <button id="deleteMeBtn">Delete for Me</button>
+        <button id="deleteEveryoneBtn" hidden>Delete for Everyone</button>
       </div>
     </div>
 

@@ -157,6 +157,10 @@ let activeStoryItems = [];
 let activeStoryIndex = 0;
 let activePostViewerId = null;
 let confirmAction = null;
+let currentContextMsg = null;
+let replyToMsg = null;
+let touchStartX = 0;
+let swipeBubble = null;
 
 initApp();
 
@@ -576,6 +580,19 @@ function bindEvents() {
   if (editProfileForm) {
     editProfileForm.addEventListener('submit', onSaveProfile);
   }
+
+  window.addEventListener('storage', (e) => {
+    if (e.key === CHAT_STORE_KEY) {
+      chatStore = loadJson(CHAT_STORE_KEY, { General: [] });
+      renderChatUsers();
+      renderMessages();
+    }
+    if (e.key === UPLOAD_STORE_KEY) {
+      uploads = loadJson(UPLOAD_STORE_KEY, []);
+      renderHome();
+      renderChannelManager();
+    }
+  });
 }
 
 function renderProfileAvatar(el, user) {
@@ -1520,7 +1537,8 @@ function renderMessages() {
   messages.innerHTML = '';
   chatStore[activeChat].forEach((msg, idx) => {
     const bubble = document.createElement('div');
-    bubble.className = `bubble ${msg.dir}`;
+    const isImageOnly = !msg.text && !msg.replyToId && (msg.files || []).length > 0 && msg.files.every(f => (f.type || '').startsWith('image/'));
+    bubble.className = `bubble ${msg.dir} ${isImageOnly ? 'image-only' : ''}`;
 
     let fileHtml = '';
     (msg.files || []).forEach((f) => {
@@ -1542,7 +1560,20 @@ function renderMessages() {
       }
     });
 
-    bubble.innerHTML = `${escapeHtml(msg.text || '')}${fileHtml}`;
+    let replyHtml = '';
+    if (msg.replyToId) {
+      const original = chatStore[activeChat].find(m => m.ts === msg.replyToId);
+      if (original) {
+        replyHtml = `
+          <div class="reply-ref">
+            <strong>${original.senderName || (original.dir === 'outgoing' ? 'You' : 'User')}</strong>
+            <p>${escapeHtml(original.text || (original.files?.length ? 'Photo' : '...'))}</p>
+          </div>
+        `;
+      }
+    }
+
+    bubble.innerHTML = `${replyHtml}${escapeHtml(msg.text || '')}${fileHtml}`;
     messages.appendChild(bubble);
   });
 
@@ -1574,11 +1605,24 @@ function openImageFromMessage(idx) {
 }
 
 async function sendMessage(prepared = null) {
-  const payload = prepared || { text: messageInput.value.trim(), files: pendingFiles, viewOnce: Boolean(viewOnceToggle?.checked) };
+  const payload = prepared || {
+    text: messageInput.value.trim(),
+    files: pendingFiles,
+    viewOnce: Boolean(viewOnceToggle?.checked),
+    replyToId: replyToMsg ? replyToMsg.ts : null
+  };
   if (!payload.text && !(payload.files || []).length) return;
   const ts = Date.now();
   if (!chatStore[activeChat]) chatStore[activeChat] = [];
-  chatStore[activeChat].push({ dir: 'outgoing', text: payload.text, files: payload.files, viewOnce: payload.viewOnce, viewOnceConsumed: false, ts });
+  chatStore[activeChat].push({
+    dir: 'outgoing',
+    text: payload.text,
+    files: payload.files,
+    viewOnce: payload.viewOnce,
+    viewOnceConsumed: false,
+    ts,
+    replyToId: payload.replyToId
+  });
   saveJson(CHAT_STORE_KEY, chatStore);
 
   if (presenceBus && activeSession) {
@@ -1595,6 +1639,7 @@ async function sendMessage(prepared = null) {
             text: payload.text,
             files: payload.files,
             viewOnce: payload.viewOnce,
+            replyToId: payload.replyToId,
             ts
           });
         }
@@ -1604,6 +1649,9 @@ async function sendMessage(prepared = null) {
   messageInput.value = '';
   fileInput.value = '';
   pendingFiles = [];
+  replyToMsg = null;
+  const replyWrap = document.getElementById('replyPreviewWrap');
+  if (replyWrap) replyWrap.hidden = true;
   if (viewOnceToggle) viewOnceToggle.checked = false;
   renderAttachmentPreview();
   renderChatUsers();
@@ -1744,6 +1792,10 @@ function initEnhancedMessaging() {
       }
       if (msg.type === 'message' && msg.toId === activeSession?.id) {
         const chatId = msg.fromId.startsWith('group:') ? msg.fromId : `dm:${msg.senderId}`;
+        if (!chatMeta[chatId]) {
+          chatMeta[chatId] = { id: chatId, name: msg.senderName || 'User', participants: [msg.senderId, activeSession.id], isGroup: chatId.startsWith('group:'), online: true };
+          saveJson('chatbhar.chatMeta', chatMeta);
+        }
         if (!chatStore[chatId]) chatStore[chatId] = [];
         chatStore[chatId].push({
           dir: 'incoming',
@@ -1752,6 +1804,7 @@ function initEnhancedMessaging() {
           viewOnce: msg.viewOnce,
           viewOnceConsumed: false,
           ts: msg.ts,
+          replyToId: msg.replyToId,
           senderName: msg.senderName
         });
         saveJson(CHAT_STORE_KEY, chatStore);
@@ -1759,6 +1812,18 @@ function initEnhancedMessaging() {
           renderMessages();
         }
         renderChatUsers();
+      }
+      if (msg.type === 'delete_msg' && msg.toId === activeSession?.id) {
+        const chatId = msg.chatId.startsWith('group:') ? msg.chatId : `dm:${msg.senderId}`;
+        if (chatStore[chatId]) {
+          const idx = chatStore[chatId].findIndex(m => m.ts === msg.msgTs);
+          if (idx !== -1) {
+            chatStore[chatId].splice(idx, 1);
+            saveJson(CHAT_STORE_KEY, chatStore);
+            if (activeChat === chatId) renderMessages();
+            renderChatUsers();
+          }
+        }
       }
     };
   }
@@ -1770,6 +1835,83 @@ function bindMessagingUI() {
   if (closeContactModal) closeContactModal.addEventListener('click', () => (contactModal.hidden = true));
   if (closeGroupModal) closeGroupModal.addEventListener('click', () => (groupModal.hidden = true));
   if (createGroupConfirm) createGroupConfirm.addEventListener('click', createGroupChat);
+
+  const msgContextMenu = document.getElementById('msgContextMenu');
+  if (messages && msgContextMenu) {
+    let longPressTimer;
+    let touchX, touchY;
+    messages.addEventListener('touchstart', (e) => {
+      const bubble = e.target.closest('.bubble');
+      if (!bubble) return;
+      touchStartX = e.touches[0].clientX;
+      touchX = e.touches[0].clientX;
+      touchY = e.touches[0].clientY;
+      swipeBubble = bubble;
+      longPressTimer = setTimeout(() => showContextMenu({ clientX: touchX, clientY: touchY }, bubble), 600);
+    }, { passive: true });
+
+    messages.addEventListener('touchmove', (e) => {
+      clearTimeout(longPressTimer);
+      if (!swipeBubble) return;
+      const deltaX = e.touches[0].clientX - touchStartX;
+      if (deltaX > 0 && deltaX < 80) {
+        swipeBubble.style.transform = `translateX(${deltaX}px)`;
+      }
+    }, { passive: true });
+
+    messages.addEventListener('touchend', (e) => {
+      clearTimeout(longPressTimer);
+      if (!swipeBubble) return;
+      const deltaX = e.changedTouches[0].clientX - touchStartX;
+      swipeBubble.style.transform = '';
+      if (deltaX > 50) {
+        const bubbleList = Array.from(messages.querySelectorAll('.bubble'));
+        const msgIdx = bubbleList.indexOf(swipeBubble);
+        const msg = chatStore[activeChat][msgIdx];
+        if (msg) prepareReply(msg);
+      }
+      swipeBubble = null;
+    });
+
+    messages.addEventListener('contextmenu', (e) => {
+      const bubble = e.target.closest('.bubble');
+      if (!bubble) return;
+      e.preventDefault();
+      showContextMenu(e, bubble);
+    });
+
+    document.addEventListener('mousedown', (e) => {
+      if (!msgContextMenu.contains(e.target)) msgContextMenu.hidden = true;
+    });
+
+    msgContextMenu.querySelectorAll('.emoji-bar button').forEach(btn => {
+      btn.onclick = () => {
+        msgContextMenu.hidden = true;
+      };
+    });
+
+    const deleteMeBtn = document.getElementById('deleteMeBtn');
+    if (deleteMeBtn) deleteMeBtn.onclick = () => deleteMessage('me');
+
+    const deleteEveryoneBtn = document.getElementById('deleteEveryoneBtn');
+    if (deleteEveryoneBtn) deleteEveryoneBtn.onclick = () => deleteMessage('everyone');
+
+    const contextReplyBtn = document.getElementById('contextReplyBtn');
+    if (contextReplyBtn) {
+      contextReplyBtn.onclick = () => {
+        prepareReply(currentContextMsg);
+        msgContextMenu.hidden = true;
+      };
+    }
+
+    const closeReplyBtn = document.getElementById('closeReplyBtn');
+    if (closeReplyBtn) {
+      closeReplyBtn.onclick = () => {
+        replyToMsg = null;
+        document.getElementById('replyPreviewWrap').hidden = true;
+      };
+    }
+  }
 
   if (messageInput) {
     messageInput.addEventListener('keypress', () => {
@@ -1792,6 +1934,86 @@ function bindMessagingUI() {
     sendMessage(previewPendingMessage);
     closeImagePreviewModal();
   });
+}
+
+function showContextMenu(e, bubble) {
+  const msgContextMenu = document.getElementById('msgContextMenu');
+  if (!msgContextMenu) return;
+
+  const bubbleList = Array.from(messages.querySelectorAll('.bubble'));
+  const msgIdx = bubbleList.indexOf(bubble);
+  currentContextMsg = chatStore[activeChat][msgIdx];
+  if (!currentContextMsg) return;
+
+  msgContextMenu.hidden = false;
+
+  const x = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+  const y = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
+
+  const menuWidth = 200;
+  const menuHeight = 150;
+
+  let left = x;
+  let top = y;
+
+  if (left + menuWidth > window.innerWidth) left = window.innerWidth - menuWidth - 10;
+  if (top + menuHeight > window.innerHeight) top = window.innerHeight - menuHeight - 10;
+  if (left < 10) left = 10;
+  if (top < 10) top = 10;
+
+  msgContextMenu.style.left = `${left}px`;
+  msgContextMenu.style.top = `${top}px`;
+
+  const deleteEveryoneBtn = document.getElementById('deleteEveryoneBtn');
+  if (deleteEveryoneBtn) {
+    const isOutgoing = currentContextMsg.dir === 'outgoing';
+    const ageInMinutes = (Date.now() - (currentContextMsg.ts || 0)) / 1000 / 60;
+    deleteEveryoneBtn.hidden = !isOutgoing || ageInMinutes > 15;
+  }
+}
+
+function deleteMessage(type) {
+  if (!currentContextMsg) return;
+  const msgIdx = chatStore[activeChat].indexOf(currentContextMsg);
+  if (msgIdx === -1) return;
+
+  if (type === 'everyone') {
+    if (presenceBus && activeSession) {
+      const meta = chatMeta[activeChat];
+      if (meta) {
+        meta.participants.forEach(pId => {
+          if (pId !== activeSession.id) {
+            presenceBus.postMessage({
+              type: 'delete_msg',
+              toId: pId,
+              chatId: activeChat,
+              senderId: activeSession.id,
+              msgTs: currentContextMsg.ts
+            });
+          }
+        });
+      }
+    }
+  }
+
+  chatStore[activeChat].splice(msgIdx, 1);
+  saveJson(CHAT_STORE_KEY, chatStore);
+  renderMessages();
+  renderChatUsers();
+  document.getElementById('msgContextMenu').hidden = true;
+  currentContextMsg = null;
+}
+
+function prepareReply(msg) {
+  replyToMsg = msg;
+  const wrap = document.getElementById('replyPreviewWrap');
+  const name = document.getElementById('replyUserName');
+  const text = document.getElementById('replyText');
+  if (wrap && name && text) {
+    name.textContent = msg.senderName || (msg.dir === 'outgoing' ? 'You' : 'User');
+    text.textContent = msg.text || (msg.files?.length ? 'Photo/File' : '...');
+    wrap.hidden = false;
+  }
 }
 
 function ensureChatMeta() {
@@ -1910,7 +2132,7 @@ function migrateOldUploads() {
       changed = true;
     }
   });
-  if (changed) saveUploads();
+  if (changed) saveJson(UPLOAD_STORE_KEY, uploads);
 }
 
 function renderAnalytics(mine) {
@@ -2001,27 +2223,38 @@ function sharePostToChat(postId, targetUserId) {
   const post = uploads.find(u => u.id === postId);
   if (!post || !activeSession) return;
 
-  const msg = {
-    id: crypto.randomUUID(),
-    senderId: activeSession.id,
-    receiverId: targetUserId,
-    text: `Check out this post: ${post.caption || 'Untitled'}`,
-    files: [post.files[0]],
-    timestamp: new Date().toISOString(),
-    dir: 'out'
-  };
-
+  const ts = Date.now();
+  const text = `Check out this post: ${post.caption || 'Untitled'}`;
+  const files = [post.files[0]];
   const chatId = `dm:${targetUserId}`;
+
   if (!chatStore[chatId]) chatStore[chatId] = [];
-  chatStore[chatId].push(msg);
-  saveChatStore();
+  chatStore[chatId].push({
+    dir: 'outgoing',
+    text,
+    files,
+    ts,
+    senderName: activeHandle()
+  });
+  saveJson(CHAT_STORE_KEY, chatStore);
 
   if (!post.interactions.shares) post.interactions.shares = 0;
   post.interactions.shares++;
-  saveUploads();
+  saveJson(UPLOAD_STORE_KEY, uploads);
 
   if (presenceBus) {
-    presenceBus.postMessage({ type: 'message', chatId, message: { ...msg, dir: 'in' } });
+    presenceBus.postMessage({
+      type: 'message',
+      toId: targetUserId,
+      fromId: `dm:${activeSession.id}`,
+      senderId: activeSession.id,
+      senderName: activeHandle(),
+      text,
+      files,
+      ts
+    });
   }
   alert('Post shared successfully!');
+  renderChatUsers();
+  if (activeChat === chatId) renderMessages();
 }
