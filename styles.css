@@ -618,3 +618,34 @@ button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
 .outgoing .reply-ref { background: rgba(255,255,255,0.2); border-left-color: #fff; }
 .outgoing .reply-ref strong { color: #fff; }
 .outgoing .reply-ref p { color: rgba(255,255,255,0.9); }
+
+.invite-requests-wrap {
+  margin-bottom: 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.invite-requests-wrap h4 {
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+  color: var(--brand-a);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.invite-item {
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+.invite-info {
+  margin-bottom: 8px;
+}
+.invite-actions {
+  display: flex;
+  gap: 8px;
+}
+.invite-actions button {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border-radius: 6px;
+}

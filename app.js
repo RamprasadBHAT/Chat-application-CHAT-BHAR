@@ -3,6 +3,7 @@ const AUTH_RESET_DONE_KEY = 'chatbhar.authResetDone';
 const AUTH_SESSION_KEY = 'chatbhar.session';
 const CHAT_STORE_KEY = 'chatbhar.chatStore';
 const UPLOAD_STORE_KEY = 'chatbhar.uploads';
+const INVITES_KEY = 'chatbhar.invites';
 
 const authGate = document.getElementById('authGate');
 const appShell = document.getElementById('appShell');
@@ -159,6 +160,7 @@ let activePostViewerId = null;
 let confirmAction = null;
 let currentContextMsg = null;
 let replyToMsg = null;
+let invites = [];
 let touchStartX = 0;
 let swipeBubble = null;
 
@@ -168,6 +170,7 @@ async function initApp() {
   bindEvents();
   await bootstrapUsers();
   await loadSession();
+  invites = loadJson(INVITES_KEY, []);
   migrateOldUploads();
   applyUploadType();
   renderChatUsers();
@@ -176,6 +179,7 @@ async function initApp() {
   renderHome();
   await renderExploreUsers();
   renderChannelManager();
+  renderInviteRequests();
   initEnhancedMessaging();
 }
 
@@ -592,6 +596,10 @@ function bindEvents() {
       renderHome();
       renderChannelManager();
     }
+    if (e.key === INVITES_KEY) {
+      invites = loadJson(INVITES_KEY, []);
+      renderInviteRequests();
+    }
   });
 }
 
@@ -821,6 +829,7 @@ function toggleTheme() {
 function openTab(tabId) {
   screens.forEach((s) => s.classList.toggle('active', s.id === tabId));
   navButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === tabId));
+  if (tabId === 'chat') renderInviteRequests();
 }
 
 function setSelectedUploadFiles(files) {
@@ -1123,6 +1132,7 @@ async function renderExploreUsers(query = '') {
       avatarHtml = `<div class="avatar">${escapeHtml(initials || 'U')}</div>`;
     }
 
+    const isMe = activeSession && u.id === activeSession.id;
     card.innerHTML = `
       <div class="explore-user-head">
         ${avatarHtml}
@@ -1131,8 +1141,15 @@ async function renderExploreUsers(query = '') {
           <p>${escapeHtml(u.email)}</p>
         </div>
       </div>
-      <span class="status-pill ${u.isActive ? 'active' : 'inactive'}">${u.isActive ? 'Active now' : 'Offline'}</span>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px">
+        <span class="status-pill ${u.isActive ? 'active' : 'inactive'}">${u.isActive ? 'Active now' : 'Offline'}</span>
+        ${!isMe ? `<button class="message-btn utility-btn" data-user-id="${u.id}">Message</button>` : ''}
+      </div>
     `;
+    const msgBtn = card.querySelector('.message-btn');
+    if (msgBtn) {
+      msgBtn.onclick = () => onExploreMessageClick(u.id);
+    }
     exploreUsersList.appendChild(card);
   });
 }
@@ -1779,6 +1796,50 @@ function initEnhancedMessaging() {
   if (presenceBus) {
     presenceBus.onmessage = (event) => {
       const msg = event.data || {};
+      if (msg.type === 'invite_request' && msg.invite && msg.invite.toId === activeSession?.id) {
+        if (!invites.some(i => i.id === msg.invite.id)) {
+          invites.push(msg.invite);
+          saveInvites();
+          syncAuthUsers().then(() => renderInviteRequests());
+        }
+      }
+      if (msg.type === 'invite_accept' && msg.inviteId) {
+        const inv = invites.find(i => i.id === msg.inviteId);
+        if (inv) {
+          inv.status = 'accepted';
+          saveInvites();
+          syncAuthUsers().then(() => {
+            renderInviteRequests();
+          // If I was the sender, I should now see the chat
+          if (inv.fromId === activeSession?.id) {
+            const otherId = inv.toId;
+            const otherUser = authUsers.find(u => u.id === otherId);
+            const chatId = msg.chatId || `dm:${otherId}`;
+            if (!chatStore[chatId]) chatStore[chatId] = [];
+            if (!chatMeta[chatId]) {
+              chatMeta[chatId] = {
+                id: chatId,
+                name: otherUser ? (otherUser.username || otherUser.name) : 'User',
+                participants: [activeSession.id, otherId],
+                isGroup: false,
+                online: true
+              };
+            }
+            saveJson(CHAT_STORE_KEY, chatStore);
+            saveJson('chatbhar.chatMeta', chatMeta);
+            renderChatUsers();
+          }
+        });
+      }
+    }
+      if (msg.type === 'invite_decline' && msg.inviteId) {
+        const idx = invites.findIndex(i => i.id === msg.inviteId);
+        if (idx !== -1) {
+          invites.splice(idx, 1);
+          saveInvites();
+          renderInviteRequests();
+        }
+      }
       if (msg.type === 'presence' && msg.userId && msg.userId !== activeSession?.id) {
         Object.keys(chatMeta).forEach((chatId) => {
           if ((chatMeta[chatId].participants || []).includes(msg.userId)) chatMeta[chatId].online = msg.online;
@@ -2048,15 +2109,8 @@ async function openContactModal() {
 
     row.innerHTML = `${avatarHtml} <span>${escapeHtml(u.name)}</span><button type="button" class="edit-profile-btn" style="margin-left:auto">Select</button>`;
     row.querySelector('button').addEventListener('click', () => {
-      const id = `dm:${u.id}`;
-      if (!chatStore[id]) chatStore[id] = [];
-      chatMeta[id] = { id, name: u.name, participants: [u.id, activeSession.id], isGroup: false, online: true };
-      saveJson(CHAT_STORE_KEY, chatStore);
-      saveJson('chatbhar.chatMeta', chatMeta);
-      activeChat = id;
-      renderChatUsers();
-      renderMessages();
       contactModal.hidden = true;
+      onExploreMessageClick(u.id);
     });
     contactList.appendChild(row);
   });
@@ -2223,12 +2277,16 @@ function sharePostToChat(postId, targetUserId) {
   const post = uploads.find(u => u.id === postId);
   if (!post || !activeSession) return;
 
+  const chatId = `dm:${targetUserId}`;
+  if (!chatStore[chatId]) {
+    alert('You need to have an active chat with this user first. Send them a message request from Explore!');
+    return;
+  }
+
   const ts = Date.now();
   const text = `Check out this post: ${post.caption || 'Untitled'}`;
   const files = [post.files[0]];
-  const chatId = `dm:${targetUserId}`;
 
-  if (!chatStore[chatId]) chatStore[chatId] = [];
   chatStore[chatId].push({
     dir: 'outgoing',
     text,
@@ -2257,4 +2315,165 @@ function sharePostToChat(postId, targetUserId) {
   alert('Post shared successfully!');
   renderChatUsers();
   if (activeChat === chatId) renderMessages();
+}
+
+function saveInvites() {
+  saveJson(INVITES_KEY, invites);
+}
+
+function renderInviteRequests() {
+  const wrap = document.getElementById('inviteRequestsWrap');
+  if (!wrap || !activeSession) return;
+
+  const pending = invites.filter(inv => inv.toId === activeSession.id && inv.status === 'pending');
+  if (pending.length === 0) {
+    wrap.innerHTML = '';
+    wrap.hidden = true;
+    return;
+  }
+
+  wrap.hidden = false;
+  wrap.innerHTML = '<h4>Message Requests</h4>';
+  pending.forEach(inv => {
+    const sender = authUsers.find(u => u.id === inv.fromId);
+    const name = sender ? (sender.username || sender.name) : 'Unknown User';
+
+    const div = document.createElement('div');
+    div.className = 'invite-item glass';
+    div.innerHTML = `
+      <div class="invite-info">
+        <strong>${escapeHtml(name)}</strong> wants to message you.
+      </div>
+      <div class="invite-actions">
+        <button class="accept-btn">Accept</button>
+        <button class="decline-btn danger">Decline</button>
+      </div>
+    `;
+
+    div.querySelector('.accept-btn').onclick = () => acceptInvite(inv.id);
+    div.querySelector('.decline-btn').onclick = () => declineInvite(inv.id);
+    wrap.appendChild(div);
+  });
+}
+
+function onExploreMessageClick(userId) {
+  if (!activeSession) return alert('Please login to message users.');
+
+  const chatId = `dm:${userId}`;
+  if (chatStore[chatId]) {
+    // DM exists and is accepted (or at least started)
+    activeChat = chatId;
+    openTab('chat');
+    renderChatUsers();
+    renderMessages();
+    return;
+  }
+
+  const existingInvite = invites.find(inv =>
+    (inv.fromId === activeSession.id && inv.toId === userId) ||
+    (inv.fromId === userId && inv.toId === activeSession.id)
+  );
+
+  if (existingInvite) {
+    if (existingInvite.status === 'accepted') {
+      // Should have been in chatStore, but safety check
+      activeChat = chatId;
+      openTab('chat');
+      renderChatUsers();
+      renderMessages();
+    } else if (existingInvite.fromId === activeSession.id) {
+      alert('Message request already sent. Waiting for approval.');
+    } else {
+      // Invite from them to me exists
+      openTab('chat');
+      renderInviteRequests();
+    }
+    return;
+  }
+
+  // Send new invite
+  if (confirm('Send a message request to this user?')) {
+    sendInvite(userId);
+  }
+}
+
+function sendInvite(targetId) {
+  const invite = {
+    id: crypto.randomUUID(),
+    fromId: activeSession.id,
+    toId: targetId,
+    status: 'pending',
+    ts: Date.now()
+  };
+  invites.push(invite);
+  saveInvites();
+
+  if (presenceBus) {
+    presenceBus.postMessage({
+      type: 'invite_request',
+      invite
+    });
+  }
+
+  alert('Message request sent!');
+  renderInviteRequests();
+}
+
+function acceptInvite(inviteId) {
+  const inv = invites.find(i => i.id === inviteId);
+  if (!inv) return;
+
+  inv.status = 'accepted';
+  saveInvites();
+
+  const otherId = inv.fromId === activeSession.id ? inv.toId : inv.fromId;
+  const otherUser = authUsers.find(u => u.id === otherId);
+  const chatId = `dm:${otherId}`;
+
+  if (!chatStore[chatId]) chatStore[chatId] = [];
+  if (!chatMeta[chatId]) {
+    chatMeta[chatId] = {
+      id: chatId,
+      name: otherUser ? (otherUser.username || otherUser.name) : 'User',
+      participants: [activeSession.id, otherId],
+      isGroup: false,
+      online: true
+    };
+  }
+
+  saveJson(CHAT_STORE_KEY, chatStore);
+  saveJson('chatbhar.chatMeta', chatMeta);
+
+  if (presenceBus) {
+    presenceBus.postMessage({
+      type: 'invite_accept',
+      inviteId,
+      acceptedBy: activeSession.id,
+      chatId
+    });
+  }
+
+  activeChat = chatId;
+  renderChatUsers();
+  renderMessages();
+  renderInviteRequests();
+}
+
+function declineInvite(inviteId) {
+  const idx = invites.findIndex(i => i.id === inviteId);
+  if (idx === -1) return;
+
+  const inv = invites[idx];
+  invites.splice(idx, 1);
+  saveInvites();
+
+  if (presenceBus) {
+    presenceBus.postMessage({
+      type: 'invite_decline',
+      inviteId,
+      declinedBy: activeSession.id
+    });
+  }
+
+  renderInviteRequests();
 }
