@@ -1,20 +1,20 @@
 {
   "users": [
     {
-      "id": "c90a3bcb-7132-46da-85a6-4a480344a597",
+      "id": "71beef55-8d65-447f-90f0-f0f1be698524",
       "name": "Test User",
       "email": "test@gmail.com",
       "password": "password123",
       "usernames": [
         {
-          "id": "f9c866d9-30fe-4535-871a-f00a4ab578d8",
+          "id": "eaa6dba9-3287-451e-a1c8-d06a4aebe2a9",
           "value": "testuser",
-          "createdAt": 1772105031630,
-          "updatedAt": 1772105031630
+          "createdAt": 1772115909555,
+          "updatedAt": 1772115909555
         }
       ],
       "usernameChangeLogs": [],
-      "activeUsernameId": "f9c866d9-30fe-4535-871a-f00a4ab578d8",
+      "activeUsernameId": "eaa6dba9-3287-451e-a1c8-d06a4aebe2a9",
       "profilePic": "",
       "bio": "",
       "profession": "",
@@ -25,13 +25,49 @@
         "github": ""
       },
       "stats": {
-        "posts": 0,
+        "posts": 1,
         "followers": 0,
         "following": 0
       },
       "isPrivate": false
     }
   ],
-  "posts": [],
+  "posts": [
+    {
+      "id": "c24f1c4f-b5e4-4c83-869e-785b85dc906a",
+      "userId": "71beef55-8d65-447f-90f0-f0f1be698524",
+      "userName": "testuser",
+      "type": "carousel",
+      "caption": "My Test Post",
+      "description": "",
+      "files": [
+        {
+          "name": "dummy.png",
+          "type": "image/png",
+          "size": 67,
+          "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="
+        }
+      ],
+      "edits": [
+        {
+          "name": "dummy.png",
+          "trimStart": 0,
+          "trimEnd": 0,
+          "overlayText": "",
+          "overlayColor": "#ffffff",
+          "overlayX": 10,
+          "overlayY": 10
+        }
+      ],
+      "createdAt": "2026-02-26T14:25:09.859Z",
+      "expiresAt": null,
+      "interactions": {
+        "likes": 0,
+        "likedBy": [],
+        "comments": [],
+        "shares": 0
+      }
+    }
+  ],
   "relationships": []
 }
