@@ -1,14 +1,18 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { randomUUID } = require('crypto');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 4173;
 const DB_PATH = path.join(__dirname, 'db', 'auth-db.json');
 
 function readDb() {
   const raw = fs.readFileSync(DB_PATH, 'utf8');
-  return JSON.parse(raw || '{"users":[]}');
+  const data = JSON.parse(raw || '{"users":[],"posts":[],"relationships":[]}');
+  if (!data.users) data.users = [];
+  if (!data.posts) data.posts = [];
+  if (!data.relationships) data.relationships = [];
+  return data;
 }
 function writeDb(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
 
@@ -53,13 +57,19 @@ const server = http.createServer(async (req, res) => {
       name: u.name,
       role: 'user',
       username: (u.usernames || []).find((x) => x.id === u.activeUsernameId)?.value || '',
-      usernames: u.usernames || []
+      usernames: u.usernames || [],
+      profilePic: u.profilePic || '',
+      bio: u.bio || '',
+      profession: u.profession || '',
+      location: u.location || '',
+      socialLinks: u.socialLinks || { twitter: '', linkedin: '', github: '' },
+      stats: u.stats || { posts: 0, followers: 0, following: 0 }
     }));
     return json(res, 200, { users });
   }
 
   if (url.pathname === '/api/admin/reset-signups' && req.method === 'POST') {
-    writeDb({ users: [] });
+    writeDb({ users: [], posts: [], relationships: [] });
     return json(res, 200, { ok: true, message: 'All existing signups removed for fresh Gmail registration.' });
   }
 
@@ -76,7 +86,7 @@ const server = http.createServer(async (req, res) => {
     if (db.users.some((u) => u.email === email)) return json(res, 409, { error: 'Email already exists. Please login.' });
 
     const user = {
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       name,
       email,
       password,
@@ -84,11 +94,16 @@ const server = http.createServer(async (req, res) => {
       usernameChangeLogs: [],
       activeUsernameId: null,
       profilePic: '',
-      bio: ''
+      bio: '',
+      profession: '',
+      location: '',
+      socialLinks: { twitter: '', linkedin: '', github: '' },
+      stats: { posts: 0, followers: 0, following: 0 },
+      isPrivate: false
     };
     db.users.push(user);
     writeDb(db);
-    return json(res, 201, { user: { id: user.id, name, email, usernames: [], username: '', profilePic: '', bio: '' } });
+    return json(res, 201, { user: { id: user.id, name, email, usernames: [], username: '', profilePic: '', bio: '', profession: '', location: '', socialLinks: user.socialLinks, stats: user.stats } });
   }
 
   if (url.pathname === '/api/auth/login' && req.method === 'POST') {
@@ -99,7 +114,23 @@ const server = http.createServer(async (req, res) => {
     const user = db.users.find((u) => u.email === email && u.password === password);
     if (!user) return json(res, 401, { error: 'Invalid email/password.' });
     const username = (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '';
-    return json(res, 200, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username, profilePic: user.profilePic, bio: user.bio }, usernames: user.usernames || [] });
+    return json(res, 200, {
+      session: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: 'user',
+        username,
+        activeUsernameId: user.activeUsernameId,
+        profilePic: user.profilePic,
+        bio: user.bio,
+        profession: user.profession || '',
+        location: user.location || '',
+        socialLinks: user.socialLinks || { twitter: '', linkedin: '', github: '' },
+        stats: user.stats || { posts: 0, followers: 0, following: 0 }
+      },
+      usernames: user.usernames || []
+    });
   }
 
   if (url.pathname === '/api/usernames/check' && req.method === 'POST') {
@@ -127,12 +158,12 @@ const server = http.createServer(async (req, res) => {
     if (exists) return json(res, 409, { error: 'Username already taken' });
 
     const now = Date.now();
-    const newName = { id: randomUUID(), value: username, createdAt: now, updatedAt: now };
+    const newName = { id: crypto.randomUUID(), value: username, createdAt: now, updatedAt: now };
     user.usernames.push(newName);
     user.activeUsernameId = newName.id;
     writeDb(db);
 
-    return json(res, 201, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: newName.value } });
+    return json(res, 201, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: newName.value, activeUsernameId: user.activeUsernameId } });
   }
 
   if (url.pathname === '/api/auth/session/select-username' && req.method === 'POST') {
@@ -146,7 +177,7 @@ const server = http.createServer(async (req, res) => {
     if (!selected) return json(res, 404, { error: 'Username not found for account.' });
     user.activeUsernameId = selected.id;
     writeDb(db);
-    return json(res, 200, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: selected.value } });
+    return json(res, 200, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: selected.value, activeUsernameId: user.activeUsernameId } });
   }
 
   if (url.pathname === '/api/auth/delete-account' && req.method === 'POST') {
@@ -159,6 +190,76 @@ const server = http.createServer(async (req, res) => {
     db.users.splice(idx, 1);
     writeDb(db);
     return json(res, 200, { ok: true });
+  }
+
+  // Social & Relationships
+  if (url.pathname === '/api/relationships/follow' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const { followerId, followingId } = body;
+    const db = readDb();
+
+    const follower = db.users.find(u => u.id === followerId);
+    const following = db.users.find(u => u.id === followingId);
+
+    if (!follower || !following) return json(res, 404, { error: 'User not found' });
+
+    const existing = db.relationships.find(r => r.followerId === followerId && r.followingId === followingId);
+    if (existing) return json(res, 400, { error: 'Relationship already exists' });
+
+    const status = following.isPrivate ? 'pending' : 'accepted';
+    const rel = { id: crypto.randomUUID(), followerId, followingId, status };
+    db.relationships.push(rel);
+
+    if (status === 'accepted') {
+      follower.stats.following = (follower.stats.following || 0) + 1;
+      following.stats.followers = (following.stats.followers || 0) + 1;
+    }
+
+    writeDb(db);
+    return json(res, 200, { relationship: rel });
+  }
+
+  if (url.pathname === '/api/relationships/accept' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const { relationshipId } = body;
+    const db = readDb();
+
+    const rel = db.relationships.find(r => r.id === relationshipId);
+    if (!rel) return json(res, 404, { error: 'Relationship not found' });
+
+    if (rel.status === 'accepted') return json(res, 400, { error: 'Already accepted' });
+
+    rel.status = 'accepted';
+    const follower = db.users.find(u => u.id === rel.followerId);
+    const following = db.users.find(u => u.id === rel.followingId);
+
+    if (follower && following) {
+      follower.stats.following = (follower.stats.following || 0) + 1;
+      following.stats.followers = (following.stats.followers || 0) + 1;
+    }
+
+    writeDb(db);
+    return json(res, 200, { relationship: rel });
+  }
+
+  if (url.pathname === '/api/relationships/requests' && req.method === 'GET') {
+    const userId = url.searchParams.get('userId');
+    if (!userId) return json(res, 400, { error: 'userId is required' });
+
+    const db = readDb();
+    const requests = db.relationships.filter(r => r.followingId === userId && r.status === 'pending');
+
+    // Enrich with follower info
+    const enriched = requests.map(r => {
+      const follower = db.users.find(u => u.id === r.followerId);
+      return {
+        ...r,
+        followerName: follower ? (follower.name || (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value) : 'Unknown',
+        followerHandle: follower ? (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value : ''
+      };
+    });
+
+    return json(res, 200, { requests: enriched });
   }
 
   if (url.pathname.startsWith('/api/usernames/') && req.method === 'PATCH') {
@@ -183,6 +284,104 @@ const server = http.createServer(async (req, res) => {
     target.updatedAt = Date.now();
     writeDb(db);
     return json(res, 200, { ok: true, username: target });
+  }
+
+  if (url.pathname === '/api/auth/profile' && req.method === 'PATCH') {
+    const body = await parseBody(req);
+    const { userId, name, bio, profession, location, socialLinks, profilePic, isPrivate } = body;
+    const db = readDb();
+    const user = db.users.find(u => u.id === userId);
+    if (!user) return json(res, 404, { error: 'User not found' });
+
+    if (name !== undefined) user.name = name;
+    if (bio !== undefined) user.bio = bio;
+    if (profession !== undefined) user.profession = profession;
+    if (location !== undefined) user.location = location;
+    if (socialLinks !== undefined) user.socialLinks = socialLinks;
+    if (profilePic !== undefined) user.profilePic = profilePic;
+    if (isPrivate !== undefined) user.isPrivate = isPrivate;
+
+    writeDb(db);
+    return json(res, 200, {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        username: (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '',
+        activeUsernameId: user.activeUsernameId,
+        profilePic: user.profilePic,
+        bio: user.bio,
+        profession: user.profession,
+        location: user.location,
+        socialLinks: user.socialLinks,
+        stats: user.stats,
+        isPrivate: user.isPrivate
+      }
+    });
+  }
+
+  // Posts CRUD
+  if (url.pathname === '/api/posts' && req.method === 'GET') {
+    const db = readDb();
+    return json(res, 200, { posts: db.posts || [] });
+  }
+
+  if (url.pathname === '/api/posts' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const db = readDb();
+    const newPost = {
+      id: crypto.randomUUID(),
+      userId: body.userId,
+      userName: body.userName,
+      type: body.type || 'short',
+      caption: body.caption || '',
+      description: body.description || '',
+      files: body.files || [],
+      edits: body.edits || [],
+      createdAt: new Date().toISOString(),
+      expiresAt: body.expiresAt || null,
+      interactions: body.interactions || { likes: 0, likedBy: [], comments: [], shares: 0 }
+    };
+    db.posts.push(newPost);
+
+    // Update user post count
+    const user = db.users.find(u => u.id === body.userId);
+    if (user) {
+      user.stats = user.stats || { posts: 0, followers: 0, following: 0 };
+      user.stats.posts = (user.stats.posts || 0) + 1;
+    }
+
+    writeDb(db);
+    return json(res, 201, { post: newPost });
+  }
+
+  if (url.pathname.startsWith('/api/posts/') && req.method === 'PATCH') {
+    const postId = url.pathname.split('/').pop();
+    const body = await parseBody(req);
+    const db = readDb();
+    const idx = db.posts.findIndex(p => p.id === postId);
+    if (idx === -1) return json(res, 404, { error: 'Post not found' });
+
+    db.posts[idx] = { ...db.posts[idx], ...body };
+    writeDb(db);
+    return json(res, 200, { post: db.posts[idx] });
+  }
+
+  if (url.pathname.startsWith('/api/posts/') && req.method === 'DELETE') {
+    const postId = url.pathname.split('/').pop();
+    const db = readDb();
+    const idx = db.posts.findIndex(p => p.id === postId);
+    if (idx === -1) return json(res, 404, { error: 'Post not found' });
+
+    const post = db.posts[idx];
+    const user = db.users.find(u => u.id === post.userId);
+    if (user && user.stats) {
+      user.stats.posts = Math.max(0, (user.stats.posts || 0) - 1);
+    }
+
+    db.posts.splice(idx, 1);
+    writeDb(db);
+    return json(res, 200, { ok: true });
   }
 
   const filePath = path.join(__dirname, url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
