@@ -10,11 +10,6 @@ const signupForm = document.getElementById('signupForm');
 const loginForm = document.getElementById('loginForm');
 const authMessage = document.getElementById('authMessage');
 
-const usernameForm = document.getElementById('usernameForm');
-const usernameInput = document.getElementById('usernameInput');
-const existingUsernames = document.getElementById('existingUsernames');
-const usernameCheckBtn = document.getElementById('usernameCheckBtn');
-const usernameHint = document.getElementById('usernameHint');
 const logoutBtn = document.getElementById('logoutBtn');
 const themeToggle = document.getElementById('themeToggle');
 const deleteAccountOpenBtn = document.getElementById('deleteAccountOpenBtn');
@@ -53,8 +48,13 @@ const channelContentList = document.getElementById('channelContentList');
 const myChannelAvatar = document.getElementById('myChannelAvatar');
 const myChannelHandle = document.getElementById('myChannelHandle');
 const myChannelDisplayName = document.getElementById('myChannelDisplayName');
+const myChannelProfession = document.getElementById('myChannelProfession');
 const myChannelBio = document.getElementById('myChannelBio');
+const myChannelLocation = document.getElementById('myChannelLocation');
+const myChannelSocialLinks = document.getElementById('myChannelSocialLinks');
 const myPostCount = document.getElementById('myPostCount');
+const myFollowerCount = document.getElementById('myFollowerCount');
+const myFollowingCount = document.getElementById('myFollowingCount');
 const channelContentGrid = document.getElementById('channelContentGrid');
 const profileTabs = document.querySelectorAll('.profile-tab');
 const editProfileOpenBtn = document.querySelector('.edit-profile-btn');
@@ -65,8 +65,16 @@ const editProfileForm = document.getElementById('editProfileForm');
 const profilePicInput = document.getElementById('profilePicInput');
 const changeProfilePicBtn = document.getElementById('changeProfilePicBtn');
 const editProfileAvatarPreview = document.getElementById('editProfileAvatarPreview');
+const editProfileUsername = document.getElementById('editProfileUsername');
 const editProfileName = document.getElementById('editProfileName');
+const editProfileProfession = document.getElementById('editProfileProfession');
 const editProfileBio = document.getElementById('editProfileBio');
+const editProfileLocation = document.getElementById('editProfileLocation');
+const editProfileTwitter = document.getElementById('editProfileTwitter');
+const editProfileLinkedin = document.getElementById('editProfileLinkedin');
+const editProfileGithub = document.getElementById('editProfileGithub');
+const editProfilePrivate = document.getElementById('editProfilePrivate');
+const usernameAvailabilityHint = document.getElementById('usernameAvailabilityHint');
 
 const activeChatTitle = document.getElementById('activeChatTitle');
 const messages = document.getElementById('messages');
@@ -131,6 +139,9 @@ const groupNameInput = document.getElementById('groupNameInput');
 const groupContactList = document.getElementById('groupContactList');
 const createGroupConfirm = document.getElementById('createGroupConfirm');
 
+const followRequestsSection = document.getElementById('followRequestsSection');
+const followRequestsList = document.getElementById('followRequestsList');
+
 const typeRules = {
   short: { accept: 'video/*', multiple: false, hint: 'Shorts: choose 1 short-form video.', captionRequired: true, descriptionRequired: false },
   carousel: { accept: 'image/*', multiple: true, hint: 'Carousel: choose multiple images.', captionRequired: true, descriptionRequired: false },
@@ -166,6 +177,8 @@ initApp();
 
 async function initApp() {
   bindEvents();
+  hydrateState(); // Hydrate immediately for fast feedback
+  await fetchAndSyncPosts();
   await bootstrapUsers();
   await loadSession();
   migrateOldUploads();
@@ -176,7 +189,23 @@ async function initApp() {
   renderHome();
   await renderExploreUsers();
   renderChannelManager();
+  renderFollowRequests();
   initEnhancedMessaging();
+}
+
+function syncState() {
+  if (activeSession) {
+    saveJson(AUTH_SESSION_KEY, activeSession);
+  }
+}
+
+function hydrateState() {
+  activeSession = loadJson(AUTH_SESSION_KEY, null);
+  if (activeSession) {
+    // Basic hydration of the UI before full session load
+    authGate.hidden = true;
+    appShell.hidden = false;
+  }
 }
 
 function loadJson(key, fallback) {
@@ -378,8 +407,6 @@ async function bootstrapUsers() {
 function bindEvents() {
   signupForm.addEventListener('submit', onSignup);
   loginForm.addEventListener('submit', onLogin);
-  usernameForm.addEventListener('submit', onCreateUsername);
-  usernameCheckBtn.addEventListener('click', onCheckUsername);
   logoutBtn.addEventListener('click', onLogout);
   themeToggle.addEventListener('click', toggleTheme);
   navButtons.forEach((btn) => btn.addEventListener('click', () => openTab(btn.dataset.tab)));
@@ -555,8 +582,16 @@ function bindEvents() {
 
   if (editProfileOpenBtn) {
     editProfileOpenBtn.addEventListener('click', () => {
+      editProfileUsername.value = activeSession.username || '';
       editProfileName.value = activeSession.name || '';
+      editProfileProfession.value = activeSession.profession || '';
       editProfileBio.value = activeSession.bio || 'Digital Creator | Tech Enthusiast | Travel Lover 🌍';
+      editProfileLocation.value = activeSession.location || '';
+      editProfileTwitter.value = activeSession.socialLinks?.twitter || '';
+      editProfileLinkedin.value = activeSession.socialLinks?.linkedin || '';
+      editProfileGithub.value = activeSession.socialLinks?.github || '';
+      editProfilePrivate.checked = !!activeSession.isPrivate;
+      usernameAvailabilityHint.textContent = '';
       renderProfileAvatar(editProfileAvatarPreview, activeSession);
       editProfileModal.hidden = false;
     });
@@ -579,6 +614,28 @@ function bindEvents() {
   }
   if (editProfileForm) {
     editProfileForm.addEventListener('submit', onSaveProfile);
+  }
+
+  if (editProfileUsername) {
+    let timeout;
+    editProfileUsername.addEventListener('input', () => {
+      clearTimeout(timeout);
+      const val = editProfileUsername.value.trim().toLowerCase();
+      if (!val || val === activeSession?.username?.toLowerCase()) {
+        usernameAvailabilityHint.textContent = '';
+        return;
+      }
+      timeout = setTimeout(async () => {
+        try {
+          await apiRequest('/api/usernames/check', { method: 'POST', body: JSON.stringify({ username: val }) });
+          usernameAvailabilityHint.textContent = 'Username available';
+          usernameAvailabilityHint.style.color = '#0f8a3a';
+        } catch (e) {
+          usernameAvailabilityHint.textContent = e.message;
+          usernameAvailabilityHint.style.color = '#d14343';
+        }
+      }, 500);
+    });
   }
 
   window.addEventListener('storage', (e) => {
@@ -605,31 +662,94 @@ function renderProfileAvatar(el, user) {
   }
 }
 
+async function followUser(followingId) {
+  if (!activeSession) return;
+  try {
+    await apiRequest('/api/relationships/follow', {
+      method: 'POST',
+      body: JSON.stringify({ followerId: activeSession.id, followingId })
+    });
+    await renderExploreUsers(exploreSearchInput.value);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function acceptFollowRequest(relationshipId) {
+  try {
+    await apiRequest('/api/relationships/accept', {
+      method: 'POST',
+      body: JSON.stringify({ relationshipId })
+    });
+    renderFollowRequests(); // Need to implement this
+    await renderExploreUsers(exploreSearchInput.value);
+    renderChannelManager();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 async function onSaveProfile(e) {
   e.preventDefault();
+  const username = editProfileUsername.value.trim();
   const name = editProfileName.value.trim();
+  const profession = editProfileProfession.value.trim();
   const bio = editProfileBio.value.trim();
+  const location = editProfileLocation.value.trim();
+  const twitter = editProfileTwitter.value.trim();
+  const linkedin = editProfileLinkedin.value.trim();
+  const github = editProfileGithub.value.trim();
+  const isPrivate = editProfilePrivate.checked;
   const profilePic = activeSession.pendingProfilePic || activeSession.profilePic;
 
-  activeSession.name = name;
-  activeSession.bio = bio;
-  activeSession.profilePic = profilePic;
-  delete activeSession.pendingProfilePic;
+  try {
+    // 1. Handle username change if needed
+    if (username && username !== activeSession.username) {
+      if (activeSession.username) {
+        // Find the usernameId
+        const db = loadLocalAuthDb();
+        const user = db.users.find(u => u.id === activeSession.id);
+        const usernameId = user?.activeUsernameId;
+        if (usernameId) {
+          await apiRequest(`/api/usernames/${usernameId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ userId: activeSession.id, username })
+          });
+        }
+      } else {
+        await apiRequest('/api/usernames', {
+          method: 'POST',
+          body: JSON.stringify({ userId: activeSession.id, username })
+        });
+      }
+      activeSession.username = username;
+    }
 
-  saveJson(AUTH_SESSION_KEY, activeSession);
+    // 2. Update other profile fields
+    const payload = await apiRequest('/api/auth/profile', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        userId: activeSession.id,
+        name,
+        bio,
+        profession,
+        location,
+        socialLinks: { twitter, linkedin, github },
+        profilePic,
+        isPrivate
+      })
+    });
 
-  // Update local DB if possible
-  const db = loadLocalAuthDb();
-  const uIdx = db.users.findIndex(u => u.id === activeSession.id);
-  if (uIdx !== -1) {
-    db.users[uIdx].name = name;
-    db.users[uIdx].bio = bio;
-    db.users[uIdx].profilePic = profilePic;
-    saveLocalAuthDb(db);
+    activeSession = { ...activeSession, ...payload.user };
+    delete activeSession.pendingProfilePic;
+    saveJson(AUTH_SESSION_KEY, activeSession);
+
+    editProfileModal.hidden = true;
+    renderChannelManager();
+    await renderExploreUsers();
+  } catch (err) {
+    alert(err.message);
   }
-
-  editProfileModal.hidden = true;
-  renderChannelManager();
 }
 
 
@@ -654,14 +774,13 @@ async function onSignup(event) {
   if (password !== confirmPassword) return setAuthMessage('Passwords do not match.', false);
 
   try {
-    const payload = await apiRequest('/api/auth/signup', {
+    await apiRequest('/api/auth/signup', {
       method: 'POST',
       body: JSON.stringify({ name, email, password })
     });
     signupForm.reset();
-    setAuthMessage('Account created. Choose your username to continue.', true);
+    setAuthMessage('Account created. Please login.', true);
     await syncAuthUsers();
-    openOnboarding(payload.user);
   } catch (error) {
     setAuthMessage(error.message, false);
   }
@@ -677,78 +796,12 @@ async function onLogin(event) {
       body: JSON.stringify({ email, password })
     });
     saveJson(AUTH_SESSION_KEY, payload.session);
-    if (!payload.session.username) {
-      openOnboarding(payload.session);
-      setAuthMessage('Pick a username before entering ChatBhar.', true);
-      return;
-    }
+    syncState();
     setAuthMessage('', false);
     await loadSession();
     openTab('home');
   } catch (error) {
     setAuthMessage(error.message || 'Invalid email/password.', false);
-  }
-}
-
-function openOnboarding(user) {
-  activeSession = { id: user.id, name: user.name, email: user.email, role: user.role || 'user', username: user.username || '' };
-  signupForm.hidden = true;
-  loginForm.hidden = true;
-  usernameForm.hidden = false;
-  usernameHint.textContent = '';
-  usernameInput.value = '';
-  const usernames = user.usernames || [];
-  existingUsernames.innerHTML = '<option value="">Choose existing username</option>';
-  usernames.forEach((entry) => {
-    const option = document.createElement('option');
-    option.value = entry.value;
-    option.textContent = entry.value;
-    existingUsernames.appendChild(option);
-  });
-}
-
-async function onCheckUsername() {
-  const username = usernameInput.value.trim();
-  if (!username) return;
-  try {
-    await apiRequest('/api/usernames/check', { method: 'POST', body: JSON.stringify({ username }) });
-    usernameHint.textContent = 'Username is available.';
-    usernameHint.style.color = '#0f8a3a';
-  } catch (error) {
-    usernameHint.textContent = error.message;
-    usernameHint.style.color = '#d14343';
-  }
-}
-
-async function onCreateUsername(event) {
-  event.preventDefault();
-  const picked = existingUsernames.value.trim();
-  const username = usernameInput.value.trim();
-
-  try {
-    let payload;
-    if (picked) {
-      payload = await apiRequest('/api/auth/session/select-username', {
-        method: 'POST',
-        body: JSON.stringify({ userId: activeSession.id, username: picked })
-      });
-    } else {
-      payload = await apiRequest('/api/usernames', {
-        method: 'POST',
-        body: JSON.stringify({ userId: activeSession.id, username })
-      });
-    }
-
-    saveJson(AUTH_SESSION_KEY, payload.session);
-    usernameForm.hidden = true;
-    signupForm.hidden = false;
-    loginForm.hidden = false;
-    setAuthMessage('', false);
-    await syncAuthUsers();
-    await loadSession();
-    openTab('home');
-  } catch (error) {
-    setAuthMessage(error.message, false);
   }
 }
 
@@ -759,6 +812,10 @@ function setAuthMessage(message, success) {
 
 async function loadSession() {
   activeSession = loadJson(AUTH_SESSION_KEY, null);
+  if (activeSession) {
+    activeSession.savedPosts = activeSession.savedPosts || [];
+    activeSession.taggedUsers = activeSession.taggedUsers || [];
+  }
   if (!activeSession?.id) {
     authGate.hidden = false;
     appShell.hidden = true;
@@ -775,12 +832,6 @@ async function loadSession() {
     return;
   }
 
-  if (!activeSession.username) {
-    authGate.hidden = false;
-    appShell.hidden = true;
-    openOnboarding(dbUser);
-    return;
-  }
 
   authGate.hidden = true;
   appShell.hidden = false;
@@ -788,6 +839,7 @@ async function loadSession() {
   await renderExploreUsers();
   renderUploads();
   renderChannelManager();
+  renderFollowRequests();
 }
 
 async function onDeleteAccount() {
@@ -821,6 +873,7 @@ function toggleTheme() {
 function openTab(tabId) {
   screens.forEach((s) => s.classList.toggle('active', s.id === tabId));
   navButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === tabId));
+  if (tabId === 'chat') renderFollowRequests();
 }
 
 function setSelectedUploadFiles(files) {
@@ -967,50 +1020,67 @@ async function onUploadSubmit(event) {
   uploadProgressWrap.hidden = false;
   uploadProgressBar.style.width = '0%';
 
-  const prepared = await chunkedConcurrentUpload(files, updateProgress);
-  const edits = structuredClone(selectedUploadEdits);
+  try {
+    const prepared = await chunkedConcurrentUpload(files, updateProgress);
+    const edits = structuredClone(selectedUploadEdits);
 
-  const baseRecord = {
-    type: selectedUploadType,
-    userName: activeHandle(),
-    userId: activeSession.id,
-    caption,
-    description,
-    createdAt: new Date().toISOString(),
-    interactions: { likes: 0, likedBy: [], comments: [], shares: 0 }
-  };
+    const baseRecord = {
+      type: selectedUploadType,
+      userName: activeHandle(),
+      userId: activeSession.id,
+      caption,
+      description,
+      interactions: { likes: 0, likedBy: [], comments: [], shares: 0 }
+    };
 
-  if (selectedUploadType === 'story') {
-    prepared.forEach((file, idx) => {
-      uploads.unshift({
-        ...baseRecord,
-        id: crypto.randomUUID(),
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        files: [file],
-        edits: [edits[idx] || defaultEdit(file.name)]
+    if (selectedUploadType === 'story') {
+      for (let idx = 0; idx < prepared.length; idx++) {
+        await apiRequest('/api/posts', {
+          method: 'POST',
+          body: JSON.stringify({
+            ...baseRecord,
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            files: [prepared[idx]],
+            edits: [edits[idx] || defaultEdit(prepared[idx].name)]
+          })
+        });
+      }
+    } else {
+      await apiRequest('/api/posts', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...baseRecord,
+          expiresAt: null,
+          files: prepared,
+          edits
+        })
       });
-    });
-  } else {
-    uploads.unshift({
-      ...baseRecord,
-      id: crypto.randomUUID(),
-      expiresAt: null,
-      files: prepared,
-      edits
-    });
-  }
+    }
 
-  saveJson(UPLOAD_STORE_KEY, uploads);
-  uploadForm.reset();
-  clearUploadSelectionState();
-  applyUploadType();
-  uploadStatus.textContent = 'Upload complete.';
-  uploadProgressWrap.hidden = true;
-  uploadProgressBar.style.width = '0%';
-  renderUploads();
-  renderHome();
-  renderChannelManager();
-  initEnhancedMessaging();
+    await fetchAndSyncPosts();
+    uploadForm.reset();
+    clearUploadSelectionState();
+    applyUploadType();
+    uploadStatus.textContent = 'Upload complete.';
+    uploadProgressWrap.hidden = true;
+    uploadProgressBar.style.width = '0%';
+    renderUploads();
+    renderHome();
+    renderChannelManager();
+    initEnhancedMessaging();
+  } catch (err) {
+    uploadStatus.textContent = 'Upload failed: ' + err.message;
+  }
+}
+
+async function fetchAndSyncPosts() {
+  try {
+    const payload = await apiRequest('/api/posts');
+    uploads = payload.posts || [];
+    saveJson(UPLOAD_STORE_KEY, uploads); // Local cache for hydration
+  } catch (err) {
+    console.error('Failed to sync posts', err);
+  }
 }
 
 function updateProgress(fraction) {
@@ -1076,10 +1146,25 @@ async function renderExploreUsers(query = '') {
     username: (u.usernames || []).find((x) => x.id === u.activeUsernameId)?.value || '',
     usernames: u.usernames || [],
     profilePic: u.profilePic,
-    bio: u.bio
+    bio: u.bio,
+    profession: u.profession,
+    location: u.location,
+    socialLinks: u.socialLinks,
+    stats: u.stats,
+    isPrivate: u.isPrivate
   }));
 
   const users = authUsers;
+
+  // Fetch relationships if session exists
+  let myFollowings = [];
+  if (activeSession) {
+    const rawDb = loadLocalAuthDb(); // Actually this should come from backend ideally
+    // Wait, I'm using apiRequest for many things now. I'll stick to that.
+    // For now I'll just use the localDb helper to simulate what backend knows.
+    myFollowings = (rawDb.relationships || []).filter(r => r.followerId === activeSession.id);
+  }
+
   const normalizedQuery = String(query).trim().toLowerCase();
   const now = Date.now();
 
@@ -1095,7 +1180,8 @@ async function renderExploreUsers(query = '') {
   const rows = users
     .filter((u) => {
       if (!normalizedQuery) return true;
-      return (u.name || '').toLowerCase().includes(normalizedQuery) || (u.email || '').toLowerCase().includes(normalizedQuery) || (u.username || '').toLowerCase().includes(normalizedQuery);
+      // Requirement: filter exclusively by the username field
+      return (u.username || '').toLowerCase().includes(normalizedQuery);
     })
     .map((u) => {
       const displayName = u.username || u.name;
@@ -1123,6 +1209,18 @@ async function renderExploreUsers(query = '') {
       avatarHtml = `<div class="avatar">${escapeHtml(initials || 'U')}</div>`;
     }
 
+    const rel = myFollowings.find(r => r.followingId === u.id);
+    let followBtnHtml = '';
+    if (activeSession && u.id !== activeSession.id) {
+      if (!rel) {
+        followBtnHtml = `<button class="follow-btn" data-user-id="${u.id}">Follow</button>`;
+      } else if (rel.status === 'pending') {
+        followBtnHtml = `<button class="follow-btn requested" disabled>Requested</button>`;
+      } else {
+        followBtnHtml = `<button class="follow-btn following" disabled>Following</button>`;
+      }
+    }
+
     card.innerHTML = `
       <div class="explore-user-head">
         ${avatarHtml}
@@ -1131,8 +1229,15 @@ async function renderExploreUsers(query = '') {
           <p>${escapeHtml(u.email)}</p>
         </div>
       </div>
-      <span class="status-pill ${u.isActive ? 'active' : 'inactive'}">${u.isActive ? 'Active now' : 'Offline'}</span>
+      <div style="display:flex; align-items:center; gap:8px">
+        ${followBtnHtml}
+        <span class="status-pill ${u.isActive ? 'active' : 'inactive'}">${u.isActive ? 'Active' : 'Off'}</span>
+      </div>
     `;
+    const btn = card.querySelector('.follow-btn');
+    if (btn && !btn.disabled) {
+      btn.addEventListener('click', () => followUser(u.id));
+    }
     exploreUsersList.appendChild(card);
   });
 }
@@ -1286,31 +1391,51 @@ function bindCardOpenViewer(card, postId) {
   });
 }
 
-function likePost(postId) {
+async function likePost(postId) {
   const userId = activeSession?.id;
   if (!userId) return;
-  uploads = uploads.map((u) => {
-    if (u.id !== postId) return u;
-    const interactions = u.interactions || { likes: 0, likedBy: [], comments: [] };
-    const liked = interactions.likedBy.includes(userId);
-    const likedBy = liked ? interactions.likedBy.filter((id) => id !== userId) : [...interactions.likedBy, userId];
-    return { ...u, interactions: { ...interactions, likedBy, likes: likedBy.length } };
-  });
-  persistAndRerender(postId);
+  const post = uploads.find(u => u.id === postId);
+  if (!post) return;
+
+  const interactions = post.interactions || { likes: 0, likedBy: [], comments: [] };
+  const liked = (interactions.likedBy || []).includes(userId);
+  const likedBy = liked ? interactions.likedBy.filter((id) => id !== userId) : [...(interactions.likedBy || []), userId];
+
+  try {
+    await apiRequest(`/api/posts/${postId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        interactions: { ...interactions, likedBy, likes: likedBy.length }
+      })
+    });
+    await fetchAndSyncPosts();
+    persistAndRerender(postId);
+  } catch (err) {
+    console.error('Failed to like post', err);
+  }
 }
 
-function addComment(postId, text) {
+async function addComment(postId, text) {
   const content = String(text || '').trim();
   if (!content || !activeSession) return;
-  uploads = uploads.map((u) => {
-    if (u.id !== postId) return u;
-    const interactions = u.interactions || { likes: 0, likedBy: [], comments: [] };
-    return {
-      ...u,
-      interactions: { ...interactions, comments: [...interactions.comments, { user: activeHandle(), text: content, ts: Date.now() }] }
-    };
-  });
-  persistAndRerender(postId);
+  const post = uploads.find(u => u.id === postId);
+  if (!post) return;
+
+  const interactions = post.interactions || { likes: 0, likedBy: [], comments: [] };
+  const newComment = { user: activeHandle(), text: content, ts: Date.now() };
+
+  try {
+    await apiRequest(`/api/posts/${postId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        interactions: { ...interactions, comments: [...(interactions.comments || []), newComment] }
+      })
+    });
+    await fetchAndSyncPosts();
+    persistAndRerender(postId);
+  } catch (err) {
+    console.error('Failed to add comment', err);
+  }
 }
 
 async function sharePost(postId) {
@@ -1394,10 +1519,32 @@ function renderChannelManager() {
   const mine = uploads.filter((u) => u.userId === activeSession.id || (u.userName === activeHandle() && !u.userId));
 
   // Populate Header
-  if (myChannelHandle) myChannelHandle.textContent = activeHandle();
+  if (myChannelHandle) myChannelHandle.textContent = activeSession.username || activeSession.name || 'User';
   if (myChannelDisplayName) myChannelDisplayName.textContent = activeSession.name || activeHandle();
+  if (myChannelProfession) myChannelProfession.textContent = activeSession.profession || 'Content Creator';
   if (myChannelBio) myChannelBio.textContent = activeSession.bio || 'Digital Creator | Tech Enthusiast | Travel Lover 🌍';
-  if (myPostCount) myPostCount.textContent = mine.length;
+
+  if (myChannelLocation) {
+    if (activeSession.location) {
+      myChannelLocation.hidden = false;
+      myChannelLocation.querySelector('span').textContent = activeSession.location;
+    } else {
+      myChannelLocation.hidden = true;
+    }
+  }
+
+  if (myChannelSocialLinks) {
+    myChannelSocialLinks.innerHTML = '';
+    const links = activeSession.socialLinks || {};
+    if (links.twitter) myChannelSocialLinks.innerHTML += `<a href="${links.twitter}" target="_blank" title="Twitter">🐦 Twitter</a>`;
+    if (links.linkedin) myChannelSocialLinks.innerHTML += `<a href="${links.linkedin}" target="_blank" title="LinkedIn">🔗 LinkedIn</a>`;
+    if (links.github) myChannelSocialLinks.innerHTML += `<a href="${links.github}" target="_blank" title="GitHub">💻 GitHub</a>`;
+  }
+
+  if (myPostCount) myPostCount.textContent = activeSession.stats?.posts || mine.length;
+  if (myFollowerCount) myFollowerCount.textContent = activeSession.stats?.followers || 0;
+  if (myFollowingCount) myFollowingCount.textContent = activeSession.stats?.following || 0;
+
   renderProfileAvatar(myChannelAvatar, activeSession);
 
   // Populate Content Grid
@@ -1410,14 +1557,22 @@ function renderChannelManager() {
     return;
   }
 
-  if (activeProfileTab === 'reels') {
+  if (activeProfileTab === 'videos') {
     filtered = mine.filter(u => u.type === 'short' || u.type === 'ltv');
+  } else if (activeProfileTab === 'saved') {
+    const savedIds = activeSession.savedPosts || [];
+    filtered = uploads.filter(u => savedIds.includes(u.id));
+  } else if (activeProfileTab === 'tagged') {
+    filtered = uploads.filter(u => (u.taggedUsers || []).includes(activeSession.id));
   } else {
     filtered = mine.filter(u => u.type !== 'story');
   }
 
   if (!filtered.length) {
-    channelContentGrid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: var(--muted);">No content available in this section.</div>';
+    channelContentGrid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 60px 20px; color: var(--muted);">
+      <div style="font-size: 2rem; margin-bottom: 10px;">${activeProfileTab === 'saved' ? '🔖' : (activeProfileTab === 'tagged' ? '👤' : '📷')}</div>
+      <p style="font-weight: 600; color: var(--text); font-size: 1.2rem;">No ${activeProfileTab} yet</p>
+    </div>`;
   } else {
     filtered.forEach(item => {
       const firstFile = item.files[0];
@@ -1426,29 +1581,30 @@ function renderChannelManager() {
       const div = document.createElement('div');
       div.className = 'grid-item';
 
-      const icon = item.type === 'carousel' ? '📁' : (item.type === 'ltv' ? '📺' : '🎬');
+      const isMulti = item.files.length > 1 || item.type === 'carousel';
+      const isVideo = firstFile.type.startsWith('video/') || item.type === 'short' || item.type === 'ltv';
+      const isPinned = !!item.isPinned;
+
+      const icon = isMulti ? '📁' : (isVideo ? '🎬' : '');
       const likes = item.interactions?.likes || 0;
       const comments = item.interactions?.comments?.length || 0;
 
+      let mediaHtml = '';
       if (firstFile.type.startsWith('video/')) {
-        div.innerHTML = `
-          <video src="${cdnUrl(firstFile.dataUrl)}"></video>
-          <span class="type-icon">${icon}</span>
-          <div class="grid-item-overlay">
-            <span>❤️ ${likes}</span>
-            <span>💬 ${comments}</span>
-          </div>
-        `;
+        mediaHtml = `<video src="${cdnUrl(firstFile.dataUrl)}"></video>`;
       } else {
-        div.innerHTML = `
-          <img src="${cdnUrl(firstFile.dataUrl)}" loading="lazy" />
-          <span class="type-icon">${icon}</span>
-          <div class="grid-item-overlay">
-            <span>❤️ ${likes}</span>
-            <span>💬 ${comments}</span>
-          </div>
-        `;
+        mediaHtml = `<img src="${cdnUrl(firstFile.dataUrl)}" loading="lazy" />`;
       }
+
+      div.innerHTML = `
+        ${mediaHtml}
+        ${isPinned ? '<span class="pin-icon" style="position:absolute; top:8px; left:8px; filter:drop-shadow(0 1px 2px rgba(0,0,0,0.5));">📌</span>' : ''}
+        <span class="type-icon">${icon}</span>
+        <div class="grid-item-overlay">
+          <span>❤️ ${likes}</span>
+          <span>💬 ${comments}</span>
+        </div>
+      `;
 
       div.addEventListener('click', () => openPostViewer(item.id));
       channelContentGrid.appendChild(div);
@@ -2257,4 +2413,32 @@ function sharePostToChat(postId, targetUserId) {
   alert('Post shared successfully!');
   renderChatUsers();
   if (activeChat === chatId) renderMessages();
+}
+
+async function renderFollowRequests() {
+  if (!activeSession || !followRequestsSection || !followRequestsList) return;
+  try {
+    const { requests } = await apiRequest(`/api/relationships/requests?userId=${activeSession.id}`);
+    if (requests && requests.length > 0) {
+      followRequestsSection.hidden = false;
+      followRequestsList.innerHTML = '';
+      requests.forEach(req => {
+        const div = document.createElement('div');
+        div.className = 'follow-request-item';
+        div.style = 'display:flex; justify-content:space-between; align-items:center; padding: 8px; border-radius: 10px; background: rgba(0,0,0,0.03); margin-bottom: 6px;';
+        div.innerHTML = `
+          <div style="font-size: 0.85rem;">
+            <strong>${escapeHtml(req.followerHandle || req.followerName)}</strong> wants to follow you
+          </div>
+          <button class="accept-btn" style="padding: 4px 8px; font-size: 0.75rem;">Accept</button>
+        `;
+        div.querySelector('.accept-btn').onclick = () => acceptFollowRequest(req.id);
+        followRequestsList.appendChild(div);
+      });
+    } else {
+      followRequestsSection.hidden = true;
+    }
+  } catch (err) {
+    console.error('Failed to fetch follow requests', err);
+  }
 }

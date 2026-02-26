@@ -16,7 +16,52 @@
       "usernameChangeLogs": [],
       "activeUsernameId": "06e12051-61b6-410f-8faa-60e8f28c680f",
       "profilePic": "",
-      "bio": ""
+      "bio": "",
+      "profession": "Content Creator",
+      "location": "India",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      }
+    },
+    {
+      "id": "a6b16dc7-2f18-4da7-8c82-b982bf4f1a64",
+      "name": "Jules Engineer",
+      "email": "jules@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "e9ae4e8c-6079-4d70-9d1f-ec289567a1d7",
+          "value": "jules_eng",
+          "createdAt": 1772103091090,
+          "updatedAt": 1772103091090
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "e9ae4e8c-6079-4d70-9d1f-ec289567a1d7",
+      "profilePic": "",
+      "bio": "Building minimalist social experiences.",
+      "profession": "Software Architect",
+      "location": "San Francisco",
+      "socialLinks": {
+        "twitter": "https://twitter.com/jules",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
     }
-  ]
+  ],
+  "posts": [],
+  "relationships": []
 }

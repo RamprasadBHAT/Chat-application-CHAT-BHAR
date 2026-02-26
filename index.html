@@ -47,18 +47,6 @@
         </form>
 
 
-        <form id="usernameForm" class="auth-form" hidden>
-          <label for="existingUsernames">Select existing username</label>
-          <select id="existingUsernames">
-            <option value="">Choose existing username</option>
-          </select>
-          <input id="usernameInput" type="text" placeholder="Create a unique username" />
-          <div class="upload-btn-row">
-            <button type="button" id="usernameCheckBtn">Check availability</button>
-            <button type="submit">Continue</button>
-          </div>
-          <small id="usernameHint"></small>
-        </form>
 
         <small id="authMessage"></small>
       </div>
@@ -152,12 +140,19 @@
                   </div>
                   <div class="profile-stats">
                     <span><strong id="myPostCount">0</strong> posts</span>
-                    <span><strong>128</strong> followers</span>
-                    <span><strong>256</strong> following</span>
+                    <span><strong id="myFollowerCount">128</strong> followers</span>
+                    <span><strong id="myFollowingCount">256</strong> following</span>
                   </div>
                   <div class="profile-bio">
-                    <strong id="myChannelDisplayName">Full Name</strong>
+                    <strong id="myChannelDisplayName" style="font-size: 16px;">Full Name</strong>
+                    <span id="myChannelProfession" style="color: var(--muted); display: block; margin-bottom: 4px;">Content Creator</span>
                     <p id="myChannelBio">Digital Creator | Tech Enthusiast | Travel Lover 🌍</p>
+                    <div id="myChannelLocation" style="margin-top: 8px; font-size: 0.85rem;">
+                      📍 <span>India</span>
+                    </div>
+                    <div id="myChannelSocialLinks" class="profile-social-links" style="margin-top: 10px; display: flex; gap: 12px;">
+                      <!-- Links injected via JS -->
+                    </div>
                   </div>
                 </div>
               </div>
@@ -165,7 +160,9 @@
 
             <div class="profile-tabs">
               <button class="profile-tab active" data-profile-tab="posts">▦ POSTS</button>
-              <button class="profile-tab" data-profile-tab="reels">🎬 REELS</button>
+              <button class="profile-tab" data-profile-tab="videos">📺 VIDEOS</button>
+              <button class="profile-tab" data-profile-tab="saved">🔖 SAVED</button>
+              <button class="profile-tab" data-profile-tab="tagged">👤 TAGGED</button>
               <button class="profile-tab" data-profile-tab="analytics" id="analyticsTabBtn">📈 ANALYTICS</button>
             </div>
 
@@ -206,6 +203,11 @@
           <section id="chat" class="screen">
             <div class="chat-layout glass">
               <aside class="chat-list">
+                <div id="followRequestsSection" hidden>
+                  <h3>Follow Requests</h3>
+                  <div id="followRequestsList" class="follow-requests-list"></div>
+                  <hr style="border: 0; border-top: 1px solid var(--border); margin: 10px 0;" />
+                </div>
                 <h3>Messages</h3>
                 <div id="chatUsersWrap"></div>
                 <div class="chat-list-actions">
@@ -400,11 +402,48 @@
             <input type="file" id="profilePicInput" accept="image/*" hidden />
             <button type="button" id="changeProfilePicBtn" class="edit-profile-btn">Change Photo</button>
           </div>
-          <input id="editProfileName" type="text" placeholder="Full Name" required />
-          <textarea id="editProfileBio" placeholder="Bio"></textarea>
+
+          <div class="form-group">
+            <label for="editProfileUsername">Username</label>
+            <input id="editProfileUsername" type="text" placeholder="Username" required />
+            <small id="usernameAvailabilityHint"></small>
+          </div>
+
+          <div class="form-group">
+            <label for="editProfileName">Full Name</label>
+            <input id="editProfileName" type="text" placeholder="Full Name" required />
+          </div>
+
+          <div class="form-group">
+            <label for="editProfileProfession">Category / Profession</label>
+            <input id="editProfileProfession" type="text" placeholder="e.g. Content Creator" />
+          </div>
+
+          <div class="form-group">
+            <label for="editProfileBio">Bio</label>
+            <textarea id="editProfileBio" placeholder="Bio"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="editProfileLocation">Location</label>
+            <input id="editProfileLocation" type="text" placeholder="e.g. India" />
+          </div>
+
+          <div class="form-group">
+            <label>Social Links</label>
+            <input id="editProfileTwitter" type="url" placeholder="Twitter URL" />
+            <input id="editProfileLinkedin" type="url" placeholder="LinkedIn URL" />
+            <input id="editProfileGithub" type="url" placeholder="GitHub URL" />
+          </div>
+
+          <label class="confirm-checkbox">
+            <input type="checkbox" id="editProfilePrivate" />
+            <span>Private Account</span>
+          </label>
+
           <div class="upload-btn-row">
             <button id="cancelEditProfile" type="button">Cancel</button>
-            <button type="submit">Save Changes</button>
+            <button type="submit" id="saveProfileBtn">Save Changes</button>
           </div>
         </form>
       </div>
