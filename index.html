@@ -46,6 +46,18 @@
           <p class="auth-toggle">Don't have an account? <a href="#" id="showSignupForm">Sign up instead</a></p>
         </form>
 
+        <form id="usernameForm" class="auth-form" hidden>
+          <div class="form-group">
+            <label for="usernameInput">Pick a unique username</label>
+            <input id="usernameInput" type="text" placeholder="Create a unique username" required />
+            <small id="usernameHint"></small>
+          </div>
+          <div class="upload-btn-row">
+            <button type="button" id="usernameCheckBtn">Check availability</button>
+            <button type="submit">Continue</button>
+          </div>
+        </form>
+
 
 
         <small id="authMessage"></small>

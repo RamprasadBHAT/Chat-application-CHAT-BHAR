@@ -8,6 +8,10 @@ const authGate = document.getElementById('authGate');
 const appShell = document.getElementById('appShell');
 const signupForm = document.getElementById('signupForm');
 const loginForm = document.getElementById('loginForm');
+const usernameForm = document.getElementById('usernameForm');
+const usernameInput = document.getElementById('usernameInput');
+const usernameHint = document.getElementById('usernameHint');
+const usernameCheckBtn = document.getElementById('usernameCheckBtn');
 const authMessage = document.getElementById('authMessage');
 
 const logoutBtn = document.getElementById('logoutBtn');
@@ -201,10 +205,13 @@ function syncState() {
 
 function hydrateState() {
   activeSession = loadJson(AUTH_SESSION_KEY, null);
+  uploads = loadJson(UPLOAD_STORE_KEY, []);
   if (activeSession) {
     // Basic hydration of the UI before full session load
     authGate.hidden = true;
     appShell.hidden = false;
+    renderHome();
+    renderChannelManager();
   }
 }
 
@@ -407,6 +414,8 @@ async function bootstrapUsers() {
 function bindEvents() {
   signupForm.addEventListener('submit', onSignup);
   loginForm.addEventListener('submit', onLogin);
+  usernameCheckBtn.addEventListener('click', onCheckUsername);
+  usernameForm.addEventListener('submit', onCreateUsername);
   logoutBtn.addEventListener('click', onLogout);
   themeToggle.addEventListener('click', toggleTheme);
   navButtons.forEach((btn) => btn.addEventListener('click', () => openTab(btn.dataset.tab)));
@@ -706,10 +715,7 @@ async function onSaveProfile(e) {
     // 1. Handle username change if needed
     if (username && username !== activeSession.username) {
       if (activeSession.username) {
-        // Find the usernameId
-        const db = loadLocalAuthDb();
-        const user = db.users.find(u => u.id === activeSession.id);
-        const usernameId = user?.activeUsernameId;
+        const usernameId = activeSession.activeUsernameId;
         if (usernameId) {
           await apiRequest(`/api/usernames/${usernameId}`, {
             method: 'PATCH',
@@ -778,9 +784,16 @@ async function onSignup(event) {
       method: 'POST',
       body: JSON.stringify({ name, email, password })
     });
+    // Auto-login after signup to proceed to onboarding
+    const loginPayload = await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password })
+    });
+    activeSession = loginPayload.session;
+    saveJson(AUTH_SESSION_KEY, activeSession);
     signupForm.reset();
-    setAuthMessage('Account created. Please login.', true);
     await syncAuthUsers();
+    openOnboarding();
   } catch (error) {
     setAuthMessage(error.message, false);
   }
@@ -796,12 +809,53 @@ async function onLogin(event) {
       body: JSON.stringify({ email, password })
     });
     saveJson(AUTH_SESSION_KEY, payload.session);
+    activeSession = payload.session;
     syncState();
     setAuthMessage('', false);
     await loadSession();
-    openTab('home');
+    if (activeSession.username) openTab('home');
   } catch (error) {
     setAuthMessage(error.message || 'Invalid email/password.', false);
+  }
+}
+
+function openOnboarding() {
+  signupForm.hidden = true;
+  loginForm.hidden = true;
+  usernameForm.hidden = false;
+  setAuthMessage('One more step: pick your unique handle.', true);
+}
+
+async function onCheckUsername() {
+  const val = usernameInput.value.trim().toLowerCase();
+  if (!val) return;
+  try {
+    await apiRequest('/api/usernames/check', { method: 'POST', body: JSON.stringify({ username: val }) });
+    usernameHint.textContent = 'Username available';
+    usernameHint.style.color = '#0f8a3a';
+  } catch (e) {
+    usernameHint.textContent = e.message;
+    usernameHint.style.color = '#d14343';
+  }
+}
+
+async function onCreateUsername(e) {
+  e.preventDefault();
+  const username = usernameInput.value.trim();
+  if (!username) return;
+  try {
+    const payload = await apiRequest('/api/usernames', {
+      method: 'POST',
+      body: JSON.stringify({ userId: activeSession.id, username })
+    });
+    activeSession = payload.session;
+    saveJson(AUTH_SESSION_KEY, activeSession);
+    usernameForm.hidden = true;
+    await loadSession();
+    openTab('home');
+  } catch (e) {
+    usernameHint.textContent = e.message;
+    usernameHint.style.color = '#d14343';
   }
 }
 
@@ -819,6 +873,16 @@ async function loadSession() {
   if (!activeSession?.id) {
     authGate.hidden = false;
     appShell.hidden = true;
+    signupForm.hidden = false;
+    loginForm.hidden = true;
+    usernameForm.hidden = true;
+    return;
+  }
+
+  if (!activeSession.username) {
+    authGate.hidden = false;
+    appShell.hidden = true;
+    openOnboarding();
     return;
   }
 

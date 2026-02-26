@@ -1,14 +1,18 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { randomUUID } = require('crypto');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 4173;
 const DB_PATH = path.join(__dirname, 'db', 'auth-db.json');
 
 function readDb() {
   const raw = fs.readFileSync(DB_PATH, 'utf8');
-  return JSON.parse(raw || '{"users":[],"posts":[],"relationships":[]}');
+  const data = JSON.parse(raw || '{"users":[],"posts":[],"relationships":[]}');
+  if (!data.users) data.users = [];
+  if (!data.posts) data.posts = [];
+  if (!data.relationships) data.relationships = [];
+  return data;
 }
 function writeDb(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
 
@@ -65,7 +69,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/api/admin/reset-signups' && req.method === 'POST') {
-    writeDb({ users: [] });
+    writeDb({ users: [], posts: [], relationships: [] });
     return json(res, 200, { ok: true, message: 'All existing signups removed for fresh Gmail registration.' });
   }
 
@@ -82,7 +86,7 @@ const server = http.createServer(async (req, res) => {
     if (db.users.some((u) => u.email === email)) return json(res, 409, { error: 'Email already exists. Please login.' });
 
     const user = {
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       name,
       email,
       password,
@@ -117,6 +121,7 @@ const server = http.createServer(async (req, res) => {
         email: user.email,
         role: 'user',
         username,
+        activeUsernameId: user.activeUsernameId,
         profilePic: user.profilePic,
         bio: user.bio,
         profession: user.profession || '',
@@ -153,12 +158,12 @@ const server = http.createServer(async (req, res) => {
     if (exists) return json(res, 409, { error: 'Username already taken' });
 
     const now = Date.now();
-    const newName = { id: randomUUID(), value: username, createdAt: now, updatedAt: now };
+    const newName = { id: crypto.randomUUID(), value: username, createdAt: now, updatedAt: now };
     user.usernames.push(newName);
     user.activeUsernameId = newName.id;
     writeDb(db);
 
-    return json(res, 201, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: newName.value } });
+    return json(res, 201, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: newName.value, activeUsernameId: user.activeUsernameId } });
   }
 
   if (url.pathname === '/api/auth/session/select-username' && req.method === 'POST') {
@@ -172,7 +177,7 @@ const server = http.createServer(async (req, res) => {
     if (!selected) return json(res, 404, { error: 'Username not found for account.' });
     user.activeUsernameId = selected.id;
     writeDb(db);
-    return json(res, 200, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: selected.value } });
+    return json(res, 200, { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: selected.value, activeUsernameId: user.activeUsernameId } });
   }
 
   if (url.pathname === '/api/auth/delete-account' && req.method === 'POST') {
@@ -202,7 +207,7 @@ const server = http.createServer(async (req, res) => {
     if (existing) return json(res, 400, { error: 'Relationship already exists' });
 
     const status = following.isPrivate ? 'pending' : 'accepted';
-    const rel = { id: randomUUID(), followerId, followingId, status };
+    const rel = { id: crypto.randomUUID(), followerId, followingId, status };
     db.relationships.push(rel);
 
     if (status === 'accepted') {
@@ -303,6 +308,7 @@ const server = http.createServer(async (req, res) => {
         name: user.name,
         email: user.email,
         username: (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '',
+        activeUsernameId: user.activeUsernameId,
         profilePic: user.profilePic,
         bio: user.bio,
         profession: user.profession,
@@ -324,7 +330,7 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req);
     const db = readDb();
     const newPost = {
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       userId: body.userId,
       userName: body.userName,
       type: body.type || 'short',

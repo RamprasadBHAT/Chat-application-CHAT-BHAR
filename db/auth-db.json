@@ -1,56 +1,26 @@
 {
   "users": [
     {
-      "id": "a44ff266-77b7-4664-b629-b9b70d93c19b",
+      "id": "c90a3bcb-7132-46da-85a6-4a480344a597",
       "name": "Test User",
-      "email": "testuser@gmail.com",
+      "email": "test@gmail.com",
       "password": "password123",
       "usernames": [
         {
-          "id": "06e12051-61b6-410f-8faa-60e8f28c680f",
+          "id": "f9c866d9-30fe-4535-871a-f00a4ab578d8",
           "value": "testuser",
-          "createdAt": 1771775848437,
-          "updatedAt": 1771775848437
+          "createdAt": 1772105031630,
+          "updatedAt": 1772105031630
         }
       ],
       "usernameChangeLogs": [],
-      "activeUsernameId": "06e12051-61b6-410f-8faa-60e8f28c680f",
+      "activeUsernameId": "f9c866d9-30fe-4535-871a-f00a4ab578d8",
       "profilePic": "",
       "bio": "",
-      "profession": "Content Creator",
-      "location": "India",
+      "profession": "",
+      "location": "",
       "socialLinks": {
         "twitter": "",
-        "linkedin": "",
-        "github": ""
-      },
-      "stats": {
-        "posts": 0,
-        "followers": 0,
-        "following": 0
-      }
-    },
-    {
-      "id": "a6b16dc7-2f18-4da7-8c82-b982bf4f1a64",
-      "name": "Jules Engineer",
-      "email": "jules@gmail.com",
-      "password": "password123",
-      "usernames": [
-        {
-          "id": "e9ae4e8c-6079-4d70-9d1f-ec289567a1d7",
-          "value": "jules_eng",
-          "createdAt": 1772103091090,
-          "updatedAt": 1772103091090
-        }
-      ],
-      "usernameChangeLogs": [],
-      "activeUsernameId": "e9ae4e8c-6079-4d70-9d1f-ec289567a1d7",
-      "profilePic": "",
-      "bio": "Building minimalist social experiences.",
-      "profession": "Software Architect",
-      "location": "San Francisco",
-      "socialLinks": {
-        "twitter": "https://twitter.com/jules",
         "linkedin": "",
         "github": ""
       },
