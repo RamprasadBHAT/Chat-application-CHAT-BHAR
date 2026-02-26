@@ -206,8 +206,16 @@ function syncState() {
 function hydrateState() {
   activeSession = loadJson(AUTH_SESSION_KEY, null);
   uploads = loadJson(UPLOAD_STORE_KEY, []);
+
+  // Hydrate authUsers from local cache to allow rendering before sync
+  const localUsers = loadJson(AUTH_USERS_KEY, []);
+  if (Array.isArray(localUsers)) {
+    authUsers = localUsers;
+  } else if (localUsers.users) {
+    authUsers = localUsers.users;
+  }
+
   if (activeSession) {
-    // Basic hydration of the UI before full session load
     authGate.hidden = true;
     appShell.hidden = false;
     renderHome();
@@ -374,26 +382,45 @@ async function apiRequest(path, options = {}) {
     ...options
   };
 
+  const sharedPaths = [
+    '/api/admin/reset-signups',
+    '/api/auth/users',
+    '/api/auth/signup',
+    '/api/auth/login',
+    '/api/usernames/check',
+    '/api/usernames',
+    '/api/auth/session/select-username',
+    '/api/auth/delete-account'
+  ];
+  const canFallback = sharedPaths.some(p => path.startsWith(p));
+
   let response;
   try {
     response = await fetch(path, requestOptions);
   } catch (error) {
-    if (path.startsWith('/api/')) return localApiRequest(path, options);
-    throw error;
+    if (canFallback) return localApiRequest(path, options);
+    throw new Error(`Network error: ${error.message}`);
   }
 
   const contentType = response.headers.get('content-type') || '';
-  const isApiPath = path.startsWith('/api/');
   const isHtmlResponse = contentType.includes('text/html');
 
-  if (isApiPath && isHtmlResponse) {
+  if (isHtmlResponse && canFallback) {
     return localApiRequest(path, options);
   }
 
-  const payload = await response.json().catch(() => ({}));
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch (e) {
+    if (!response.ok) {
+      if (canFallback) return localApiRequest(path, options);
+      throw new Error(`Server error (${response.status}): ${response.statusText}`);
+    }
+  }
+
   if (!response.ok) {
-    if (isApiPath && (!payload || !Object.keys(payload).length)) return localApiRequest(path, options);
-    throw new Error(payload.error || 'Request failed');
+    throw new Error(payload.error || `Request failed (${response.status})`);
   }
   return payload;
 }
@@ -1200,33 +1227,17 @@ function validateUploadForType(type, files, caption, description) {
 
 
 async function renderExploreUsers(query = '') {
-  // Always reload users from DB to get latest profile pics/bios
-  const db = loadLocalAuthDb();
-  authUsers = db.users.map((u) => ({
-    id: u.id,
-    email: u.email,
-    name: u.name,
-    role: 'user',
-    username: (u.usernames || []).find((x) => x.id === u.activeUsernameId)?.value || '',
-    usernames: u.usernames || [],
-    profilePic: u.profilePic,
-    bio: u.bio,
-    profession: u.profession,
-    location: u.location,
-    socialLinks: u.socialLinks,
-    stats: u.stats,
-    isPrivate: u.isPrivate
-  }));
-
+  // Refresh authUsers from server if possible, otherwise use global authUsers
+  await syncAuthUsers();
   const users = authUsers;
 
   // Fetch relationships if session exists
   let myFollowings = [];
   if (activeSession) {
-    const rawDb = loadLocalAuthDb(); // Actually this should come from backend ideally
-    // Wait, I'm using apiRequest for many things now. I'll stick to that.
-    // For now I'll just use the localDb helper to simulate what backend knows.
-    myFollowings = (rawDb.relationships || []).filter(r => r.followerId === activeSession.id);
+    // In a real app we'd fetch this from backend.
+    // For now we'll simulate by checking localDB if it exists or assuming empty if not.
+    const db = loadLocalAuthDb();
+    myFollowings = (db.relationships || []).filter(r => r.followerId === activeSession.id);
   }
 
   const normalizedQuery = String(query).trim().toLowerCase();
@@ -2337,10 +2348,11 @@ function announcePresence(online) {
   presenceBus.postMessage({ type: 'presence', userId: activeSession.id, online });
 }
 
-function migrateOldUploads() {
+async function migrateOldUploads() {
+  if (!activeSession) return;
   let changed = false;
   uploads.forEach(u => {
-    if (!u.userId && activeSession && u.userName === activeHandle()) {
+    if (!u.userId && u.userName === activeHandle()) {
       u.userId = activeSession.id;
       changed = true;
     }
@@ -2353,6 +2365,20 @@ function migrateOldUploads() {
     }
   });
   if (changed) saveJson(UPLOAD_STORE_KEY, uploads);
+
+  // Push local-only posts to backend
+  try {
+    const payload = await apiRequest('/api/posts');
+    const backendPosts = payload.posts || [];
+    const myLocalPosts = uploads.filter(u => u.userId === activeSession.id);
+    for (const local of myLocalPosts) {
+      if (!backendPosts.some(b => b.id === local.id)) {
+        await apiRequest('/api/posts', { method: 'POST', body: JSON.stringify(local) });
+      }
+    }
+  } catch (err) {
+    console.warn('Background sync failed', err);
+  }
 }
 
 function renderAnalytics(mine) {

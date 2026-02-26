@@ -6,9 +6,23 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 4173;
 const DB_PATH = path.join(__dirname, 'db', 'auth-db.json');
 
+if (!fs.existsSync(path.dirname(DB_PATH))) {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+}
+
 function readDb() {
-  const raw = fs.readFileSync(DB_PATH, 'utf8');
-  const data = JSON.parse(raw || '{"users":[],"posts":[],"relationships":[]}');
+  let data;
+  try {
+    if (!fs.existsSync(DB_PATH)) {
+      data = { users: [], posts: [], relationships: [] };
+    } else {
+      const raw = fs.readFileSync(DB_PATH, 'utf8').trim();
+      data = JSON.parse(raw || '{"users":[],"posts":[],"relationships":[]}');
+    }
+  } catch (e) {
+    console.error('Failed to read or parse database. Resetting to empty.', e);
+    data = { users: [], posts: [], relationships: [] };
+  }
   if (!data.users) data.users = [];
   if (!data.posts) data.posts = [];
   if (!data.relationships) data.relationships = [];
@@ -48,6 +62,7 @@ function checkGmail(email) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${url.pathname}`);
 
   if (url.pathname === '/api/auth/users' && req.method === 'GET') {
     const db = readDb();
