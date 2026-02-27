@@ -65,6 +65,18 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   console.log(`[${new Date().toISOString()}] ${req.method} ${url.pathname}`);
 
+  // CORS Headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-user-id, x-filename, x-original-method');
+  res.setHeader('Access-Control-Max-Age', '86400'); // Cache preflight for 24h
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (url.pathname === '/api/auth/users' && req.method === 'GET') {
     const db = readDb();
     const users = db.users.map((u) => ({
@@ -301,34 +313,49 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true, username: target });
   }
 
-  if (url.pathname === '/api/upload-media' && req.method === 'POST') {
+  if (url.pathname === '/api/upload-media' && (req.method === 'POST' || req.headers['x-original-method'] === 'POST')) {
     const userId = req.headers['x-user-id'];
-    if (!userId) return json(res, 401, { error: 'Unauthorized: User ID required' });
+    if (!userId) {
+      console.warn('[Upload] Missing x-user-id header');
+      return json(res, 401, { error: 'Unauthorized: User ID required' });
+    }
 
     const db = readDb();
-    if (!db.users.some(u => u.id === userId)) return json(res, 403, { error: 'Forbidden: Invalid User' });
+    const user = db.users.find(u => u.id === userId);
+    if (!user) {
+      console.warn(`[Upload] Forbidden: User ID ${userId} not found`);
+      return json(res, 403, { error: 'Forbidden: Invalid User' });
+    }
 
     const filename = req.headers['x-filename'] || 'upload.bin';
     const ext = path.extname(filename);
     const safeName = `${crypto.randomUUID()}${ext}`;
     const targetPath = path.join(UPLOADS_DIR, safeName);
+
+    console.log(`[Upload] Starting: ${filename} -> ${safeName}`);
     const fileStream = fs.createWriteStream(targetPath);
 
     req.pipe(fileStream);
 
     return new Promise((resolve) => {
       fileStream.on('finish', () => {
+        console.log(`[Upload] Finished: ${safeName}`);
         json(res, 201, { url: `/uploads/${safeName}`, name: filename, type: req.headers['content-type'] });
         resolve();
       });
       fileStream.on('error', (err) => {
-        console.error('File stream error', err);
+        console.error(`[Upload] File Stream Error: ${err.message}`);
         json(res, 500, { error: 'Failed to write file' });
         resolve();
       });
       req.on('error', (err) => {
-        console.error('Upload error', err);
+        console.error(`[Upload] Request Error: ${err.message}`);
         json(res, 500, { error: 'Upload failed' });
+        resolve();
+      });
+      req.on('aborted', () => {
+        console.warn(`[Upload] Request aborted by client: ${filename}`);
+        fileStream.destroy();
         resolve();
       });
     });

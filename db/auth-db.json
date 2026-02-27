@@ -56,7 +56,7 @@
         "github": ""
       },
       "stats": {
-        "posts": 2,
+        "posts": 4,
         "followers": 0,
         "following": 0
       },
@@ -192,6 +192,76 @@
         }
       ],
       "createdAt": "2026-02-27T14:24:29.085Z",
+      "expiresAt": null,
+      "interactions": {
+        "likes": 0,
+        "likedBy": [],
+        "comments": [],
+        "shares": 0
+      }
+    },
+    {
+      "id": "c9d017a5-708b-492c-b485-dc9cd86e6af4",
+      "userId": "9e8df6f6-865b-428d-a03a-3d3548a34da4",
+      "userName": "jules_d8634fbb",
+      "type": "carousel",
+      "caption": "CORS Test",
+      "description": "",
+      "files": [
+        {
+          "name": "cors_test.png",
+          "type": "image/png",
+          "size": 67,
+          "dataUrl": "/uploads/14df050c-6204-4f28-9191-d0210b895c1c.png"
+        }
+      ],
+      "edits": [
+        {
+          "name": "cors_test.png",
+          "trimStart": 0,
+          "trimEnd": 0,
+          "overlayText": "",
+          "overlayColor": "#ffffff",
+          "overlayX": 10,
+          "overlayY": 10
+        }
+      ],
+      "createdAt": "2026-02-27T15:00:39.760Z",
+      "expiresAt": null,
+      "interactions": {
+        "likes": 0,
+        "likedBy": [],
+        "comments": [],
+        "shares": 0
+      }
+    },
+    {
+      "id": "09742bd3-a042-46eb-89bd-a166fca62660",
+      "userId": "9e8df6f6-865b-428d-a03a-3d3548a34da4",
+      "userName": "jules_d8634fbb",
+      "type": "carousel",
+      "caption": "CORS Test",
+      "description": "",
+      "files": [
+        {
+          "name": "cors_test.png",
+          "type": "image/png",
+          "size": 67,
+          "dataUrl": "/uploads/5a906a8b-4484-41bd-b6a9-2c21764cab2a.png"
+        }
+      ],
+      "edits": [
+        {
+          "name": "cors_test.png",
+          "trimStart": 0,
+          "trimEnd": 0,
+          "overlayText": "",
+          "overlayColor": "#ffffff",
+          "overlayX": 10,
+          "overlayY": 10
+        }
+      ],
+      "createdAt": "2026-02-27T15:04:55.372Z",
       "expiresAt": null,
       "interactions": {
         "likes": 0,

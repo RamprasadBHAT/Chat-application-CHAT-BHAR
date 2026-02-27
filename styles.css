@@ -67,6 +67,9 @@ button:hover{filter:brightness(1.03)}
 .brand-logo{width:44px;height:44px;border-radius:14px;background:linear-gradient(135deg,var(--brand-a),var(--brand-b));display:grid;place-items:center;color:#fff}
 .brand h1{margin:0;font-size:1.8rem}
 .top-actions{display:flex;gap:6px;align-items:center}
+.status-dot { width: 10px; height: 10px; border-radius: 50%; background: #ccc; transition: background 0.3s; }
+.status-dot.online { background: #10b981; box-shadow: 0 0 8px #10b981; }
+.status-dot.offline { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
 
 .app-layout{display:grid;grid-template-rows:1fr auto;height:calc(100vh - 86px)}
 main{padding:0;overflow:auto}

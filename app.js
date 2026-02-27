@@ -179,7 +179,28 @@ let swipeBubble = null;
 
 initApp();
 
+async function checkServerStatus() {
+  const dot = document.getElementById('serverStatus');
+  if (!dot) return;
+  try {
+    const res = await fetch('/api/auth/users', { method: 'GET' });
+    if (res.ok) {
+      dot.classList.add('online');
+      dot.classList.remove('offline');
+      dot.title = 'Server Online: Binary Storage Enabled';
+    } else {
+      throw new Error();
+    }
+  } catch {
+    dot.classList.add('offline');
+    dot.classList.remove('online');
+    dot.title = 'Server Offline: Falling back to Local Storage';
+  }
+}
+
 async function initApp() {
+  checkServerStatus();
+  setInterval(checkServerStatus, 10000);
   bindEvents();
   hydrateState(); // Hydrate immediately for fast feedback
   await fetchAndSyncPosts();
@@ -1228,18 +1249,53 @@ function makeOverlayDraggable(el, edit) {
 
 async function uploadToBackend(file) {
   if (!activeSession) throw new Error('Not logged in');
-  const res = await fetch('/api/upload-media', {
-    method: 'POST',
-    headers: {
-      'x-filename': file.name,
-      'x-user-id': activeSession.id,
-      'content-type': file.type
-    },
-    body: file
-  });
-  if (!res.ok) throw new Error('Binary upload failed');
-  const payload = await res.json();
-  return { name: file.name, type: file.type, size: file.size, dataUrl: payload.url };
+  console.log(`[Upload] Attempting binary upload for ${file.name} (${file.size} bytes)`);
+
+  try {
+    const res = await fetch('/api/upload-media', {
+      method: 'POST',
+      headers: {
+        'x-filename': file.name,
+        'x-user-id': activeSession.id,
+        'x-original-method': 'POST',
+        'content-type': file.type || 'application/octet-stream'
+      },
+      body: file
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.error || `Server returned ${res.status}`);
+    }
+
+    const payload = await res.json();
+    console.log(`[Upload] Success: ${payload.url}`);
+    return { name: file.name, type: file.type, size: file.size, dataUrl: payload.url };
+
+  } catch (err) {
+    console.error(`[Upload] Binary upload failed: ${err.message}. Switching to Base64 fallback.`);
+
+    // Fallback: Convert to Base64 (Legacy behavior)
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64Data = String(reader.result || '');
+        if (base64Data.length > 2 * 1024 * 1024) { // 2MB limit for Base64 to prevent localStorage crashes
+           reject(new Error('File too large for local storage fallback. Please ensure the Node server is running for high-capacity uploads.'));
+           return;
+        }
+        resolve({
+          name: file.name,
+          type: file.type || 'application/octet-stream',
+          size: file.size,
+          dataUrl: base64Data,
+          isLocalOnly: true
+        });
+      };
+      reader.onerror = () => reject(new Error('Failed to read file for local fallback.'));
+      reader.readAsDataURL(file);
+    });
+  }
 }
 
 async function onUploadSubmit(event) {
