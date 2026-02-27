@@ -220,6 +220,16 @@ main{padding:0;overflow:auto}
   cursor: default;
 }
 
+.message-btn {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
 .chat-list-actions { display: grid; gap: 8px; }
 .typing-indicator { color: var(--muted); min-height: 16px; font-size: 0.78rem; }
 .view-once-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; color: var(--muted); }

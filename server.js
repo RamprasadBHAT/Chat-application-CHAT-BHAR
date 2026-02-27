@@ -30,6 +30,7 @@ function readDb() {
   if (!data.users) data.users = [];
   if (!data.posts) data.posts = [];
   if (!data.relationships) data.relationships = [];
+  if (!data.messages) data.messages = [];
   return data;
 }
 function writeDb(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
@@ -82,6 +83,13 @@ const server = http.createServer(async (req, res) => {
       stats: u.stats || { posts: 0, followers: 0, following: 0 }
     }));
     return json(res, 200, { users });
+  }
+
+  if (url.pathname === '/api/relationships/following' && req.method === 'GET') {
+    const userId = url.searchParams.get('userId');
+    const db = readDb();
+    const following = db.relationships.filter(r => r.followerId === userId);
+    return json(res, 200, { following });
   }
 
   if (url.pathname === '/api/admin/reset-signups' && req.method === 'POST') {
@@ -208,6 +216,68 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true });
   }
 
+  if (url.pathname === '/api/messages' && req.method === 'GET') {
+    const userId = req.headers['x-user-id'];
+    const db = readDb();
+    const messages = (db.messages || []).filter(m => m.participants.includes(userId));
+    return json(res, 200, { messages });
+  }
+
+  if (url.pathname === '/api/messages' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const { chatId, senderName, text, files, replyToId, viewOnce, ts, participants } = body;
+    const senderId = req.headers['x-user-id'];
+    const db = readDb();
+
+    if (chatId.startsWith('dm:')) {
+      const targetUserId = chatId.split(':').pop();
+      const rel = db.relationships.find(r =>
+        (r.followerId === senderId && r.followingId === targetUserId && r.status === 'accepted') ||
+        (r.followerId === targetUserId && r.followingId === senderId && r.status === 'accepted')
+      );
+      if (!rel) return json(res, 403, { error: 'Must follow each other to message' });
+    }
+
+    const msg = { id: crypto.randomUUID(), chatId, senderId, senderName, text, files, replyToId, viewOnce, ts, participants };
+    if (!db.messages) db.messages = [];
+    db.messages.push(msg);
+    writeDb(db);
+    return json(res, 200, { message: msg });
+  }
+
+  if (url.pathname.startsWith('/api/messages/') && req.method === 'PATCH' && url.pathname.endsWith('/react')) {
+    const parts = url.pathname.split('/');
+    const messageId = parts[parts.length - 2];
+    const body = await parseBody(req);
+    const { emoji } = body;
+    const userId = req.headers['x-user-id'];
+    const db = readDb();
+    const msg = (db.messages || []).find(m => m.id === messageId);
+    if (!msg) return json(res, 404, { error: 'Message not found' });
+    if (!msg.reactions) msg.reactions = [];
+    const idx = msg.reactions.findIndex(r => r.userId === userId);
+    if (idx !== -1) {
+      msg.reactions[idx].emoji = emoji;
+    } else {
+      msg.reactions.push({ userId, emoji });
+    }
+    writeDb(db);
+    return json(res, 200, { message: msg });
+  }
+
+  if (url.pathname.startsWith('/api/messages/') && req.method === 'DELETE') {
+    const messageId = url.pathname.split('/').pop();
+    const userId = req.headers['x-user-id'];
+    const db = readDb();
+    const idx = (db.messages || []).findIndex(m => m.id === messageId);
+    if (idx === -1) return json(res, 404, { error: 'Message not found' });
+    const msg = db.messages[idx];
+    if (msg.senderId !== userId) return json(res, 403, { error: 'Forbidden' });
+    db.messages.splice(idx, 1);
+    writeDb(db);
+    return json(res, 200, { ok: true });
+  }
+
   // Social & Relationships
   if (url.pathname === '/api/relationships/follow' && req.method === 'POST') {
     const body = await parseBody(req);
@@ -233,6 +303,27 @@ const server = http.createServer(async (req, res) => {
 
     writeDb(db);
     return json(res, 200, { relationship: rel });
+  }
+
+  if (url.pathname === '/api/relationships/unfollow' && req.method === 'POST') {
+    const body = await parseBody(req);
+    const { followerId, followingId } = body;
+    const db = readDb();
+
+    const idx = db.relationships.findIndex(r => r.followerId === followerId && r.followingId === followingId);
+    if (idx === -1) return json(res, 404, { error: 'Relationship not found' });
+
+    const rel = db.relationships[idx];
+    if (rel.status === 'accepted') {
+      const follower = db.users.find(u => u.id === followerId);
+      const following = db.users.find(u => u.id === followingId);
+      if (follower) follower.stats.following = Math.max(0, (follower.stats.following || 0) - 1);
+      if (following) following.stats.followers = Math.max(0, (following.stats.followers || 0) - 1);
+    }
+
+    db.relationships.splice(idx, 1);
+    writeDb(db);
+    return json(res, 200, { message: 'Unfollowed' });
   }
 
   if (url.pathname === '/api/relationships/accept' && req.method === 'POST') {
