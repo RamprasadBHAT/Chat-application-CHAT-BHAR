@@ -373,6 +373,129 @@ async function localApiRequest(path, options = {}) {
     return { ok: true, message: 'Account deleted locally.' };
   }
 
+  // Posts fallback
+  if (path === '/api/posts' && method === 'GET') {
+    return { posts: loadJson(UPLOAD_STORE_KEY, []) };
+  }
+  if (path === '/api/posts' && method === 'POST') {
+    const uploads = loadJson(UPLOAD_STORE_KEY, []);
+    const newPost = {
+      id: crypto.randomUUID(),
+      ...body,
+      createdAt: new Date().toISOString(),
+      interactions: body.interactions || { likes: 0, likedBy: [], comments: [], shares: 0 }
+    };
+    uploads.push(newPost);
+    saveJson(UPLOAD_STORE_KEY, uploads);
+    return { post: newPost };
+  }
+  if (path.startsWith('/api/posts/') && method === 'PATCH') {
+    const postId = path.split('/').pop();
+    const uploads = loadJson(UPLOAD_STORE_KEY, []);
+    const idx = uploads.findIndex(p => p.id === postId);
+    if (idx !== -1) {
+      uploads[idx] = { ...uploads[idx], ...body };
+      saveJson(UPLOAD_STORE_KEY, uploads);
+      return { post: uploads[idx] };
+    }
+    throw new Error('Post not found locally');
+  }
+  if (path.startsWith('/api/posts/') && method === 'DELETE') {
+    const postId = path.split('/').pop();
+    let uploads = loadJson(UPLOAD_STORE_KEY, []);
+    uploads = uploads.filter(p => p.id !== postId);
+    saveJson(UPLOAD_STORE_KEY, uploads);
+    return { ok: true };
+  }
+
+  // Relationships fallback
+  if (path === '/api/relationships/follow' && method === 'POST') {
+    const { followerId, followingId } = body;
+    const db = loadLocalAuthDb();
+    db.relationships = db.relationships || [];
+    const follower = db.users.find(u => u.id === followerId);
+    const following = db.users.find(u => u.id === followingId);
+    if (!follower || !following) throw new Error('User not found locally');
+    const existing = db.relationships.find(r => r.followerId === followerId && r.followingId === followingId);
+    if (existing) throw new Error('Relationship already exists');
+    const status = following.isPrivate ? 'pending' : 'accepted';
+    const rel = { id: crypto.randomUUID(), followerId, followingId, status };
+    db.relationships.push(rel);
+    if (status === 'accepted') {
+      follower.stats = follower.stats || { posts: 0, followers: 0, following: 0 };
+      following.stats = following.stats || { posts: 0, followers: 0, following: 0 };
+      follower.stats.following++;
+      following.stats.followers++;
+    }
+    saveLocalAuthDb(db);
+    return { relationship: rel };
+  }
+  if (path === '/api/relationships/accept' && method === 'POST') {
+    const { relationshipId } = body;
+    const db = loadLocalAuthDb();
+    const rel = (db.relationships || []).find(r => r.id === relationshipId);
+    if (!rel) throw new Error('Relationship not found locally');
+    if (rel.status === 'accepted') throw new Error('Already accepted');
+    rel.status = 'accepted';
+    const follower = db.users.find(u => u.id === rel.followerId);
+    const following = db.users.find(u => u.id === rel.followingId);
+    if (follower && following) {
+      follower.stats = follower.stats || { posts: 0, followers: 0, following: 0 };
+      following.stats = following.stats || { posts: 0, followers: 0, following: 0 };
+      follower.stats.following++;
+      following.stats.followers++;
+    }
+    saveLocalAuthDb(db);
+    return { relationship: rel };
+  }
+  if (path.startsWith('/api/relationships/requests') && method === 'GET') {
+    const url = new URL(path, window.location.origin);
+    const userId = url.searchParams.get('userId');
+    const db = loadLocalAuthDb();
+    const requests = (db.relationships || []).filter(r => r.followingId === userId && r.status === 'pending');
+    const enriched = requests.map(r => {
+      const follower = db.users.find(u => u.id === r.followerId);
+      return {
+        ...r,
+        followerName: follower ? (follower.name || (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value) : 'Unknown',
+        followerHandle: follower ? (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value : ''
+      };
+    });
+    return { requests: enriched };
+  }
+
+  // Profile fallback
+  if (path === '/api/auth/profile' && method === 'PATCH') {
+    const { userId, name, bio, profession, location, socialLinks, profilePic, isPrivate } = body;
+    const db = loadLocalAuthDb();
+    const user = db.users.find(u => u.id === userId);
+    if (!user) throw new Error('User not found locally');
+    if (name !== undefined) user.name = name;
+    if (bio !== undefined) user.bio = bio;
+    if (profession !== undefined) user.profession = profession;
+    if (location !== undefined) user.location = location;
+    if (socialLinks !== undefined) user.socialLinks = socialLinks;
+    if (profilePic !== undefined) user.profilePic = profilePic;
+    if (isPrivate !== undefined) user.isPrivate = isPrivate;
+    saveLocalAuthDb(db);
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        username: (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '',
+        activeUsernameId: user.activeUsernameId,
+        profilePic: user.profilePic,
+        bio: user.bio,
+        profession: user.profession,
+        location: user.location,
+        socialLinks: user.socialLinks,
+        stats: user.stats,
+        isPrivate: user.isPrivate
+      }
+    };
+  }
+
   throw new Error('Request failed');
 }
 
@@ -390,7 +513,10 @@ async function apiRequest(path, options = {}) {
     '/api/usernames/check',
     '/api/usernames',
     '/api/auth/session/select-username',
-    '/api/auth/delete-account'
+    '/api/auth/delete-account',
+    '/api/auth/profile',
+    '/api/relationships',
+    '/api/posts'
   ];
   const canFallback = sharedPaths.some(p => path.startsWith(p));
 
