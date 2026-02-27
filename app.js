@@ -159,8 +159,8 @@ let selectedUploadRawFiles = [];
 let selectedUploadEdits = [];
 let activeSuiteIndex = 0;
 let pendingFiles = [];
-let chatStore = loadJson(CHAT_STORE_KEY, { General: [] });
-let activeChat = Object.keys(chatStore)[0] || 'General';
+let chatStore = loadJson(CHAT_STORE_KEY, {});
+let activeChat = Object.keys(chatStore)[0] || null;
 let chatMeta = loadJson('chatbhar.chatMeta', {});
 let previewPendingMessage = null;
 let typingTimeout = null;
@@ -187,6 +187,7 @@ async function initApp() {
   await loadSession();
   migrateOldUploads();
   applyUploadType();
+  await fetchAndSyncMessages();
   renderChatUsers();
   renderMessages();
   renderUploads();
@@ -195,6 +196,45 @@ async function initApp() {
   renderChannelManager();
   renderFollowRequests();
   initEnhancedMessaging();
+}
+
+async function fetchAndSyncMessages() {
+  if (!activeSession) return;
+  try {
+    const payload = await apiRequest('/api/messages', {
+      headers: { 'x-user-id': activeSession.id }
+    });
+    const msgs = payload.messages || [];
+    const newStore = {};
+
+    Object.keys(chatStore).forEach(chatId => {
+      newStore[chatId] = [];
+    });
+
+    msgs.forEach(m => {
+      if (!newStore[m.chatId]) newStore[m.chatId] = [];
+      const dir = m.senderId === activeSession.id ? 'outgoing' : 'incoming';
+      newStore[m.chatId].push({ ...m, dir });
+
+      if (!chatMeta[m.chatId]) {
+        chatMeta[m.chatId] = {
+          id: m.chatId,
+          name: m.senderName || 'User',
+          participants: m.participants || [],
+          isGroup: m.chatId.startsWith('group:'),
+          online: false
+        };
+      }
+    });
+    chatStore = newStore;
+    saveJson(CHAT_STORE_KEY, chatStore);
+    saveJson('chatbhar.chatMeta', chatMeta);
+    if (!activeChat && Object.keys(chatStore).length > 0) {
+      activeChat = Object.keys(chatStore)[0];
+    }
+  } catch (err) {
+    console.error('Sync messages failed', err);
+  }
 }
 
 function syncState() {
@@ -837,6 +877,140 @@ async function followUser(followingId) {
   }
 }
 
+async function unfollowUser(followingId) {
+  if (!activeSession) return;
+  try {
+    await apiRequest('/api/relationships/unfollow', {
+      method: 'POST',
+      body: JSON.stringify({ followerId: activeSession.id, followingId })
+    });
+    await renderExploreUsers(exploreSearchInput.value);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function onExploreMessageClick(userId, username) {
+  const chatId = `dm:${userId}`;
+  if (!chatMeta[chatId]) {
+    chatMeta[chatId] = {
+      id: chatId,
+      name: username,
+      participants: [activeSession.id, userId],
+      isGroup: false,
+      online: false
+    };
+    saveJson('chatbhar.chatMeta', chatMeta);
+  }
+  activeChat = chatId;
+  const navBtn = document.querySelector('.nav-btn[data-tab="chat"]');
+  if (navBtn) navBtn.click();
+  renderChatUsers();
+  renderMessages();
+}
+
+let otherProfileUserId = null;
+
+async function openOtherProfile(userId) {
+  if (activeSession && userId === activeSession.id) {
+    openTab('channels');
+    return;
+  }
+  otherProfileUserId = userId;
+  await renderOtherProfile(userId);
+  openTab('channels');
+  document.getElementById('otherProfileHeader').hidden = false;
+  document.getElementById('backFromOtherProfile').onclick = () => {
+    openTab('explore');
+  };
+}
+
+async function renderOtherProfile(userId) {
+  await syncAuthUsers();
+  const user = authUsers.find(u => u.id === userId);
+  if (!user) return;
+
+  let relStatus = null;
+  if (activeSession) {
+    try {
+      const payload = await apiRequest(`/api/relationships/following?userId=${activeSession.id}`);
+      const rel = (payload.following || []).find(r => r.followingId === userId);
+      relStatus = rel ? rel.status : null;
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  // Populate Header
+  myChannelHandle.textContent = user.username || user.name || 'User';
+  myChannelDisplayName.textContent = user.name || user.username;
+  myChannelProfession.textContent = user.profession || 'Content Creator';
+  myChannelBio.textContent = user.bio || '';
+
+  if (myChannelLocation) {
+    if (user.location) {
+      myChannelLocation.hidden = false;
+      myChannelLocation.querySelector('span').textContent = user.location;
+    } else {
+      myChannelLocation.hidden = true;
+    }
+  }
+
+  if (myChannelSocialLinks) {
+    myChannelSocialLinks.innerHTML = '';
+    const links = user.socialLinks || {};
+    if (links.twitter) myChannelSocialLinks.innerHTML += `<a href="${links.twitter}" target="_blank">🐦 Twitter</a>`;
+    if (links.linkedin) myChannelSocialLinks.innerHTML += `<a href="${links.linkedin}" target="_blank">🔗 LinkedIn</a>`;
+    if (links.github) myChannelSocialLinks.innerHTML += `<a href="${links.github}" target="_blank">💻 GitHub</a>`;
+  }
+
+  myPostCount.textContent = user.stats?.posts || 0;
+  myFollowerCount.textContent = user.stats?.followers || 0;
+  myFollowingCount.textContent = user.stats?.following || 0;
+
+  renderProfileAvatar(myChannelAvatar, user);
+
+  // Private account check
+  const canSeeContent = !user.isPrivate || relStatus === 'accepted';
+
+  channelContentGrid.innerHTML = '';
+  if (!canSeeContent) {
+    channelContentGrid.innerHTML = `
+      <div style="grid-column: 1/-1; text-align: center; padding: 60px 20px;">
+        <div style="font-size: 3rem; margin-bottom: 10px;">🔒</div>
+        <p style="font-weight: 600; font-size: 1.2rem;">This Account is Private</p>
+        <p style="color: var(--muted);">Follow this account to see their photos and videos.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const userPosts = uploads.filter(u => u.userId === userId && u.type !== 'story');
+  if (!userPosts.length) {
+    channelContentGrid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 60px 20px;">No posts yet.</div>`;
+  } else {
+    userPosts.forEach(item => {
+      const firstFile = item.files[0];
+      if (!firstFile) return;
+      const div = document.createElement('div');
+      div.className = 'grid-item';
+      let mediaHtml = firstFile.type.startsWith('video/')
+        ? `<video src="${cdnUrl(firstFile.dataUrl)}"></video>`
+        : `<img src="${cdnUrl(firstFile.dataUrl)}" loading="lazy" />`;
+
+      div.innerHTML = `
+        ${mediaHtml}
+        <div class="grid-item-overlay">
+          <span>❤️ ${item.interactions?.likes || 0}</span>
+          <span>💬 ${item.interactions?.comments?.length || 0}</span>
+        </div>
+      `;
+      div.addEventListener('click', () => openPostViewer(item.id));
+      channelContentGrid.appendChild(div);
+    });
+  }
+}
+
 async function acceptFollowRequest(relationshipId) {
   try {
     await apiRequest('/api/relationships/accept', {
@@ -1096,6 +1270,10 @@ function openTab(tabId) {
   screens.forEach((s) => s.classList.toggle('active', s.id === tabId));
   navButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === tabId));
   if (tabId === 'chat') renderFollowRequests();
+  if (tabId === 'channels') {
+    document.getElementById('otherProfileHeader').hidden = true;
+    renderChannelManager();
+  }
 }
 
 function setSelectedUploadFiles(files) {
@@ -1380,17 +1558,17 @@ function validateUploadForType(type, files, caption, description) {
 
 
 async function renderExploreUsers(query = '') {
-  // Refresh authUsers from server if possible, otherwise use global authUsers
   await syncAuthUsers();
   const users = authUsers;
 
-  // Fetch relationships if session exists
   let myFollowings = [];
   if (activeSession) {
-    // In a real app we'd fetch this from backend.
-    // For now we'll simulate by checking localDB if it exists or assuming empty if not.
-    const db = loadLocalAuthDb();
-    myFollowings = (db.relationships || []).filter(r => r.followerId === activeSession.id);
+    try {
+      const payload = await apiRequest(`/api/relationships/following?userId=${activeSession.id}`);
+      myFollowings = payload.following || [];
+    } catch (err) {
+      console.error('Failed to fetch following status', err);
+    }
   }
 
   const normalizedQuery = String(query).trim().toLowerCase();
@@ -1439,18 +1617,20 @@ async function renderExploreUsers(query = '') {
 
     const rel = myFollowings.find(r => r.followingId === u.id);
     let followBtnHtml = '';
+    let messageBtnHtml = '';
     if (activeSession && u.id !== activeSession.id) {
       if (!rel) {
         followBtnHtml = `<button class="follow-btn" data-user-id="${u.id}">Follow</button>`;
       } else if (rel.status === 'pending') {
         followBtnHtml = `<button class="follow-btn requested" disabled>Requested</button>`;
       } else {
-        followBtnHtml = `<button class="follow-btn following" disabled>Following</button>`;
+        followBtnHtml = `<button class="follow-btn following" data-user-id="${u.id}">Unfollow</button>`;
+        messageBtnHtml = `<button class="message-btn" data-user-id="${u.id}">Message</button>`;
       }
     }
 
     card.innerHTML = `
-      <div class="explore-user-head">
+      <div class="explore-user-head" style="cursor:pointer">
         ${avatarHtml}
         <div>
           <strong>${escapeHtml(u.displayName || u.name)}</strong>
@@ -1458,13 +1638,29 @@ async function renderExploreUsers(query = '') {
         </div>
       </div>
       <div style="display:flex; align-items:center; gap:8px">
+        ${messageBtnHtml}
         ${followBtnHtml}
         <span class="status-pill ${u.isActive ? 'active' : 'inactive'}">${u.isActive ? 'Active' : 'Off'}</span>
       </div>
     `;
+
+    card.querySelector('.explore-user-head').addEventListener('click', () => {
+      openOtherProfile(u.id);
+    });
+
     const btn = card.querySelector('.follow-btn');
     if (btn && !btn.disabled) {
-      btn.addEventListener('click', () => followUser(u.id));
+      btn.addEventListener('click', () => {
+        if (btn.classList.contains('following')) {
+          unfollowUser(u.id);
+        } else {
+          followUser(u.id);
+        }
+      });
+    }
+    const msgBtn = card.querySelector('.message-btn');
+    if (msgBtn) {
+      msgBtn.addEventListener('click', () => onExploreMessageClick(u.id, u.displayName));
     }
     exploreUsersList.appendChild(card);
   });
@@ -1550,7 +1746,7 @@ function renderFeed() {
     }
 
     card.innerHTML = `
-      <div class="feed-header">
+      <div class="feed-header" style="cursor:pointer">
         ${avatarHtml}
         <div class="feed-type">${item.type.toUpperCase()} · ${escapeHtml(item.userName)}</div>
       </div>
@@ -1561,6 +1757,9 @@ function renderFeed() {
       </div>
       ${renderInteractionBlock(item)}
     `;
+    card.querySelector('.feed-header').onclick = () => {
+      if (item.userId) openOtherProfile(item.userId);
+    };
     bindInteractionEvents(card, item.id);
     bindCardOpenViewer(card, item.id);
     feedList.appendChild(card);
@@ -1951,6 +2150,11 @@ function renderChatUsers() {
 
 function renderMessages() {
   if (!messages) return;
+  if (!activeChat) {
+    messages.innerHTML = '<div style="text-align:center; padding: 20px; color: var(--muted);">Select a contact to start chatting</div>';
+    if (activeChatTitle) activeChatTitle.textContent = 'Chat';
+    return;
+  }
   if (!chatStore[activeChat]) chatStore[activeChat] = [];
   const meta = chatMeta[activeChat] || { name: activeChat, online: false };
   activeChatTitle.textContent = meta.name;
@@ -1995,7 +2199,15 @@ function renderMessages() {
       }
     }
 
-    bubble.innerHTML = `${replyHtml}${escapeHtml(msg.text || '')}${fileHtml}`;
+    let reactionHtml = '';
+    if (msg.reactions && msg.reactions.length > 0) {
+      const counts = {};
+      msg.reactions.forEach(r => { counts[r.emoji] = (counts[r.emoji] || 0) + 1; });
+      reactionHtml = `<div class="bubble-reactions" style="position:absolute; bottom:-12px; right:4px; display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:2px 4px; font-size:0.7rem; z-index:2">${Object.entries(counts).map(([emoji, count]) => `<span>${emoji}${count > 1 ? count : ''}</span>`).join('')}</div>`;
+    }
+
+    bubble.innerHTML = `${replyHtml}${escapeHtml(msg.text || '')}${fileHtml}${reactionHtml}`;
+    bubble.dataset.id = msg.id;
     messages.appendChild(bubble);
   });
 
@@ -2027,6 +2239,7 @@ function openImageFromMessage(idx) {
 }
 
 async function sendMessage(prepared = null) {
+  if (!activeSession || !activeChat) return;
   const payload = prepared || {
     text: messageInput.value.trim(),
     files: pendingFiles,
@@ -2034,22 +2247,32 @@ async function sendMessage(prepared = null) {
     replyToId: replyToMsg ? replyToMsg.ts : null
   };
   if (!payload.text && !(payload.files || []).length) return;
-  const ts = Date.now();
-  if (!chatStore[activeChat]) chatStore[activeChat] = [];
-  chatStore[activeChat].push({
-    dir: 'outgoing',
-    text: payload.text,
-    files: payload.files,
-    viewOnce: payload.viewOnce,
-    viewOnceConsumed: false,
-    ts,
-    replyToId: payload.replyToId
-  });
-  saveJson(CHAT_STORE_KEY, chatStore);
 
-  if (presenceBus && activeSession) {
-    const meta = chatMeta[activeChat];
-    if (meta) {
+  const meta = chatMeta[activeChat];
+  if (!meta) return;
+
+  try {
+    const res = await apiRequest('/api/messages', {
+      method: 'POST',
+      headers: { 'x-user-id': activeSession.id },
+      body: JSON.stringify({
+        chatId: activeChat,
+        senderName: activeHandle(),
+        text: payload.text,
+        files: payload.files,
+        replyToId: payload.replyToId,
+        viewOnce: payload.viewOnce,
+        ts: Date.now(),
+        participants: meta.participants
+      })
+    });
+
+    const msg = res.message;
+    if (!chatStore[activeChat]) chatStore[activeChat] = [];
+    chatStore[activeChat].push({ ...msg, dir: 'outgoing' });
+    saveJson(CHAT_STORE_KEY, chatStore);
+
+    if (presenceBus) {
       meta.participants.forEach(pId => {
         if (pId !== activeSession.id) {
           presenceBus.postMessage({
@@ -2058,15 +2281,19 @@ async function sendMessage(prepared = null) {
             fromId: activeChat,
             senderId: activeSession.id,
             senderName: activeHandle(),
-            text: payload.text,
-            files: payload.files,
-            viewOnce: payload.viewOnce,
-            replyToId: payload.replyToId,
-            ts
+            text: msg.text,
+            files: msg.files,
+            viewOnce: msg.viewOnce,
+            replyToId: msg.replyToId,
+            ts: msg.ts,
+            id: msg.id
           });
         }
       });
     }
+  } catch (err) {
+    console.error('Send message failed', err);
+    alert('Failed to send message: ' + err.message);
   }
   messageInput.value = '';
   fileInput.value = '';
@@ -2199,6 +2426,8 @@ function initEnhancedMessaging() {
   announcePresence(true);
   window.addEventListener('beforeunload', () => announcePresence(false));
 
+  setInterval(fetchAndSyncMessages, 10000);
+
   if (presenceBus) {
     presenceBus.onmessage = (event) => {
       const msg = event.data || {};
@@ -2214,32 +2443,37 @@ function initEnhancedMessaging() {
         typingIndicator.textContent = msg.typing ? `${msg.name || 'User'} is typing...` : '';
       }
       if (msg.type === 'message' && msg.toId === activeSession?.id) {
-        const chatId = msg.fromId.startsWith('group:') ? msg.fromId : `dm:${msg.senderId}`;
+        const chatId = msg.fromId;
         if (!chatMeta[chatId]) {
           chatMeta[chatId] = { id: chatId, name: msg.senderName || 'User', participants: [msg.senderId, activeSession.id], isGroup: chatId.startsWith('group:'), online: true };
           saveJson('chatbhar.chatMeta', chatMeta);
         }
         if (!chatStore[chatId]) chatStore[chatId] = [];
-        chatStore[chatId].push({
-          dir: 'incoming',
-          text: msg.text,
-          files: msg.files,
-          viewOnce: msg.viewOnce,
-          viewOnceConsumed: false,
-          ts: msg.ts,
-          replyToId: msg.replyToId,
-          senderName: msg.senderName
-        });
-        saveJson(CHAT_STORE_KEY, chatStore);
-        if (activeChat === chatId) {
-          renderMessages();
+        if (!chatStore[chatId].some(m => m.id === msg.id)) {
+          chatStore[chatId].push({
+            id: msg.id,
+            dir: 'incoming',
+            text: msg.text,
+            files: msg.files,
+            viewOnce: msg.viewOnce,
+            viewOnceConsumed: false,
+            ts: msg.ts,
+            replyToId: msg.replyToId,
+            senderName: msg.senderName,
+            senderId: msg.senderId
+          });
+          saveJson(CHAT_STORE_KEY, chatStore);
+          if (activeChat === chatId) renderMessages();
+          renderChatUsers();
         }
-        renderChatUsers();
+      }
+      if (msg.type === 'reaction' && msg.toId === activeSession?.id) {
+        fetchAndSyncMessages();
       }
       if (msg.type === 'delete_msg' && msg.toId === activeSession?.id) {
-        const chatId = msg.chatId.startsWith('group:') ? msg.chatId : `dm:${msg.senderId}`;
+        const chatId = msg.chatId;
         if (chatStore[chatId]) {
-          const idx = chatStore[chatId].findIndex(m => m.ts === msg.msgTs);
+          const idx = chatStore[chatId].findIndex(m => m.id === msg.msgId || m.ts === msg.msgTs);
           if (idx !== -1) {
             chatStore[chatId].splice(idx, 1);
             saveJson(CHAT_STORE_KEY, chatStore);
@@ -2308,7 +2542,31 @@ function bindMessagingUI() {
     });
 
     msgContextMenu.querySelectorAll('.emoji-bar button').forEach(btn => {
-      btn.onclick = () => {
+      btn.onclick = async () => {
+        const emoji = btn.dataset.emoji;
+        if (currentContextMsg && activeSession) {
+          try {
+            await apiRequest(`/api/messages/${currentContextMsg.id}/react`, {
+              method: 'PATCH',
+              headers: { 'x-user-id': activeSession.id },
+              body: JSON.stringify({ emoji })
+            });
+            await fetchAndSyncMessages();
+            renderMessages();
+            if (presenceBus) {
+              const meta = chatMeta[activeChat];
+              if (meta) {
+                meta.participants.forEach(pId => {
+                  if (pId !== activeSession.id) {
+                    presenceBus.postMessage({ type: 'reaction', toId: pId });
+                  }
+                });
+              }
+            }
+          } catch (err) {
+            console.error('Reaction failed', err);
+          }
+        }
         msgContextMenu.hidden = true;
       };
     });
@@ -2395,27 +2653,38 @@ function showContextMenu(e, bubble) {
   }
 }
 
-function deleteMessage(type) {
-  if (!currentContextMsg) return;
+async function deleteMessage(type) {
+  if (!currentContextMsg || !activeSession) return;
   const msgIdx = chatStore[activeChat].indexOf(currentContextMsg);
   if (msgIdx === -1) return;
 
   if (type === 'everyone') {
-    if (presenceBus && activeSession) {
-      const meta = chatMeta[activeChat];
-      if (meta) {
-        meta.participants.forEach(pId => {
-          if (pId !== activeSession.id) {
-            presenceBus.postMessage({
-              type: 'delete_msg',
-              toId: pId,
-              chatId: activeChat,
-              senderId: activeSession.id,
-              msgTs: currentContextMsg.ts
-            });
-          }
-        });
+    try {
+      await apiRequest(`/api/messages/${currentContextMsg.id}`, {
+        method: 'DELETE',
+        headers: { 'x-user-id': activeSession.id }
+      });
+
+      if (presenceBus) {
+        const meta = chatMeta[activeChat];
+        if (meta) {
+          meta.participants.forEach(pId => {
+            if (pId !== activeSession.id) {
+              presenceBus.postMessage({
+                type: 'delete_msg',
+                toId: pId,
+                chatId: activeChat,
+                senderId: activeSession.id,
+                msgTs: currentContextMsg.ts,
+                msgId: currentContextMsg.id
+              });
+            }
+          });
+        }
       }
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+      return;
     }
   }
 
