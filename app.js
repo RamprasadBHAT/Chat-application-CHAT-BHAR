@@ -1226,6 +1226,22 @@ function makeOverlayDraggable(el, edit) {
   suitePreview.addEventListener('pointerleave', stop);
 }
 
+async function uploadToBackend(file) {
+  if (!activeSession) throw new Error('Not logged in');
+  const res = await fetch('/api/upload-media', {
+    method: 'POST',
+    headers: {
+      'x-filename': file.name,
+      'x-user-id': activeSession.id,
+      'content-type': file.type
+    },
+    body: file
+  });
+  if (!res.ok) throw new Error('Binary upload failed');
+  const payload = await res.json();
+  return { name: file.name, type: file.type, size: file.size, dataUrl: payload.url };
+}
+
 async function onUploadSubmit(event) {
   event.preventDefault();
   if (!activeSession) return;
@@ -1243,7 +1259,13 @@ async function onUploadSubmit(event) {
   uploadProgressBar.style.width = '0%';
 
   try {
-    const prepared = await chunkedConcurrentUpload(files, updateProgress);
+    const prepared = [];
+    for (let i = 0; i < files.length; i++) {
+      const uploaded = await uploadToBackend(files[i]);
+      prepared.push(uploaded);
+      updateProgress((i + 1) / files.length);
+    }
+
     const edits = structuredClone(selectedUploadEdits);
 
     const baseRecord = {
@@ -1695,6 +1717,7 @@ function openPostViewer(postId) {
     if (openSuiteBtn) {
       openSuiteBtn.onclick = async () => {
         try {
+          // Check if file is local (Base64) or server-hosted
           selectedUploadRawFiles = await dataFilesToBlobs(post.files);
           selectedUploadEdits = post.edits?.length ? structuredClone(post.edits) : selectedUploadRawFiles.map((f) => defaultEdit(f.name));
           openCreativeSuiteModal();
@@ -2142,7 +2165,8 @@ function normalizeFiles(files) {
 async function dataFilesToBlobs(files) {
   const blobs = [];
   for (const f of files || []) {
-    const res = await fetch(f.dataUrl);
+    const url = f.dataUrl.startsWith('data:') ? f.dataUrl : window.location.origin + f.dataUrl;
+    const res = await fetch(url);
     const blob = await res.blob();
     blobs.push(new File([blob], f.name, { type: f.type }));
   }

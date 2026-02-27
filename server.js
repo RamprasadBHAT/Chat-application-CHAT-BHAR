@@ -5,9 +5,13 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 4173;
 const DB_PATH = path.join(__dirname, 'db', 'auth-db.json');
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
 
 if (!fs.existsSync(path.dirname(DB_PATH))) {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+}
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
 function readDb() {
@@ -56,9 +60,6 @@ function canChangeUsername(user) {
 function checkGmail(email) {
   return /^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(String(email || '').toLowerCase());
 }
-
-// NoSQL schema:
-// user: { id, name, email, password, usernames:[{id,value,createdAt,updatedAt}], usernameChangeLogs:[{ts,from,to}], activeUsernameId }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -264,7 +265,6 @@ const server = http.createServer(async (req, res) => {
     const db = readDb();
     const requests = db.relationships.filter(r => r.followingId === userId && r.status === 'pending');
 
-    // Enrich with follower info
     const enriched = requests.map(r => {
       const follower = db.users.find(u => u.id === r.followerId);
       return {
@@ -301,6 +301,39 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true, username: target });
   }
 
+  if (url.pathname === '/api/upload-media' && req.method === 'POST') {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return json(res, 401, { error: 'Unauthorized: User ID required' });
+
+    const db = readDb();
+    if (!db.users.some(u => u.id === userId)) return json(res, 403, { error: 'Forbidden: Invalid User' });
+
+    const filename = req.headers['x-filename'] || 'upload.bin';
+    const ext = path.extname(filename);
+    const safeName = `${crypto.randomUUID()}${ext}`;
+    const targetPath = path.join(UPLOADS_DIR, safeName);
+    const fileStream = fs.createWriteStream(targetPath);
+
+    req.pipe(fileStream);
+
+    return new Promise((resolve) => {
+      fileStream.on('finish', () => {
+        json(res, 201, { url: `/uploads/${safeName}`, name: filename, type: req.headers['content-type'] });
+        resolve();
+      });
+      fileStream.on('error', (err) => {
+        console.error('File stream error', err);
+        json(res, 500, { error: 'Failed to write file' });
+        resolve();
+      });
+      req.on('error', (err) => {
+        console.error('Upload error', err);
+        json(res, 500, { error: 'Upload failed' });
+        resolve();
+      });
+    });
+  }
+
   if (url.pathname === '/api/auth/profile' && req.method === 'PATCH') {
     const body = await parseBody(req);
     const { userId, name, bio, profession, location, socialLinks, profilePic, isPrivate } = body;
@@ -335,7 +368,6 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  // Posts CRUD
   if (url.pathname === '/api/posts' && req.method === 'GET') {
     const db = readDb();
     return json(res, 200, { posts: db.posts || [] });
@@ -358,14 +390,11 @@ const server = http.createServer(async (req, res) => {
       interactions: body.interactions || { likes: 0, likedBy: [], comments: [], shares: 0 }
     };
     db.posts.push(newPost);
-
-    // Update user post count
     const user = db.users.find(u => u.id === body.userId);
     if (user) {
       user.stats = user.stats || { posts: 0, followers: 0, following: 0 };
       user.stats.posts = (user.stats.posts || 0) + 1;
     }
-
     writeDb(db);
     return json(res, 201, { post: newPost });
   }
@@ -376,7 +405,6 @@ const server = http.createServer(async (req, res) => {
     const db = readDb();
     const idx = db.posts.findIndex(p => p.id === postId);
     if (idx === -1) return json(res, 404, { error: 'Post not found' });
-
     db.posts[idx] = { ...db.posts[idx], ...body };
     writeDb(db);
     return json(res, 200, { post: db.posts[idx] });
@@ -387,13 +415,11 @@ const server = http.createServer(async (req, res) => {
     const db = readDb();
     const idx = db.posts.findIndex(p => p.id === postId);
     if (idx === -1) return json(res, 404, { error: 'Post not found' });
-
     const post = db.posts[idx];
     const user = db.users.find(u => u.id === post.userId);
     if (user && user.stats) {
       user.stats.posts = Math.max(0, (user.stats.posts || 0) - 1);
     }
-
     db.posts.splice(idx, 1);
     writeDb(db);
     return json(res, 200, { ok: true });
@@ -407,7 +433,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   const ext = path.extname(filePath);
-  const type = ext === '.css' ? 'text/css' : ext === '.js' ? 'application/javascript' : ext === '.html' ? 'text/html' : 'application/octet-stream';
+  const type = ext === '.css' ? 'text/css' :
+               ext === '.js' ? 'application/javascript' :
+               ext === '.html' ? 'text/html' :
+               ext === '.png' ? 'image/png' :
+               ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+               ext === '.gif' ? 'image/gif' :
+               ext === '.mp4' ? 'video/mp4' :
+               'application/octet-stream';
   res.writeHead(200, { 'Content-Type': type });
   fs.createReadStream(filePath).pipe(res);
 });
