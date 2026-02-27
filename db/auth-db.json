@@ -56,7 +56,7 @@
         "github": ""
       },
       "stats": {
-        "posts": 0,
+        "posts": 2,
         "followers": 0,
         "following": 0
       },
@@ -122,6 +122,76 @@
         }
       ],
       "createdAt": "2026-02-27T12:44:05.711Z",
+      "expiresAt": null,
+      "interactions": {
+        "likes": 0,
+        "likedBy": [],
+        "comments": [],
+        "shares": 0
+      }
+    },
+    {
+      "id": "649b7993-c3b4-48ab-ac20-5a87148ba0db",
+      "userId": "9e8df6f6-865b-428d-a03a-3d3548a34da4",
+      "userName": "jules_d8634fbb",
+      "type": "carousel",
+      "caption": "Binary Storage Verification",
+      "description": "",
+      "files": [
+        {
+          "name": "storage_test.png",
+          "type": "image/png",
+          "size": 67,
+          "dataUrl": "/uploads/5ea1355e-2925-479f-aeb4-ccd1828f49ff.png"
+        }
+      ],
+      "edits": [
+        {
+          "name": "storage_test.png",
+          "trimStart": 0,
+          "trimEnd": 0,
+          "overlayText": "",
+          "overlayColor": "#ffffff",
+          "overlayX": 10,
+          "overlayY": 10
+        }
+      ],
+      "createdAt": "2026-02-27T14:22:10.277Z",
+      "expiresAt": null,
+      "interactions": {
+        "likes": 0,
+        "likedBy": [],
+        "comments": [],
+        "shares": 0
+      }
+    },
+    {
+      "id": "2d4676ca-54fd-4ee2-8062-ce7f3737acf3",
+      "userId": "9e8df6f6-865b-428d-a03a-3d3548a34da4",
+      "userName": "jules_d8634fbb",
+      "type": "carousel",
+      "caption": "Binary Storage Verification",
+      "description": "",
+      "files": [
+        {
+          "name": "storage_test.png",
+          "type": "image/png",
+          "size": 67,
+          "dataUrl": "/uploads/e3f1f904-f169-4fa0-b476-d047675527b6.png"
+        }
+      ],
+      "edits": [
+        {
+          "name": "storage_test.png",
+          "trimStart": 0,
+          "trimEnd": 0,
+          "overlayText": "",
+          "overlayColor": "#ffffff",
+          "overlayX": 10,
+          "overlayY": 10
+        }
+      ],
+      "createdAt": "2026-02-27T14:24:29.085Z",
       "expiresAt": null,
       "interactions": {
         "likes": 0,
