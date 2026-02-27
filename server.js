@@ -231,11 +231,12 @@ const server = http.createServer(async (req, res) => {
 
     if (chatId.startsWith('dm:')) {
       const targetUserId = chatId.split(':').pop();
+      // Allow if either user follows the other and it is accepted.
       const rel = db.relationships.find(r =>
         (r.followerId === senderId && r.followingId === targetUserId && r.status === 'accepted') ||
         (r.followerId === targetUserId && r.followingId === senderId && r.status === 'accepted')
       );
-      if (!rel) return json(res, 403, { error: 'Must follow each other to message' });
+      if (!rel) return json(res, 403, { error: 'You must follow this user and they must accept to chat' });
     }
 
     const msg = { id: crypto.randomUUID(), chatId, senderId, senderName, text, files, replyToId, viewOnce, ts, participants };
