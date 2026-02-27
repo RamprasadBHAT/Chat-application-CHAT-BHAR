@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 *.log
+uploads/
 test-results/
 playwright-report/
 blob-report/
