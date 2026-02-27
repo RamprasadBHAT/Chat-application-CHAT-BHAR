@@ -69,6 +69,14 @@ A responsive social media prototype with a CMS-style upload pipeline, creative s
 - Simulated **chunked + concurrent upload pipeline** for fast feedback
 - Creative Suite editing + channel dashboard + chat module
 
+## Storage Architecture
+
+The application uses a hybrid storage model to ensure high performance and scalability (supporting 15GB+ media):
+
+- **Metadata Database**: `db/auth-db.json` stores user profiles, post captions, and comments.
+- **Binary Storage**: `uploads/` stores actual image and video files. This prevents database bloat and memory crashes.
+- **Client Cache**: `localStorage` is used for session hydration, storing only lightweight URLs to the server assets.
+
 ## Database schema (NoSQL JSON)
 
 `db/auth-db.json`
