@@ -268,13 +268,15 @@ async function localApiRequest(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
   const body = parseRequestBody(options.body);
   const db = loadLocalAuthDb();
+  const url = new URL(path, window.location.origin);
+  const pathname = url.pathname;
 
-  if (path === '/api/admin/reset-signups' && method === 'POST') {
+  if (pathname === '/api/admin/reset-signups' && method === 'POST') {
     saveLocalAuthDb({ users: [] });
     return { ok: true, message: 'All existing signups removed for fresh Gmail registration.' };
   }
 
-  if (path === '/api/auth/users' && method === 'GET') {
+  if (pathname === '/api/auth/users' && method === 'GET') {
     return {
       users: db.users.map((u) => ({
         id: u.id,
@@ -287,7 +289,7 @@ async function localApiRequest(path, options = {}) {
     };
   }
 
-  if (path === '/api/auth/signup' && method === 'POST') {
+  if (pathname === '/api/auth/signup' && method === 'POST') {
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
     const name = String(body.name || '').trim();
@@ -302,7 +304,7 @@ async function localApiRequest(path, options = {}) {
     return { user: { id: user.id, name: user.name, email: user.email, usernames: [], username: '', profilePic: '', bio: '' } };
   }
 
-  if (path === '/api/auth/login' && method === 'POST') {
+  if (pathname === '/api/auth/login' && method === 'POST') {
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
     const user = db.users.find((u) => u.email === email && u.password === password);
@@ -311,7 +313,7 @@ async function localApiRequest(path, options = {}) {
     return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username, profilePic: user.profilePic, bio: user.bio } };
   }
 
-  if (path === '/api/usernames/check' && method === 'POST') {
+  if (pathname === '/api/usernames/check' && method === 'POST') {
     const username = String(body.username || '').trim().toLowerCase();
     if (!username) throw new Error('Username is required.');
     const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username));
@@ -319,7 +321,7 @@ async function localApiRequest(path, options = {}) {
     return { available: true };
   }
 
-  if (path === '/api/usernames' && method === 'POST') {
+  if (pathname === '/api/usernames' && method === 'POST') {
     const user = db.users.find((u) => u.id === String(body.userId || ''));
     const username = String(body.username || '').trim();
     if (!user || !username) throw new Error('User and username are required.');
@@ -334,7 +336,7 @@ async function localApiRequest(path, options = {}) {
     return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: item.value } };
   }
 
-  if (path === '/api/auth/session/select-username' && method === 'POST') {
+  if (pathname === '/api/auth/session/select-username' && method === 'POST') {
     const user = db.users.find((u) => u.id === String(body.userId || ''));
     const username = String(body.username || '').trim();
     if (!user) throw new Error('User not found.');
@@ -345,7 +347,7 @@ async function localApiRequest(path, options = {}) {
     return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: selected.value } };
   }
 
-  if (path.startsWith('/api/usernames/') && method === 'PATCH') {
+  if (pathname.startsWith('/api/usernames/') && method === 'PATCH') {
     const user = db.users.find((u) => u.id === String(body.userId || ''));
     const username = String(body.username || '').trim();
     const usernameId = path.split('/').pop();
@@ -363,7 +365,7 @@ async function localApiRequest(path, options = {}) {
     return { ok: true, username: target };
   }
 
-  if (path === '/api/auth/delete-account' && method === 'POST') {
+  if (pathname === '/api/auth/delete-account' && method === 'POST') {
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
     const userIdx = db.users.findIndex((u) => u.email === email && u.password === password);
@@ -374,10 +376,17 @@ async function localApiRequest(path, options = {}) {
   }
 
   // Posts fallback
-  if (path === '/api/posts' && method === 'GET') {
-    return { posts: loadJson(UPLOAD_STORE_KEY, []) };
+  if (pathname === '/api/posts' && method === 'GET') {
+    const localPosts = loadJson(UPLOAD_STORE_KEY, []);
+    const dbPosts = db.posts || [];
+    // Merge and deduplicate by ID
+    const merged = [...localPosts];
+    dbPosts.forEach(p => {
+      if (!merged.find(m => m.id === p.id)) merged.push(p);
+    });
+    return { posts: merged };
   }
-  if (path === '/api/posts' && method === 'POST') {
+  if (pathname === '/api/posts' && method === 'POST') {
     const uploads = loadJson(UPLOAD_STORE_KEY, []);
     const newPost = {
       id: crypto.randomUUID(),
@@ -389,8 +398,8 @@ async function localApiRequest(path, options = {}) {
     saveJson(UPLOAD_STORE_KEY, uploads);
     return { post: newPost };
   }
-  if (path.startsWith('/api/posts/') && method === 'PATCH') {
-    const postId = path.split('/').pop();
+  if (pathname.startsWith('/api/posts/') && method === 'PATCH') {
+    const postId = pathname.split('/').pop();
     const uploads = loadJson(UPLOAD_STORE_KEY, []);
     const idx = uploads.findIndex(p => p.id === postId);
     if (idx !== -1) {
@@ -400,8 +409,8 @@ async function localApiRequest(path, options = {}) {
     }
     throw new Error('Post not found locally');
   }
-  if (path.startsWith('/api/posts/') && method === 'DELETE') {
-    const postId = path.split('/').pop();
+  if (pathname.startsWith('/api/posts/') && method === 'DELETE') {
+    const postId = pathname.split('/').pop();
     let uploads = loadJson(UPLOAD_STORE_KEY, []);
     uploads = uploads.filter(p => p.id !== postId);
     saveJson(UPLOAD_STORE_KEY, uploads);
@@ -409,7 +418,7 @@ async function localApiRequest(path, options = {}) {
   }
 
   // Relationships fallback
-  if (path === '/api/relationships/follow' && method === 'POST') {
+  if (pathname === '/api/relationships/follow' && method === 'POST') {
     const { followerId, followingId } = body;
     const db = loadLocalAuthDb();
     db.relationships = db.relationships || [];
@@ -430,9 +439,8 @@ async function localApiRequest(path, options = {}) {
     saveLocalAuthDb(db);
     return { relationship: rel };
   }
-  if (path === '/api/relationships/accept' && method === 'POST') {
+  if (pathname === '/api/relationships/accept' && method === 'POST') {
     const { relationshipId } = body;
-    const db = loadLocalAuthDb();
     const rel = (db.relationships || []).find(r => r.id === relationshipId);
     if (!rel) throw new Error('Relationship not found locally');
     if (rel.status === 'accepted') throw new Error('Already accepted');
@@ -448,10 +456,8 @@ async function localApiRequest(path, options = {}) {
     saveLocalAuthDb(db);
     return { relationship: rel };
   }
-  if (path.startsWith('/api/relationships/requests') && method === 'GET') {
-    const url = new URL(path, window.location.origin);
+  if (pathname.startsWith('/api/relationships/requests') && method === 'GET') {
     const userId = url.searchParams.get('userId');
-    const db = loadLocalAuthDb();
     const requests = (db.relationships || []).filter(r => r.followingId === userId && r.status === 'pending');
     const enriched = requests.map(r => {
       const follower = db.users.find(u => u.id === r.followerId);
@@ -465,7 +471,7 @@ async function localApiRequest(path, options = {}) {
   }
 
   // Profile fallback
-  if (path === '/api/auth/profile' && method === 'PATCH') {
+  if (pathname === '/api/auth/profile' && method === 'PATCH') {
     const { userId, name, bio, profession, location, socialLinks, profilePic, isPrivate } = body;
     const db = loadLocalAuthDb();
     const user = db.users.find(u => u.id === userId);
