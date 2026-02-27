@@ -212,7 +212,7 @@
       },
       "stats": {
         "posts": 0,
-        "followers": 0,
+        "followers": 1,
         "following": 0
       },
       "isPrivate": false
@@ -261,6 +261,161 @@
       "stats": {
         "posts": 0,
         "followers": 1,
+        "following": 0
+      },
+      "isPrivate": false
+    },
+    {
+      "id": "39b54127-00e6-4218-9b47-dcf929d6de6c",
+      "name": "User PC",
+      "email": "pc@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "4768675b-f927-435a-b98c-af7e54742b1a",
+          "value": "userpc",
+          "createdAt": 1772216385803,
+          "updatedAt": 1772216385803
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "4768675b-f927-435a-b98c-af7e54742b1a",
+      "profilePic": "",
+      "bio": "",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
+    },
+    {
+      "id": "d714ba50-5ba8-4ebc-8e1d-adcfce30f412",
+      "name": "User PC",
+      "email": "pc_1772216599@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "d5022002-878f-42c2-8559-b9a055d7c069",
+          "value": "userpc_1772216600",
+          "createdAt": 1772216600704,
+          "updatedAt": 1772216600704
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "d5022002-878f-42c2-8559-b9a055d7c069",
+      "profilePic": "",
+      "bio": "Updated Bio on PC",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
+    },
+    {
+      "id": "1a10fbde-e0c1-409c-9c0a-0c3b6b51073f",
+      "name": "User PC",
+      "email": "pc_1772216655@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "728e1bc1-fbe3-42e2-9905-54fb926ee378",
+          "value": "userpc_1772216656",
+          "createdAt": 1772216656701,
+          "updatedAt": 1772216656701
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "728e1bc1-fbe3-42e2-9905-54fb926ee378",
+      "profilePic": "",
+      "bio": "Updated Bio on PC",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
+    },
+    {
+      "id": "22f63027-1b63-43f0-8c05-27430bf3b876",
+      "name": "Alpha",
+      "email": "a_1772216687@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "4b2d8952-35b3-46d5-9574-424ae7b2555b",
+          "value": "alpha_1772216688",
+          "createdAt": 1772216688749,
+          "updatedAt": 1772216688749
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "4b2d8952-35b3-46d5-9574-424ae7b2555b",
+      "profilePic": "",
+      "bio": "",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 1
+      },
+      "isPrivate": false
+    },
+    {
+      "id": "1c7ca2f4-e7ef-490b-8500-157964eaf88d",
+      "name": "Beta",
+      "email": "b_1772216688@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "7aef5b5f-3fa9-421e-829f-e84d0982fae3",
+          "value": "beta_1772216689",
+          "createdAt": 1772216689883,
+          "updatedAt": 1772216689883
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "7aef5b5f-3fa9-421e-829f-e84d0982fae3",
+      "profilePic": "",
+      "bio": "",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
         "following": 0
       },
       "isPrivate": false
@@ -378,6 +533,12 @@
       "id": "818a7317-d94c-4d1d-8d69-5789862a1352",
       "followerId": "0d2b58c0-30aa-451c-bea2-1c48f0b086fd",
       "followingId": "a79d0803-2ced-4196-bd05-f0cc70e47021",
+      "status": "accepted"
+    },
+    {
+      "id": "f8eec8bb-da2e-408b-b627-3861e4ca60f3",
+      "followerId": "22f63027-1b63-43f0-8c05-27430bf3b876",
+      "followingId": "6c4820b1-a710-43b4-b7a9-6178c9310533",
       "status": "accepted"
     }
   ],

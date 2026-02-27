@@ -898,7 +898,7 @@ async function onExploreMessageClick(userId, username) {
       name: username,
       participants: [activeSession.id, userId],
       isGroup: false,
-      online: false
+      online: true
     };
     saveJson('chatbhar.chatMeta', chatMeta);
   }
@@ -1222,11 +1222,20 @@ async function loadSession() {
     appShell.hidden = true;
     return;
   }
-  // Keep session stats in sync with DB
-  if (dbUser.stats) {
-    activeSession.stats = dbUser.stats;
-    saveJson(AUTH_SESSION_KEY, activeSession);
-  }
+  // Keep session in sync with DB (name, bio, pfp, stats etc)
+  activeSession = {
+    ...activeSession,
+    name: dbUser.name || activeSession.name,
+    username: dbUser.username || activeSession.username,
+    profilePic: dbUser.profilePic || activeSession.profilePic,
+    bio: dbUser.bio || activeSession.bio,
+    profession: dbUser.profession || activeSession.profession,
+    location: dbUser.location || activeSession.location,
+    socialLinks: dbUser.socialLinks || activeSession.socialLinks,
+    stats: dbUser.stats || activeSession.stats,
+    isPrivate: dbUser.isPrivate !== undefined ? dbUser.isPrivate : activeSession.isPrivate
+  };
+  saveJson(AUTH_SESSION_KEY, activeSession);
 
 
   authGate.hidden = true;
@@ -1490,6 +1499,11 @@ async function onUploadSubmit(event) {
     renderHome();
     renderChannelManager();
     initEnhancedMessaging();
+
+    // Announce to other tabs/devices
+    if (presenceBus) {
+      presenceBus.postMessage({ type: 'post_created', userId: activeSession.id });
+    }
   } catch (err) {
     uploadStatus.textContent = 'Upload failed: ' + err.message;
   }
@@ -1498,8 +1512,16 @@ async function onUploadSubmit(event) {
 async function fetchAndSyncPosts() {
   try {
     const payload = await apiRequest('/api/posts');
-    uploads = payload.posts || [];
-    saveJson(UPLOAD_STORE_KEY, uploads); // Local cache for hydration
+    const newPosts = payload.posts || [];
+
+    // Check if anything actually changed before re-rendering
+    if (JSON.stringify(newPosts) !== JSON.stringify(uploads)) {
+      uploads = newPosts;
+      saveJson(UPLOAD_STORE_KEY, uploads);
+      renderHome();
+      renderUploads();
+      renderChannelManager();
+    }
   } catch (err) {
     console.error('Failed to sync posts', err);
   }
@@ -2427,6 +2449,7 @@ function initEnhancedMessaging() {
   window.addEventListener('beforeunload', () => announcePresence(false));
 
   setInterval(fetchAndSyncMessages, 10000);
+  setInterval(fetchAndSyncPosts, 15000);
 
   if (presenceBus) {
     presenceBus.onmessage = (event) => {
@@ -2469,6 +2492,9 @@ function initEnhancedMessaging() {
       }
       if (msg.type === 'reaction' && msg.toId === activeSession?.id) {
         fetchAndSyncMessages();
+      }
+      if (msg.type === 'post_created') {
+        fetchAndSyncPosts();
       }
       if (msg.type === 'delete_msg' && msg.toId === activeSession?.id) {
         const chatId = msg.chatId;
@@ -2742,7 +2768,7 @@ async function openContactModal() {
     row.querySelector('button').addEventListener('click', () => {
       const id = `dm:${u.id}`;
       if (!chatStore[id]) chatStore[id] = [];
-      chatMeta[id] = { id, name: u.name, participants: [u.id, activeSession.id], isGroup: false, online: true };
+      chatMeta[id] = { id, name: u.username || u.name, participants: [u.id, activeSession.id], isGroup: false, online: true };
       saveJson(CHAT_STORE_KEY, chatStore);
       saveJson('chatbhar.chatMeta', chatMeta);
       activeChat = id;
