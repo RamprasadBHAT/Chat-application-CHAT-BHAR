@@ -1,22 +1,84 @@
 {
   "users": [
     {
-      "id": "71beef55-8d65-447f-90f0-f0f1be698524",
-      "name": "Test User",
-      "email": "test@gmail.com",
+      "id": "92fde87e-1f9d-467d-b89c-8c98fb583692",
+      "name": "Jules Test",
+      "email": "jules@gmail.com",
       "password": "password123",
       "usernames": [
         {
-          "id": "eaa6dba9-3287-451e-a1c8-d06a4aebe2a9",
-          "value": "testuser",
-          "createdAt": 1772115909555,
-          "updatedAt": 1772115909555
+          "id": "83b70faa-4742-43cf-9202-3db7b7dcfcbf",
+          "value": "julestest",
+          "createdAt": 1772196159001,
+          "updatedAt": 1772196159001
         }
       ],
       "usernameChangeLogs": [],
-      "activeUsernameId": "eaa6dba9-3287-451e-a1c8-d06a4aebe2a9",
+      "activeUsernameId": "83b70faa-4742-43cf-9202-3db7b7dcfcbf",
       "profilePic": "",
-      "bio": "",
+      "bio": "Updated Bio by Jules",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
+    },
+    {
+      "id": "9e8df6f6-865b-428d-a03a-3d3548a34da4",
+      "name": "Jules Test",
+      "email": "jules_d8634fbb@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "25b3b446-ca3b-4863-ba43-0fcc94a819dc",
+          "value": "jules_d8634fbb",
+          "createdAt": 1772196223146,
+          "updatedAt": 1772196223146
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "25b3b446-ca3b-4863-ba43-0fcc94a819dc",
+      "profilePic": "",
+      "bio": "Updated Bio by Jules",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 1,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
+    },
+    {
+      "id": "942df308-aed9-4a81-9b79-63e979433130",
+      "name": "Jules Test",
+      "email": "jules_2e406383@gmail.com",
+      "password": "password123",
+      "usernames": [
+        {
+          "id": "e89230ac-57f8-4647-a713-97c645044c93",
+          "value": "jules_2e406383",
+          "createdAt": 1772196244121,
+          "updatedAt": 1772196244121
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "e89230ac-57f8-4647-a713-97c645044c93",
+      "profilePic": "",
+      "bio": "Updated Bio by Jules",
       "profession": "",
       "location": "",
       "socialLinks": {
@@ -34,15 +96,15 @@
   ],
   "posts": [
     {
-      "id": "c24f1c4f-b5e4-4c83-869e-785b85dc906a",
-      "userId": "71beef55-8d65-447f-90f0-f0f1be698524",
-      "userName": "testuser",
+      "id": "5fde81df-93d2-4c5e-ba9f-695a8452e53d",
+      "userId": "9e8df6f6-865b-428d-a03a-3d3548a34da4",
+      "userName": "jules_d8634fbb",
       "type": "carousel",
-      "caption": "My Test Post",
-      "description": "",
+      "caption": "Verification Post",
+      "description": "Verification Description",
       "files": [
         {
-          "name": "dummy.png",
+          "name": "dummy_d8634fbb.png",
           "type": "image/png",
           "size": 67,
           "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="
@@ -50,7 +112,7 @@
       ],
       "edits": [
         {
-          "name": "dummy.png",
+          "name": "dummy_d8634fbb.png",
           "trimStart": 0,
           "trimEnd": 0,
           "overlayText": "",
@@ -59,7 +121,42 @@
           "overlayY": 10
         }
       ],
-      "createdAt": "2026-02-26T14:25:09.859Z",
+      "createdAt": "2026-02-27T12:43:44.875Z",
+      "expiresAt": null,
+      "interactions": {
+        "likes": 0,
+        "likedBy": [],
+        "comments": [],
+        "shares": 0
+      }
+    },
+    {
+      "id": "9d8a709a-0b0e-4ddb-8d47-2a63d071c2c8",
+      "userId": "942df308-aed9-4a81-9b79-63e979433130",
+      "userName": "jules_2e406383",
+      "type": "carousel",
+      "caption": "Verification Post",
+      "description": "Verification Description",
+      "files": [
+        {
+          "name": "dummy_2e406383.png",
+          "type": "image/png",
+          "size": 67,
+          "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="
+        }
+      ],
+      "edits": [
+        {
+          "name": "dummy_2e406383.png",
+          "trimStart": 0,
+          "trimEnd": 0,
+          "overlayText": "",
+          "overlayColor": "#ffffff",
+          "overlayX": 10,
+          "overlayY": 10
+        }
+      ],
+      "createdAt": "2026-02-27T12:44:05.711Z",
       "expiresAt": null,
       "interactions": {
         "likes": 0,
