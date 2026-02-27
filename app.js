@@ -1048,6 +1048,11 @@ async function loadSession() {
     appShell.hidden = true;
     return;
   }
+  // Keep session stats in sync with DB
+  if (dbUser.stats) {
+    activeSession.stats = dbUser.stats;
+    saveJson(AUTH_SESSION_KEY, activeSession);
+  }
 
 
   authGate.hidden = true;
@@ -1445,7 +1450,7 @@ async function renderExploreUsers(query = '') {
 
 function renderUploads() {
   uploadList.innerHTML = '';
-  const mine = activeSession ? uploads.filter((u) => u.userName === activeHandle()) : [];
+  const mine = activeSession ? uploads.filter((u) => u.userId === activeSession.id) : [];
   if (!mine.length) {
     uploadList.innerHTML = '<div class="upload-item glass"><p>No uploads yet for your account.</p></div>';
     return;
@@ -1650,11 +1655,11 @@ function openPostViewer(postId) {
   postViewerTitle.textContent = `${post.type.toUpperCase()} · ${post.userName}`;
   postViewerMedia.innerHTML = renderFeedMedia(post);
 
-  const isMine = post.userName === activeHandle();
+  const isMine = activeSession && post.userId === activeSession.id;
 
   if (isMine) {
     postViewerInteraction.innerHTML = `
-      <div class="channel-actions glass" style="margin-top: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--brand-a);">
+      <div id="ownerControls" class="channel-actions glass" style="margin-top: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--brand-a);">
         <label style="font-size: 0.8rem; font-weight: 700; color: var(--brand-a);">CONTENT MANAGEMENT</label>
         <input id="editCaption" value="${escapeAttr(post.caption || '')}" placeholder="Title" style="width: 100%;" />
         <textarea id="editDescription" placeholder="Description" style="width: 100%; min-height: 60px;">${escapeHtml(post.description || '')}</textarea>
@@ -1669,39 +1674,67 @@ function openPostViewer(postId) {
       </div>
     `;
 
-    document.getElementById('saveMetadataBtn').addEventListener('click', () => {
-      const caption = document.getElementById('editCaption').value.trim();
-      const description = document.getElementById('editDescription').value.trim();
-      updateUpload(post.id, { caption, description });
-      alert('Metadata saved!');
-    });
-
-    document.getElementById('openSuiteBtn').addEventListener('click', async () => {
-      selectedUploadRawFiles = await dataFilesToBlobs(post.files);
-      selectedUploadEdits = post.edits?.length ? structuredClone(post.edits) : selectedUploadRawFiles.map((f) => defaultEdit(f.name));
-      openCreativeSuiteModal();
-      const saveHandler = () => {
-        syncSuiteFields();
-        updateUpload(post.id, { edits: structuredClone(selectedUploadEdits) });
-        saveCreativeSuite.removeEventListener('click', saveHandler);
+    const saveMetadataBtn = document.getElementById('saveMetadataBtn');
+    if (saveMetadataBtn) {
+      saveMetadataBtn.onclick = async () => {
+        const captionInput = document.getElementById('editCaption');
+        const descriptionInput = document.getElementById('editDescription');
+        if (!captionInput) return;
+        const caption = captionInput.value.trim();
+        const description = descriptionInput ? descriptionInput.value.trim() : '';
+        try {
+          await updateUpload(post.id, { caption, description });
+          alert('Metadata saved!');
+        } catch (err) {
+          alert('Failed to save changes: ' + err.message);
+        }
       };
-      saveCreativeSuite.addEventListener('click', saveHandler);
-    });
+    }
 
-    document.getElementById('deletePostBtn').addEventListener('click', () => {
-      openConfirm('Delete this post permanently?', () => {
-        uploads = uploads.filter((u) => u.id !== post.id);
-        persistAllViews();
-        postViewer.hidden = true;
-      });
-    });
+    const openSuiteBtn = document.getElementById('openSuiteBtn');
+    if (openSuiteBtn) {
+      openSuiteBtn.onclick = async () => {
+        try {
+          selectedUploadRawFiles = await dataFilesToBlobs(post.files);
+          selectedUploadEdits = post.edits?.length ? structuredClone(post.edits) : selectedUploadRawFiles.map((f) => defaultEdit(f.name));
+          openCreativeSuiteModal();
+          saveCreativeSuite.onclick = async () => {
+            syncSuiteFields();
+            try {
+              await updateUpload(post.id, { edits: structuredClone(selectedUploadEdits) });
+              creativeSuiteModal.hidden = true;
+            } catch (err) {
+              alert('Failed to save edits: ' + err.message);
+            }
+          };
+        } catch (err) {
+          console.error('Failed to open creative suite', err);
+          alert('Error loading media for editing.');
+        }
+      };
+    }
 
-    bindInteractionEvents(postViewer, postId);
+    const deletePostBtn = document.getElementById('deletePostBtn');
+    if (deletePostBtn) {
+      deletePostBtn.onclick = () => {
+        openConfirm('Delete this post permanently?', async () => {
+          try {
+            await apiRequest(`/api/posts/${post.id}`, { method: 'DELETE' });
+            await fetchAndSyncPosts();
+            persistAllViews();
+            postViewer.hidden = true;
+          } catch (err) {
+            console.error('Failed to delete post', err);
+            alert('Failed to delete: ' + err.message);
+          }
+        });
+      };
+    }
   } else {
     postViewerInteraction.innerHTML = renderInteractionBlock(post);
-    bindInteractionEvents(postViewer, postId);
   }
 
+  bindInteractionEvents(postViewer, postId);
   postViewer.hidden = false;
 }
 
@@ -1717,7 +1750,7 @@ function persistAndRerender(postId) {
 
 function renderChannelManager() {
   if (!activeSession) return;
-  const mine = uploads.filter((u) => u.userId === activeSession.id || (u.userName === activeHandle() && !u.userId));
+  const mine = uploads.filter((u) => u.userId === activeSession.id);
 
   // Populate Header
   if (myChannelHandle) myChannelHandle.textContent = activeSession.username || activeSession.name || 'User';
@@ -1819,9 +1852,18 @@ function openConfirm(message, action) {
   confirmModal.hidden = false;
 }
 
-function updateUpload(id, patch) {
-  uploads = uploads.map((u) => (u.id === id ? { ...u, ...patch } : u));
-  persistAllViews();
+async function updateUpload(id, patch) {
+  try {
+    await apiRequest(`/api/posts/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch)
+    });
+    await fetchAndSyncPosts();
+    persistAndRerender(id);
+  } catch (err) {
+    console.error('Failed to update post', err);
+    throw err;
+  }
 }
 
 function persistAllViews() {

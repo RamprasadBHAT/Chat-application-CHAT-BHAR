@@ -56,7 +56,7 @@
         "github": ""
       },
       "stats": {
-        "posts": 1,
+        "posts": 0,
         "followers": 0,
         "following": 0
       },
@@ -95,41 +95,6 @@
     }
   ],
   "posts": [
-    {
-      "id": "5fde81df-93d2-4c5e-ba9f-695a8452e53d",
-      "userId": "9e8df6f6-865b-428d-a03a-3d3548a34da4",
-      "userName": "jules_d8634fbb",
-      "type": "carousel",
-      "caption": "Verification Post",
-      "description": "Verification Description",
-      "files": [
-        {
-          "name": "dummy_d8634fbb.png",
-          "type": "image/png",
-          "size": 67,
-          "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=="
-        }
-      ],
-      "edits": [
-        {
-          "name": "dummy_d8634fbb.png",
-          "trimStart": 0,
-          "trimEnd": 0,
-          "overlayText": "",
-          "overlayColor": "#ffffff",
-          "overlayX": 10,
-          "overlayY": 10
-        }
-      ],
-      "createdAt": "2026-02-27T12:43:44.875Z",
-      "expiresAt": null,
-      "interactions": {
-        "likes": 0,
-        "likedBy": [],
-        "comments": [],
-        "shares": 0
-      }
-    },
     {
       "id": "9d8a709a-0b0e-4ddb-8d47-2a63d071c2c8",
       "userId": "942df308-aed9-4a81-9b79-63e979433130",
