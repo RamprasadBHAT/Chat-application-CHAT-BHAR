@@ -474,6 +474,37 @@
         "following": 0
       },
       "isPrivate": false
+    },
+    {
+      "id": "858237d5-c8fa-4fa5-bc73-469fed248345",
+      "name": "Test User",
+      "email": "test@gmail.com",
+      "password": "strongpassword123",
+      "usernames": [
+        {
+          "id": "a6accb24-03e0-486c-8b0c-20a36a6ebe14",
+          "value": "testuser1772276123",
+          "createdAt": 1772276123439,
+          "updatedAt": 1772276123439
+        }
+      ],
+      "usernameChangeLogs": [],
+      "activeUsernameId": "a6accb24-03e0-486c-8b0c-20a36a6ebe14",
+      "profilePic": "",
+      "bio": "",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
     }
   ],
   "posts": [
