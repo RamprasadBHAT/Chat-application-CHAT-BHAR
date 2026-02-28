@@ -2,17 +2,13 @@
   "name": "chatbhar-web",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "check": "node --check app.js && node --check server.js"
+    "check": "node --check app.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2"
   },
   "dependencies": {
-    "dotenv": "^17.3.1",
-    "firebase": "^12.10.0",
-    "ws": "^8.19.0"
+    "firebase": "^12.10.0"
   }
 }
