@@ -36,7 +36,13 @@ function readDb() {
 function writeDb(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
 
 function json(res, status, payload) {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, x-user-id, x-filename, x-original-method',
+    'Access-Control-Max-Age': '86400'
+  });
   res.end(JSON.stringify(payload));
 }
 function parseBody(req) {
@@ -65,6 +71,16 @@ function checkGmail(email) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   console.log(`[${new Date().toISOString()}] ${req.method} ${url.pathname}`);
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, x-user-id, x-filename, x-original-method',
+      'Access-Control-Max-Age': '86400'
+    });
+    return res.end();
+  }
 
   if (url.pathname === '/api/auth/users' && req.method === 'GET') {
     const db = readDb();
@@ -236,7 +252,15 @@ const server = http.createServer(async (req, res) => {
         (r.followerId === senderId && r.followingId === targetUserId && r.status === 'accepted') ||
         (r.followerId === targetUserId && r.followingId === senderId && r.status === 'accepted')
       );
-      if (!rel) return json(res, 403, { error: 'You must follow this user and they must accept to chat' });
+
+      const targetUser = db.users.find(u => u.id === targetUserId);
+      const isTargetPrivate = targetUser && targetUser.isPrivate;
+
+      // If target is NOT private, allow messaging without follow requirement
+      // If target IS private, require accepted relationship
+      if (isTargetPrivate && !rel) {
+        return json(res, 403, { error: 'You must follow this private account and they must accept to chat' });
+      }
     }
 
     const msg = { id: crypto.randomUUID(), chatId, senderId, senderName, text, files, replyToId, viewOnce, ts, participants };
@@ -406,6 +430,7 @@ const server = http.createServer(async (req, res) => {
     const targetPath = path.join(UPLOADS_DIR, safeName);
     const fileStream = fs.createWriteStream(targetPath);
 
+    req.setTimeout(0); // Disable timeout for large files
     req.pipe(fileStream);
 
     return new Promise((resolve) => {
@@ -469,7 +494,7 @@ const server = http.createServer(async (req, res) => {
     const body = await parseBody(req);
     const db = readDb();
     const newPost = {
-      id: crypto.randomUUID(),
+      id: body.id || crypto.randomUUID(),
       userId: body.userId,
       userName: body.userName,
       type: body.type || 'short',
@@ -533,7 +558,10 @@ const server = http.createServer(async (req, res) => {
                ext === '.gif' ? 'image/gif' :
                ext === '.mp4' ? 'video/mp4' :
                'application/octet-stream';
-  res.writeHead(200, { 'Content-Type': type });
+  res.writeHead(200, {
+    'Content-Type': type,
+    'Access-Control-Allow-Origin': '*'
+  });
   fs.createReadStream(filePath).pipe(res);
 });
 
