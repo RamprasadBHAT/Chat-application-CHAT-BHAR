@@ -184,33 +184,27 @@ let replyToMsg = null;
 let touchStartX = 0;
 let swipeBubble = null;
 
-let auth, db, storage;
+const firebaseConfig = {
+  apiKey: "FIREBASE_API_KEY_PLACEHOLDER",
+  authDomain: "FIREBASE_AUTH_DOMAIN_PLACEHOLDER",
+  projectId: "FIREBASE_PROJECT_ID_PLACEHOLDER",
+  storageBucket: "FIREBASE_STORAGE_BUCKET_PLACEHOLDER",
+  messagingSenderId: "FIREBASE_MESSAGING_SENDER_ID_PLACEHOLDER",
+  appId: "FIREBASE_APP_ID_PLACEHOLDER",
+  measurementId: "FIREBASE_MEASUREMENT_ID_PLACEHOLDER"
+};
 
-// Initialize App only after config is fetched
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
 initApp();
 
 async function initApp() {
   hydrateState(); // Hydrate immediately for fast feedback
 
-  try {
-    const configRes = await fetch('/api/config');
-    const { firebaseConfig } = await configRes.json();
-
-    if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey === 'PLACEHOLDER') {
-      throw new Error('Firebase configuration missing or invalid.');
-    }
-
-    const app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-    storage = getStorage(app);
-
-    bindEvents();
-  } catch (err) {
-    console.error('Firebase initialization failed:', err.message);
-    setAuthMessage('System error: Firebase configuration missing. Please check your .env file.', false);
-    return;
-  }
+  bindEvents();
 
   onAuthStateChanged(auth, async (user) => {
     if (user) {
@@ -256,30 +250,6 @@ async function initApp() {
   renderChannelManager();
   renderFollowRequests();
   initEnhancedMessaging();
-  initWebSocket();
-}
-
-function initWebSocket() {
-  if (!activeSession) return;
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${protocol}//${window.location.host}`);
-  ws.onopen = () => {
-    sendWsMessage({ type: 'auth', userId: activeSession.id });
-    announcePresence(true);
-  };
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    handleIncomingWsMessage(msg);
-  };
-  ws.onclose = () => {
-    setTimeout(initWebSocket, 3000);
-  };
-}
-
-function sendWsMessage(payload) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(payload));
-  }
 }
 
 async function fetchAndSyncMessages() {
@@ -361,178 +331,6 @@ function loadJson(key, fallback) {
 function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
 
 
-async function apiRequest(path, options = {}) {
-  const requestOptions = {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options
-  };
-
-  let response;
-  try {
-    response = await fetch(path, requestOptions);
-  } catch (error) {
-    console.warn(`Network error for ${path}, falling back to local storage:`, error.message);
-    return await localApiRequest(path, options);
-  }
-
-  if (!response.ok) {
-    if (response.status === 405 || response.status === 501) {
-      return await localApiRequest(path, options);
-    }
-    const contentType = response.headers.get('content-type') || '';
-    const payload = contentType.includes('application/json') ? await response.json() : {};
-    throw new Error(payload.error || `Request failed (${response.status})`);
-  }
-
-  const contentType = response.headers.get('content-type') || '';
-  return contentType.includes('application/json') ? await response.json() : {};
-}
-
-async function localApiRequest(path, options = {}) {
-  const method = options.method || 'GET';
-  const body = options.body ? JSON.parse(options.body) : {};
-  let users = loadJson(AUTH_USERS_KEY, []);
-  if (!Array.isArray(users)) {
-    users = users.users || [];
-  }
-  const localPosts = loadJson(UPLOAD_STORE_KEY, []);
-
-  if (path === '/api/auth/users' && method === 'GET') {
-    return { users: users.map(u => ({ ...u, password: '' })) };
-  }
-
-  if (path === '/api/auth/signup' && method === 'POST') {
-    const { email, password, name } = body;
-    if (!name || !email || !password) throw new Error('Please fill all signup fields.');
-    if (!/^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(String(email || '').toLowerCase())) throw new Error('Signup requires a valid @gmail.com address.');
-    if (String(password || '').length < 8) throw new Error('Password must be at least 8 characters.');
-    if (users.some(u => u.email === email)) throw new Error('Email already exists');
-    const newUser = {
-      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
-      name,
-      email,
-      password,
-      usernames: [],
-      usernameChangeLogs: [],
-      activeUsernameId: null,
-      profilePic: '',
-      bio: '',
-      profession: '',
-      location: '',
-      socialLinks: { twitter: '', linkedin: '', github: '' },
-      stats: { posts: 0, followers: 0, following: 0 },
-      isPrivate: false
-    };
-    users.push(newUser);
-    saveJson(AUTH_USERS_KEY, users);
-    return { user: newUser };
-  }
-
-  if (path === '/api/auth/login' && method === 'POST') {
-    const { email, password } = body;
-    const user = users.find(u => u.email === email && u.password === password);
-    if (!user) throw new Error('Invalid email/password');
-    const username = (user.usernames || []).find(x => x.id === user.activeUsernameId)?.value || '';
-    return { session: { ...user, username, password: '' }, usernames: user.usernames || [] };
-  }
-
-  if (path === '/api/usernames/check' && method === 'POST') {
-    const { username } = body;
-    const exists = users.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === username.toLowerCase()));
-    if (exists) throw new Error('Username already taken');
-    return { available: true };
-  }
-
-  if (path === '/api/usernames' && method === 'POST') {
-    const { userId, username } = body;
-    const user = users.find(u => u.id === userId);
-    if (!user) throw new Error('User not found');
-    const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
-    const newName = { id, value: username, createdAt: Date.now(), updatedAt: Date.now() };
-    user.usernames = user.usernames || [];
-    user.usernames.push(newName);
-    user.activeUsernameId = id;
-    saveJson(AUTH_USERS_KEY, users);
-    return { session: { ...user, username, password: '' } };
-  }
-
-  if (path === '/api/posts' && method === 'GET') {
-    return { posts: localPosts };
-  }
-
-  if (path === '/api/posts' && method === 'POST') {
-    const newPost = { ...body, id: body.id || (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)), createdAt: new Date().toISOString() };
-    localPosts.push(newPost);
-    saveJson(UPLOAD_STORE_KEY, localPosts);
-    return { post: newPost };
-  }
-
-  if (path === '/api/messages' && method === 'GET') {
-    // Return empty to avoid wiping chatStore, or better, don't sync if local
-    return { messages: [] };
-  }
-
-  if (path === '/api/messages' && method === 'POST') {
-    const msg = {
-      ...body,
-      id: body.id || (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)),
-      ts: body.ts || Date.now()
-    };
-    return { message: msg };
-  }
-
-  if (path === '/api/auth/profile' && method === 'PATCH') {
-    const { userId } = body;
-    const idx = users.findIndex(u => u.id === userId);
-    if (idx === -1) throw new Error('User not found');
-    users[idx] = { ...users[idx], ...body };
-    saveJson(AUTH_USERS_KEY, users);
-    return { user: { ...users[idx], password: '' } };
-  }
-
-  if (path.startsWith('/api/posts/') && method === 'PATCH') {
-    const id = path.split('/').pop();
-    const idx = localPosts.findIndex(p => p.id === id);
-    if (idx !== -1) {
-      localPosts[idx] = { ...localPosts[idx], ...body };
-      saveJson(UPLOAD_STORE_KEY, localPosts);
-      return { post: localPosts[idx] };
-    }
-  }
-
-  if (path.startsWith('/api/posts/') && method === 'DELETE') {
-    const id = path.split('/').pop();
-    const filtered = localPosts.filter(p => p.id !== id);
-    saveJson(UPLOAD_STORE_KEY, filtered);
-    return { ok: true };
-  }
-
-  if (path === '/api/auth/delete-account' && method === 'POST') {
-    const { email, password } = body;
-    const idx = users.findIndex(u => u.email === email && u.password === password);
-    if (idx === -1) throw new Error('Confirmation failed: Incorrect password.');
-    users.splice(idx, 1);
-    saveJson(AUTH_USERS_KEY, users);
-    // Also cleanup posts and relationships if we had them locally
-    const myPosts = localPosts.filter(p => p.email === email); // Simplified check
-    const remainingPosts = localPosts.filter(p => !myPosts.includes(p));
-    saveJson(UPLOAD_STORE_KEY, remainingPosts);
-    return { ok: true };
-  }
-
-  // Social & Relationships Fallbacks
-  if (path === '/api/relationships/follow' && method === 'POST') return { relationship: { id: Date.now(), ...body, status: 'accepted' } };
-  if (path === '/api/relationships/unfollow' && method === 'POST') return { ok: true };
-  if (path === '/api/relationships/accept' && method === 'POST') return { ok: true };
-  if (path === '/api/relationships/requests' && method === 'GET') return { requests: [] };
-  if (path === '/api/relationships/following' && method === 'GET') return { following: [] };
-
-  // Message Actions Fallbacks
-  if (path.endsWith('/react') && method === 'PATCH') return { message: { id: path.split('/')[3], reactions: [{ userId: body.userId, emoji: body.emoji }] } };
-  if (path.startsWith('/api/messages/') && method === 'DELETE') return { ok: true };
-
-  return { ok: true };
-}
 
 async function syncAuthUsers() {
   if (typeof db === 'undefined') return;
@@ -816,7 +614,9 @@ function bindEvents() {
       }
       timeout = setTimeout(async () => {
         try {
-          await apiRequest('/api/usernames/check', { method: 'POST', body: JSON.stringify({ username: val }) });
+          const exists = authUsers.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === val && u.id !== activeSession.id));
+          if (exists) throw new Error('Username already taken');
+
           usernameAvailabilityHint.textContent = 'Username available';
           usernameAvailabilityHint.style.color = '#0f8a3a';
         } catch (e) {
@@ -1657,8 +1457,6 @@ async function onUploadSubmit(event) {
     renderChannelManager();
     initEnhancedMessaging();
 
-    // Announce to other tabs/devices
-    sendWsMessage({ type: 'post_created', userId: activeSession.id });
   } catch (err) {
     uploadStatus.textContent = 'Upload failed: ' + err.message;
   }
@@ -1741,8 +1539,9 @@ async function renderExploreUsers(query = '') {
   let myFollowings = [];
   if (activeSession) {
     try {
-      const payload = await apiRequest(`/api/relationships/following?userId=${activeSession.id}`);
-      myFollowings = payload.following || [];
+      const q = query(collection(db, "relationships"), where("followerId", "==", activeSession.id));
+      const snap = await getDocs(q);
+      myFollowings = snap.docs.map(d => d.data());
     } catch (err) {
       console.error('Failed to fetch following status', err);
     }
@@ -2016,13 +1815,9 @@ async function likePost(postId) {
   const likedBy = liked ? interactions.likedBy.filter((id) => id !== userId) : [...(interactions.likedBy || []), userId];
 
   try {
-    await apiRequest(`/api/posts/${postId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        interactions: { ...interactions, likedBy, likes: likedBy.length }
-      })
+    await updateDoc(doc(db, "posts", post.docId), {
+      interactions: { ...interactions, likedBy, likes: likedBy.length }
     });
-    await fetchAndSyncPosts();
     persistAndRerender(postId);
   } catch (err) {
     console.error('Failed to like post', err);
@@ -2039,13 +1834,9 @@ async function addComment(postId, text) {
   const newComment = { user: activeHandle(), text: content, ts: Date.now() };
 
   try {
-    await apiRequest(`/api/posts/${postId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        interactions: { ...interactions, comments: [...(interactions.comments || []), newComment] }
-      })
+    await updateDoc(doc(db, "posts", post.docId), {
+      interactions: { ...interactions, comments: [...(interactions.comments || []), newComment] }
     });
-    await fetchAndSyncPosts();
     persistAndRerender(postId);
   } catch (err) {
     console.error('Failed to add comment', err);
@@ -2135,8 +1926,7 @@ function openPostViewer(postId) {
       deletePostBtn.onclick = () => {
         openConfirm('Delete this post permanently?', async () => {
           try {
-            await apiRequest(`/api/posts/${post.id}`, { method: 'DELETE' });
-            await fetchAndSyncPosts();
+            await deleteDoc(doc(db, "posts", post.docId));
             persistAllViews();
             postViewer.hidden = true;
           } catch (err) {
@@ -2281,11 +2071,9 @@ function openConfirm(message, action) {
 
 async function updateUpload(id, patch) {
   try {
-    await apiRequest(`/api/posts/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(patch)
-    });
-    await fetchAndSyncPosts();
+    const post = uploads.find(u => u.id === id);
+    if (!post) return;
+    await updateDoc(doc(db, "posts", post.docId), patch);
     persistAndRerender(id);
   } catch (err) {
     console.error('Failed to update post', err);
@@ -2518,23 +2306,6 @@ async function sendMessage(prepared = null) {
 
     await addDoc(collection(db, "messages"), msg);
 
-    meta.participants.forEach(pId => {
-      if (pId !== activeSession.id) {
-        sendWsMessage({
-          type: 'message',
-          toId: pId,
-          fromId: activeChat,
-          senderId: activeSession.id,
-          senderName: activeHandle(),
-          text: msg.text,
-          files: msg.files,
-          viewOnce: msg.viewOnce,
-          replyToId: msg.replyToId,
-          ts: msg.ts,
-          id: msg.id
-        });
-      }
-    });
   } catch (err) {
     console.error('Send message failed', err);
     alert('Failed to send message: ' + err.message);
@@ -2667,72 +2438,8 @@ function initEnhancedMessaging() {
   bindMessagingUI();
   renderChatUsers();
   renderMessages();
-  announcePresence(true);
-  window.addEventListener('beforeunload', () => announcePresence(false));
-
-  setInterval(fetchAndSyncMessages, 10000);
-  setInterval(fetchAndSyncPosts, 15000);
 }
 
-function handleIncomingWsMessage(msg) {
-  if (msg.type === 'presence' && msg.userId && msg.userId !== activeSession?.id) {
-    const uIdx = authUsers.findIndex(u => u.id === msg.userId);
-    if (uIdx !== -1) authUsers[uIdx].online = msg.online;
-
-    Object.keys(chatMeta).forEach((chatId) => {
-      if ((chatMeta[chatId].participants || []).includes(msg.userId)) chatMeta[chatId].online = msg.online;
-    });
-    saveJson('chatbhar.chatMeta', chatMeta);
-    renderChatUsers();
-    renderMessages();
-  }
-  if (msg.type === 'typing' && msg.chatId === activeChat && msg.userId !== activeSession?.id) {
-    typingIndicator.textContent = msg.typing ? `${msg.name || 'User'} is typing...` : '';
-  }
-  if (msg.type === 'message' && msg.toId === activeSession?.id) {
-    const chatId = msg.fromId;
-    if (!chatMeta[chatId]) {
-      chatMeta[chatId] = { id: chatId, name: msg.senderName || 'User', participants: [msg.senderId, activeSession.id], isGroup: chatId.startsWith('group:'), online: true };
-      saveJson('chatbhar.chatMeta', chatMeta);
-    }
-    if (!chatStore[chatId]) chatStore[chatId] = [];
-    if (!chatStore[chatId].some(m => m.id === msg.id)) {
-      chatStore[chatId].push({
-        id: msg.id,
-        dir: 'incoming',
-        text: msg.text,
-        files: msg.files,
-        viewOnce: msg.viewOnce,
-        viewOnceConsumed: false,
-        ts: msg.ts,
-        replyToId: msg.replyToId,
-        senderName: msg.senderName,
-        senderId: msg.senderId
-      });
-      saveJson(CHAT_STORE_KEY, chatStore);
-      if (activeChat === chatId) renderMessages();
-      renderChatUsers();
-    }
-  }
-  if (msg.type === 'reaction' && msg.toId === activeSession?.id) {
-    fetchAndSyncMessages();
-  }
-  if (msg.type === 'post_created') {
-    fetchAndSyncPosts();
-  }
-  if (msg.type === 'delete_msg' && msg.toId === activeSession?.id) {
-    const chatId = msg.chatId;
-    if (chatStore[chatId]) {
-      const idx = chatStore[chatId].findIndex(m => m.id === msg.msgId || m.ts === msg.msgTs);
-      if (idx !== -1) {
-        chatStore[chatId].splice(idx, 1);
-        saveJson(CHAT_STORE_KEY, chatStore);
-        if (activeChat === chatId) renderMessages();
-        renderChatUsers();
-      }
-    }
-  }
-}
 
 function bindMessagingUI() {
   if (selectContactBtn) selectContactBtn.addEventListener('click', openContactModal);
@@ -2792,22 +2499,20 @@ function bindMessagingUI() {
     msgContextMenu.querySelectorAll('.emoji-bar button').forEach(btn => {
       btn.onclick = async () => {
         const emoji = btn.dataset.emoji;
-        if (currentContextMsg && activeSession) {
+        if (currentContextMsg && activeSession && currentContextMsg.docId) {
           try {
-            await apiRequest(`/api/messages/${currentContextMsg.id}/react`, {
-              method: 'PATCH',
-              headers: { 'x-user-id': activeSession.id },
-              body: JSON.stringify({ emoji })
-            });
-            await fetchAndSyncMessages();
-            renderMessages();
-            const meta = chatMeta[activeChat];
-            if (meta) {
-              meta.participants.forEach(pId => {
-                if (pId !== activeSession.id) {
-                  sendWsMessage({ type: 'reaction', toId: pId });
-                }
-              });
+            const msgRef = doc(db, "messages", currentContextMsg.docId);
+            const msgDoc = await getDoc(msgRef);
+            if (msgDoc.exists()) {
+              const msgData = msgDoc.data();
+              const reactions = msgData.reactions || [];
+              const idx = reactions.findIndex(r => r.userId === activeSession.id);
+              if (idx !== -1) {
+                reactions[idx].emoji = emoji;
+              } else {
+                reactions.push({ userId: activeSession.id, emoji });
+              }
+              await updateDoc(msgRef, { reactions });
             }
           } catch (err) {
             console.error('Reaction failed', err);
@@ -2840,13 +2545,6 @@ function bindMessagingUI() {
     }
   }
 
-  if (messageInput) {
-    messageInput.addEventListener('keypress', () => {
-      clearTimeout(typingTimeout);
-      sendTyping(true);
-      typingTimeout = setTimeout(() => sendTyping(false), 1200);
-    });
-  }
 
   if (fileInput) {
     fileInput.addEventListener('change', () => {
@@ -2917,22 +2615,6 @@ async function deleteMessage(type) {
     try {
       if (currentContextMsg.docId) {
         await updateDoc(doc(db, "messages", currentContextMsg.docId), { deleted: true, text: '', files: [] });
-      }
-
-      const meta = chatMeta[activeChat];
-      if (meta) {
-        meta.participants.forEach(pId => {
-          if (pId !== activeSession.id) {
-            sendWsMessage({
-              type: 'delete_msg',
-              toId: pId,
-              chatId: activeChat,
-              senderId: activeSession.id,
-              msgTs: currentContextMsg.ts,
-              msgId: currentContextMsg.id
-            });
-          }
-        });
       }
     } catch (err) {
       alert('Delete failed: ' + err.message);
@@ -3056,15 +2738,6 @@ function closeImagePreviewModal() {
   previewPendingMessage = null;
 }
 
-function sendTyping(typing) {
-  if (!activeSession) return;
-  sendWsMessage({ type: 'typing', chatId: activeChat, userId: activeSession.id, name: activeSession.name, typing });
-}
-
-function announcePresence(online) {
-  if (!activeSession) return;
-  sendWsMessage({ type: 'presence', userId: activeSession.id, online });
-}
 
 async function migrateOldUploads() {
   if (!activeSession) return;
@@ -3083,20 +2756,6 @@ async function migrateOldUploads() {
     }
   });
   if (changed) saveJson(UPLOAD_STORE_KEY, uploads);
-
-  // Push local-only posts to backend
-  try {
-    const payload = await apiRequest('/api/posts');
-    const backendPosts = payload.posts || [];
-    const myLocalPosts = uploads.filter(u => u.userId === activeSession.id);
-    for (const local of myLocalPosts) {
-      if (!backendPosts.some(b => b.id === local.id)) {
-        await apiRequest('/api/posts', { method: 'POST', body: JSON.stringify(local) });
-      }
-    }
-  } catch (err) {
-    console.warn('Background sync failed', err);
-  }
 }
 
 function renderAnalytics(mine) {
@@ -3183,7 +2842,7 @@ function openShareModal(postId) {
   modal.hidden = false;
 }
 
-function sharePostToChat(postId, targetUserId) {
+async function sharePostToChat(postId, targetUserId) {
   const post = uploads.find(u => u.id === postId);
   if (!post || !activeSession) return;
 
@@ -3192,33 +2851,26 @@ function sharePostToChat(postId, targetUserId) {
   const files = [post.files[0]];
   const chatId = `dm:${targetUserId}`;
 
-  if (!chatStore[chatId]) chatStore[chatId] = [];
-  chatStore[chatId].push({
-    dir: 'outgoing',
-    text,
-    files,
-    ts,
-    senderName: activeHandle()
-  });
-  saveJson(CHAT_STORE_KEY, chatStore);
+  try {
+    await addDoc(collection(db, "messages"), {
+      chatId,
+      senderId: activeSession.id,
+      senderName: activeHandle(),
+      text,
+      files,
+      ts,
+      participants: [activeSession.id, targetUserId],
+      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
+    });
 
-  if (!post.interactions.shares) post.interactions.shares = 0;
-  post.interactions.shares++;
-  saveJson(UPLOAD_STORE_KEY, uploads);
+    if (!post.interactions.shares) post.interactions.shares = 0;
+    const shares = post.interactions.shares + 1;
+    await updateDoc(doc(db, "posts", post.docId), { "interactions.shares": shares });
 
-  sendWsMessage({
-    type: 'message',
-    toId: targetUserId,
-    fromId: `dm:${activeSession.id}`,
-    senderId: activeSession.id,
-    senderName: activeHandle(),
-    text,
-    files,
-    ts
-  });
-  alert('Post shared successfully!');
-  renderChatUsers();
-  if (activeChat === chatId) renderMessages();
+    alert('Post shared successfully!');
+  } catch (err) {
+    alert('Share failed: ' + err.message);
+  }
 }
 
 async function renderFollowRequests() {
