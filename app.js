@@ -206,10 +206,7 @@ async function fetchAndSyncMessages() {
     });
     const msgs = payload.messages || [];
     const newStore = {};
-
-    Object.keys(chatStore).forEach(chatId => {
-      newStore[chatId] = [];
-    });
+    let changed = false;
 
     msgs.forEach(m => {
       if (!newStore[m.chatId]) newStore[m.chatId] = [];
@@ -224,13 +221,24 @@ async function fetchAndSyncMessages() {
           isGroup: m.chatId.startsWith('group:'),
           online: false
         };
+        changed = true;
       }
     });
-    chatStore = newStore;
-    saveJson(CHAT_STORE_KEY, chatStore);
-    saveJson('chatbhar.chatMeta', chatMeta);
+
+    if (JSON.stringify(newStore) !== JSON.stringify(chatStore)) {
+      chatStore = newStore;
+      changed = true;
+    }
+
+    if (changed) {
+      saveJson(CHAT_STORE_KEY, chatStore);
+      saveJson('chatbhar.chatMeta', chatMeta);
+      renderChatUsers();
+      renderMessages();
+    }
     if (!activeChat && Object.keys(chatStore).length > 0) {
       activeChat = Object.keys(chatStore)[0];
+      renderMessages();
     }
   } catch (err) {
     console.error('Sync messages failed', err);
@@ -270,274 +278,6 @@ function loadJson(key, fallback) {
 }
 function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
 
-function loadLocalAuthDb() {
-  const data = loadJson(AUTH_USERS_KEY, { users: [] });
-  if (Array.isArray(data)) return { users: [] };
-  if (!data || !Array.isArray(data.users)) return { users: [] };
-  return data;
-}
-
-function saveLocalAuthDb(db) {
-  saveJson(AUTH_USERS_KEY, db);
-}
-
-function monthKey(ts) {
-  const d = new Date(ts);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-}
-
-function ensureGmail(email) {
-  return /^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(String(email || '').toLowerCase());
-}
-
-function parseRequestBody(body) {
-  if (!body) return {};
-  if (typeof body === 'string') {
-    try { return JSON.parse(body); } catch { throw new Error('Invalid request payload. Please try again.'); }
-  }
-  if (typeof body === 'object') return body;
-  return {};
-}
-
-function usernameChangesThisMonth(user) {
-  const nowKey = monthKey(Date.now());
-  return (user.usernameChangeLogs || []).filter((entry) => monthKey(entry.ts) === nowKey).length;
-}
-
-async function localApiRequest(path, options = {}) {
-  const method = (options.method || 'GET').toUpperCase();
-  const body = parseRequestBody(options.body);
-  const db = loadLocalAuthDb();
-
-  if (path === '/api/admin/reset-signups' && method === 'POST') {
-    saveLocalAuthDb({ users: [] });
-    return { ok: true, message: 'All existing signups removed for fresh Gmail registration.' };
-  }
-
-  if (path === '/api/auth/users' && method === 'GET') {
-    return {
-      users: db.users.map((u) => ({
-        id: u.id,
-        email: u.email,
-        name: u.name,
-        role: 'user',
-        username: (u.usernames || []).find((x) => x.id === u.activeUsernameId)?.value || '',
-        usernames: u.usernames || []
-      }))
-    };
-  }
-
-  if (path === '/api/auth/signup' && method === 'POST') {
-    const email = String(body.email || '').trim().toLowerCase();
-    const password = String(body.password || '');
-    const name = String(body.name || '').trim();
-    if (!name || !email || !password) throw new Error('Please fill all signup fields.');
-    if (!ensureGmail(email)) throw new Error('Signup requires a valid @gmail.com address.');
-    if (password.length < 8) throw new Error('Password must be at least 8 characters.');
-    if (db.users.some((u) => u.email === email)) throw new Error('Email already exists. Please login.');
-
-    const user = { id: crypto.randomUUID(), name, email, password, usernames: [], usernameChangeLogs: [], activeUsernameId: null, profilePic: '', bio: '' };
-    db.users.push(user);
-    saveLocalAuthDb(db);
-    return { user: { id: user.id, name: user.name, email: user.email, usernames: [], username: '', profilePic: '', bio: '' } };
-  }
-
-  if (path === '/api/auth/login' && method === 'POST') {
-    const email = String(body.email || '').trim().toLowerCase();
-    const password = String(body.password || '');
-    const user = db.users.find((u) => u.email === email && u.password === password);
-    if (!user) throw new Error('Invalid email/password.');
-    const username = (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '';
-    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username, profilePic: user.profilePic, bio: user.bio } };
-  }
-
-  if (path === '/api/usernames/check' && method === 'POST') {
-    const username = String(body.username || '').trim().toLowerCase();
-    if (!username) throw new Error('Username is required.');
-    const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username));
-    if (exists) throw new Error('Username already taken');
-    return { available: true };
-  }
-
-  if (path === '/api/usernames' && method === 'POST') {
-    const user = db.users.find((u) => u.id === String(body.userId || ''));
-    const username = String(body.username || '').trim();
-    if (!user || !username) throw new Error('User and username are required.');
-    if ((user.usernames || []).length >= 5) throw new Error('Maximum 5 usernames allowed per Gmail account.');
-    const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username.toLowerCase()));
-    if (exists) throw new Error('Username already taken');
-    const ts = Date.now();
-    const item = { id: crypto.randomUUID(), value: username, createdAt: ts, updatedAt: ts };
-    user.usernames.push(item);
-    user.activeUsernameId = item.id;
-    saveLocalAuthDb(db);
-    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: item.value } };
-  }
-
-  if (path === '/api/auth/session/select-username' && method === 'POST') {
-    const user = db.users.find((u) => u.id === String(body.userId || ''));
-    const username = String(body.username || '').trim();
-    if (!user) throw new Error('User not found.');
-    const selected = (user.usernames || []).find((u) => u.value === username);
-    if (!selected) throw new Error('Username not found for account.');
-    user.activeUsernameId = selected.id;
-    saveLocalAuthDb(db);
-    return { session: { id: user.id, name: user.name, email: user.email, role: 'user', username: selected.value } };
-  }
-
-  if (path.startsWith('/api/usernames/') && method === 'PATCH') {
-    const user = db.users.find((u) => u.id === String(body.userId || ''));
-    const username = String(body.username || '').trim();
-    const usernameId = path.split('/').pop();
-    if (!user) throw new Error('User not found.');
-    if (usernameChangesThisMonth(user) >= 3) throw new Error('Username change limit reached: only 3 changes per month.');
-    const target = (user.usernames || []).find((u) => u.id === usernameId);
-    if (!target) throw new Error('Username not found.');
-    const exists = db.users.some((u) => (u.usernames || []).some((x) => x.value.toLowerCase() === username.toLowerCase() && x.id !== usernameId));
-    if (exists) throw new Error('Username already taken');
-    user.usernameChangeLogs = user.usernameChangeLogs || [];
-    user.usernameChangeLogs.push({ ts: Date.now(), from: target.value, to: username });
-    target.value = username;
-    target.updatedAt = Date.now();
-    saveLocalAuthDb(db);
-    return { ok: true, username: target };
-  }
-
-  if (path === '/api/auth/delete-account' && method === 'POST') {
-    const email = String(body.email || '').trim().toLowerCase();
-    const password = String(body.password || '');
-    const userIdx = db.users.findIndex((u) => u.email === email && u.password === password);
-    if (userIdx === -1) throw new Error('Invalid password. Account deletion aborted.');
-    db.users.splice(userIdx, 1);
-    saveLocalAuthDb(db);
-    return { ok: true, message: 'Account deleted locally.' };
-  }
-
-  // Posts fallback
-  if (path === '/api/posts' && method === 'GET') {
-    return { posts: loadJson(UPLOAD_STORE_KEY, []) };
-  }
-  if (path === '/api/posts' && method === 'POST') {
-    const uploads = loadJson(UPLOAD_STORE_KEY, []);
-    const newPost = {
-      id: crypto.randomUUID(),
-      ...body,
-      createdAt: new Date().toISOString(),
-      interactions: body.interactions || { likes: 0, likedBy: [], comments: [], shares: 0 }
-    };
-    uploads.push(newPost);
-    saveJson(UPLOAD_STORE_KEY, uploads);
-    return { post: newPost };
-  }
-  if (path.startsWith('/api/posts/') && method === 'PATCH') {
-    const postId = path.split('/').pop();
-    const uploads = loadJson(UPLOAD_STORE_KEY, []);
-    const idx = uploads.findIndex(p => p.id === postId);
-    if (idx !== -1) {
-      uploads[idx] = { ...uploads[idx], ...body };
-      saveJson(UPLOAD_STORE_KEY, uploads);
-      return { post: uploads[idx] };
-    }
-    throw new Error('Post not found locally');
-  }
-  if (path.startsWith('/api/posts/') && method === 'DELETE') {
-    const postId = path.split('/').pop();
-    let uploads = loadJson(UPLOAD_STORE_KEY, []);
-    uploads = uploads.filter(p => p.id !== postId);
-    saveJson(UPLOAD_STORE_KEY, uploads);
-    return { ok: true };
-  }
-
-  // Relationships fallback
-  if (path === '/api/relationships/follow' && method === 'POST') {
-    const { followerId, followingId } = body;
-    const db = loadLocalAuthDb();
-    db.relationships = db.relationships || [];
-    const follower = db.users.find(u => u.id === followerId);
-    const following = db.users.find(u => u.id === followingId);
-    if (!follower || !following) throw new Error('User not found locally');
-    const existing = db.relationships.find(r => r.followerId === followerId && r.followingId === followingId);
-    if (existing) throw new Error('Relationship already exists');
-    const status = following.isPrivate ? 'pending' : 'accepted';
-    const rel = { id: crypto.randomUUID(), followerId, followingId, status };
-    db.relationships.push(rel);
-    if (status === 'accepted') {
-      follower.stats = follower.stats || { posts: 0, followers: 0, following: 0 };
-      following.stats = following.stats || { posts: 0, followers: 0, following: 0 };
-      follower.stats.following++;
-      following.stats.followers++;
-    }
-    saveLocalAuthDb(db);
-    return { relationship: rel };
-  }
-  if (path === '/api/relationships/accept' && method === 'POST') {
-    const { relationshipId } = body;
-    const db = loadLocalAuthDb();
-    const rel = (db.relationships || []).find(r => r.id === relationshipId);
-    if (!rel) throw new Error('Relationship not found locally');
-    if (rel.status === 'accepted') throw new Error('Already accepted');
-    rel.status = 'accepted';
-    const follower = db.users.find(u => u.id === rel.followerId);
-    const following = db.users.find(u => u.id === rel.followingId);
-    if (follower && following) {
-      follower.stats = follower.stats || { posts: 0, followers: 0, following: 0 };
-      following.stats = following.stats || { posts: 0, followers: 0, following: 0 };
-      follower.stats.following++;
-      following.stats.followers++;
-    }
-    saveLocalAuthDb(db);
-    return { relationship: rel };
-  }
-  if (path.startsWith('/api/relationships/requests') && method === 'GET') {
-    const url = new URL(path, window.location.origin);
-    const userId = url.searchParams.get('userId');
-    const db = loadLocalAuthDb();
-    const requests = (db.relationships || []).filter(r => r.followingId === userId && r.status === 'pending');
-    const enriched = requests.map(r => {
-      const follower = db.users.find(u => u.id === r.followerId);
-      return {
-        ...r,
-        followerName: follower ? (follower.name || (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value) : 'Unknown',
-        followerHandle: follower ? (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value : ''
-      };
-    });
-    return { requests: enriched };
-  }
-
-  // Profile fallback
-  if (path === '/api/auth/profile' && method === 'PATCH') {
-    const { userId, name, bio, profession, location, socialLinks, profilePic, isPrivate } = body;
-    const db = loadLocalAuthDb();
-    const user = db.users.find(u => u.id === userId);
-    if (!user) throw new Error('User not found locally');
-    if (name !== undefined) user.name = name;
-    if (bio !== undefined) user.bio = bio;
-    if (profession !== undefined) user.profession = profession;
-    if (location !== undefined) user.location = location;
-    if (socialLinks !== undefined) user.socialLinks = socialLinks;
-    if (profilePic !== undefined) user.profilePic = profilePic;
-    if (isPrivate !== undefined) user.isPrivate = isPrivate;
-    saveLocalAuthDb(db);
-    return {
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        username: (user.usernames || []).find((x) => x.id === user.activeUsernameId)?.value || '',
-        activeUsernameId: user.activeUsernameId,
-        profilePic: user.profilePic,
-        bio: user.bio,
-        profession: user.profession,
-        location: user.location,
-        socialLinks: user.socialLinks,
-        stats: user.stats,
-        isPrivate: user.isPrivate
-      }
-    };
-  }
-
-  throw new Error('Request failed');
-}
 
 async function apiRequest(path, options = {}) {
   const requestOptions = {
@@ -545,43 +285,22 @@ async function apiRequest(path, options = {}) {
     ...options
   };
 
-  const sharedPaths = [
-    '/api/admin/reset-signups',
-    '/api/auth/users',
-    '/api/auth/signup',
-    '/api/auth/login',
-    '/api/usernames/check',
-    '/api/usernames',
-    '/api/auth/session/select-username',
-    '/api/auth/delete-account',
-    '/api/auth/profile',
-    '/api/relationships',
-    '/api/posts'
-  ];
-  const canFallback = sharedPaths.some(p => path.startsWith(p));
-
   let response;
   try {
     response = await fetch(path, requestOptions);
   } catch (error) {
-    if (canFallback) return localApiRequest(path, options);
     throw new Error(`Network error: ${error.message}`);
   }
 
   const contentType = response.headers.get('content-type') || '';
-  const isHtmlResponse = contentType.includes('text/html');
-
-  if (isHtmlResponse && canFallback) {
-    return localApiRequest(path, options);
-  }
+  const isJsonResponse = contentType.includes('application/json');
 
   let payload = {};
-  try {
-    payload = await response.json();
-  } catch (e) {
-    if (!response.ok) {
-      if (canFallback) return localApiRequest(path, options);
-      throw new Error(`Server error (${response.status}): ${response.statusText}`);
+  if (isJsonResponse) {
+    try {
+      payload = await response.json();
+    } catch (e) {
+      console.error('Failed to parse JSON response', e);
     }
   }
 
@@ -1413,20 +1132,37 @@ function makeOverlayDraggable(el, edit) {
   suitePreview.addEventListener('pointerleave', stop);
 }
 
-async function uploadToBackend(file) {
-  if (!activeSession) throw new Error('Not logged in');
-  const res = await fetch('/api/upload-media', {
-    method: 'POST',
-    headers: {
-      'x-filename': file.name,
-      'x-user-id': activeSession.id,
-      'content-type': file.type
-    },
-    body: file
+function uploadToBackend(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    if (!activeSession) return reject(new Error('Not logged in'));
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload-media');
+    xhr.setRequestHeader('x-filename', file.name);
+    xhr.setRequestHeader('x-user-id', activeSession.id);
+    xhr.setRequestHeader('content-type', file.type);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(e.loaded / e.total);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const payload = JSON.parse(xhr.responseText);
+          resolve({ name: file.name, type: file.type, size: file.size, dataUrl: payload.url });
+        } catch (e) {
+          reject(new Error('Invalid server response'));
+        }
+      } else {
+        reject(new Error('Binary upload failed: ' + xhr.statusText));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.send(file);
   });
-  if (!res.ok) throw new Error('Binary upload failed');
-  const payload = await res.json();
-  return { name: file.name, type: file.type, size: file.size, dataUrl: payload.url };
 }
 
 async function onUploadSubmit(event) {
@@ -1448,9 +1184,11 @@ async function onUploadSubmit(event) {
   try {
     const prepared = [];
     for (let i = 0; i < files.length; i++) {
-      const uploaded = await uploadToBackend(files[i]);
+      const uploaded = await uploadToBackend(files[i], (fraction) => {
+        const overall = (i + fraction) / files.length;
+        updateProgress(overall);
+      });
       prepared.push(uploaded);
-      updateProgress((i + 1) / files.length);
     }
 
     const edits = structuredClone(selectedUploadEdits);
