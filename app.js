@@ -390,6 +390,15 @@ async function localApiRequest(path, options = {}) {
     return { messages: [] };
   }
 
+  if (path === '/api/messages' && method === 'POST') {
+    const msg = {
+      ...body,
+      id: body.id || (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)),
+      ts: body.ts || Date.now()
+    };
+    return { message: msg };
+  }
+
   if (path === '/api/auth/profile' && method === 'PATCH') {
     const { userId } = body;
     const idx = users.findIndex(u => u.id === userId);
@@ -428,6 +437,17 @@ async function localApiRequest(path, options = {}) {
     saveJson(UPLOAD_STORE_KEY, remainingPosts);
     return { ok: true };
   }
+
+  // Social & Relationships Fallbacks
+  if (path === '/api/relationships/follow' && method === 'POST') return { relationship: { id: Date.now(), ...body, status: 'accepted' } };
+  if (path === '/api/relationships/unfollow' && method === 'POST') return { ok: true };
+  if (path === '/api/relationships/accept' && method === 'POST') return { ok: true };
+  if (path === '/api/relationships/requests' && method === 'GET') return { requests: [] };
+  if (path === '/api/relationships/following' && method === 'GET') return { following: [] };
+
+  // Message Actions Fallbacks
+  if (path.endsWith('/react') && method === 'PATCH') return { message: { id: path.split('/')[3], reactions: [{ userId: body.userId, emoji: body.emoji }] } };
+  if (path.startsWith('/api/messages/') && method === 'DELETE') return { ok: true };
 
   return { ok: true };
 }
@@ -2152,16 +2172,17 @@ async function sendMessage(prepared = null) {
       body: JSON.stringify({
         chatId: activeChat,
         senderName: activeHandle(),
-        text: payload.text,
-        files: payload.files,
-        replyToId: payload.replyToId,
-        viewOnce: payload.viewOnce,
+        text: payload.text || '',
+        files: payload.files || [],
+        replyToId: payload.replyToId || null,
+        viewOnce: payload.viewOnce || false,
         ts: Date.now(),
-        participants: meta.participants
+        participants: meta.participants || []
       })
     });
 
     const msg = res.message;
+    if (!msg) throw new Error('Invalid server response');
     if (!chatStore[activeChat]) chatStore[activeChat] = [];
     chatStore[activeChat].push({ ...msg, dir: 'outgoing' });
     saveJson(CHAT_STORE_KEY, chatStore);
