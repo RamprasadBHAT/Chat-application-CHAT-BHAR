@@ -660,6 +660,54 @@
         "comments": [],
         "shares": 0
       }
+    },
+    {
+      "id": "post-1",
+      "userId": "test-user-id",
+      "userName": "testuser",
+      "type": "short",
+      "caption": "First Post",
+      "description": "",
+      "files": [
+        {
+          "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          "type": "image/png",
+          "name": "img1.png"
+        }
+      ],
+      "edits": [],
+      "createdAt": "2026-02-28T13:16:43.114Z",
+      "expiresAt": null,
+      "interactions": {
+        "likes": 0,
+        "likedBy": [],
+        "comments": [],
+        "shares": 0
+      }
+    },
+    {
+      "id": "post-2",
+      "userId": "test-user-id",
+      "userName": "testuser",
+      "type": "short",
+      "caption": "Second Post",
+      "description": "",
+      "files": [
+        {
+          "dataUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+          "type": "image/png",
+          "name": "img2.png"
+        }
+      ],
+      "edits": [],
+      "createdAt": "2026-02-28T13:16:43.155Z",
+      "expiresAt": null,
+      "interactions": {
+        "likes": 0,
+        "likedBy": [],
+        "comments": [],
+        "shares": 0
+      }
     }
   ],
   "relationships": [

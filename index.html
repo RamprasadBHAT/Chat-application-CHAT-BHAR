@@ -8,6 +8,16 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "firebase/app": "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js",
+          "firebase/auth": "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js",
+          "firebase/firestore": "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js",
+          "firebase/storage": "https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js"
+        }
+      }
+    </script>
   </head>
   <body>
     <div class="bg-orb orb-1"></div>
@@ -216,6 +226,17 @@
           </section>
 
           <section id="chat" class="screen">
+            <div class="chat-header-main glass">
+              <div class="chat-header-info">
+                <h3>💬 Messaging</h3>
+                <small id="onlineUsersCount">Online users: 0</small>
+              </div>
+              <div class="chat-header-actions">
+                <button id="chatThemeToggle" class="utility-btn">🌓</button>
+                <button id="selectContactBtn" class="utility-btn">Select Contact</button>
+                <button id="createGroupBtn" class="utility-btn">Create Group</button>
+              </div>
+            </div>
             <div class="chat-layout glass">
               <aside class="chat-list">
                 <div id="followRequestsSection" hidden>
@@ -223,12 +244,7 @@
                   <div id="followRequestsList" class="follow-requests-list"></div>
                   <hr style="border: 0; border-top: 1px solid var(--border); margin: 10px 0;" />
                 </div>
-                <h3>Messages</h3>
                 <div id="chatUsersWrap"></div>
-                <div class="chat-list-actions">
-                  <button id="selectContactBtn" class="utility-btn">Select Contact</button>
-                  <button id="createGroupBtn" class="utility-btn">Create Group</button>
-                </div>
               </aside>
               <section class="chat-panel">
                 <div class="chat-header">
@@ -317,7 +333,11 @@
           <h3 id="postViewerTitle">Post</h3>
           <button id="closePostViewer" class="icon-btn">✕</button>
         </div>
-        <div id="postViewerMedia" class="post-viewer-media"></div>
+        <div class="viewer-media-wrap">
+          <button id="prevPost" class="viewer-nav-btn prev-btn">❮</button>
+          <div id="postViewerMedia" class="post-viewer-media"></div>
+          <button id="nextPost" class="viewer-nav-btn next-btn">❯</button>
+        </div>
         <div id="postViewerInteraction" class="post-interaction"></div>
       </div>
     </div>
@@ -465,6 +485,11 @@
     </div>
 
     <div id="msgContextMenu" class="msg-context-menu" hidden>
+      <div class="menu-actions glass stacked">
+        <button id="contextEditBtn">Edit</button>
+        <button id="deleteMeBtn">Delete for Me</button>
+        <button id="deleteEveryoneBtn" hidden>Delete for Everyone</button>
+      </div>
       <div class="emoji-bar glass">
         <button data-emoji="👍">👍</button>
         <button data-emoji="❤️">❤️</button>
@@ -473,13 +498,21 @@
         <button data-emoji="😢">😢</button>
         <button data-emoji="🙏">🙏</button>
       </div>
-      <div class="menu-actions glass">
-        <button id="contextReplyBtn">Reply</button>
-        <button id="deleteMeBtn">Delete for Me</button>
-        <button id="deleteEveryoneBtn" hidden>Delete for Everyone</button>
+    </div>
+
+    <div id="editMsgModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top">
+          <h3>Edit Message</h3>
+          <button id="closeEditMsg" class="icon-btn">✕</button>
+        </div>
+        <textarea id="editMsgInput" style="width: 100%; min-height: 100px; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text);"></textarea>
+        <div class="upload-btn-row" style="margin-top: 10px;">
+          <button id="saveEditMsgBtn">Save Changes</button>
+        </div>
       </div>
     </div>
 
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

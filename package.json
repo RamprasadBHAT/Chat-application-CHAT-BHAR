@@ -8,5 +8,9 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2"
+  },
+  "dependencies": {
+    "firebase": "^12.10.0",
+    "ws": "^8.19.0"
   }
 }

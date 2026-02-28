@@ -117,6 +117,8 @@ const closePostViewer = document.getElementById('closePostViewer');
 const postViewerTitle = document.getElementById('postViewerTitle');
 const postViewerMedia = document.getElementById('postViewerMedia');
 const postViewerInteraction = document.getElementById('postViewerInteraction');
+const prevPostBtn = document.getElementById('prevPost');
+const nextPostBtn = document.getElementById('nextPost');
 
 const confirmModal = document.getElementById('confirmModal');
 const confirmMessage = document.getElementById('confirmMessage');
@@ -164,7 +166,7 @@ let activeChat = Object.keys(chatStore)[0] || null;
 let chatMeta = loadJson('chatbhar.chatMeta', {});
 let previewPendingMessage = null;
 let typingTimeout = null;
-const presenceBus = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('chatbhar-presence') : null;
+let ws = null;
 let uploads = loadJson(UPLOAD_STORE_KEY, []);
 let activeSession = null;
 let authUsers = [];
@@ -177,14 +179,64 @@ let replyToMsg = null;
 let touchStartX = 0;
 let swipeBubble = null;
 
+import { initializeApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+
+const firebaseConfig = {
+  apiKey: "PLACEHOLDER",
+  authDomain: "PLACEHOLDER.firebaseapp.com",
+  projectId: "PLACEHOLDER",
+  storageBucket: "PLACEHOLDER.appspot.com",
+  messagingSenderId: "PLACEHOLDER",
+  appId: "PLACEHOLDER"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
 initApp();
 
 async function initApp() {
   bindEvents();
   hydrateState(); // Hydrate immediately for fast feedback
+
+  onAuthStateChanged(auth, async (user) => {
+    if (user) {
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
+        activeSession = { ...userData, username };
+        saveJson(AUTH_SESSION_KEY, activeSession);
+
+        authGate.hidden = true;
+        appShell.hidden = false;
+
+        if (!activeSession.username) {
+          openOnboarding();
+        } else {
+          fetchAndSyncPosts();
+          fetchAndSyncMessages();
+          renderHome();
+          renderChannelManager();
+          renderFollowRequests();
+        }
+      }
+    } else {
+      activeSession = null;
+      localStorage.removeItem(AUTH_SESSION_KEY);
+      authGate.hidden = false;
+      appShell.hidden = true;
+    }
+  });
+
   await fetchAndSyncPosts();
   await bootstrapUsers();
-  await loadSession();
+  // loadSession is now handled by onAuthStateChanged
   migrateOldUploads();
   applyUploadType();
   await fetchAndSyncMessages();
@@ -196,22 +248,46 @@ async function initApp() {
   renderChannelManager();
   renderFollowRequests();
   initEnhancedMessaging();
+  initWebSocket();
+}
+
+function initWebSocket() {
+  if (!activeSession) return;
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${protocol}//${window.location.host}`);
+  ws.onopen = () => {
+    sendWsMessage({ type: 'auth', userId: activeSession.id });
+    announcePresence(true);
+  };
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    handleIncomingWsMessage(msg);
+  };
+  ws.onclose = () => {
+    setTimeout(initWebSocket, 3000);
+  };
+}
+
+function sendWsMessage(payload) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(payload));
+  }
 }
 
 async function fetchAndSyncMessages() {
-  if (!activeSession) return;
-  try {
-    const payload = await apiRequest('/api/messages', {
-      headers: { 'x-user-id': activeSession.id }
-    });
-    const msgs = payload.messages || [];
+  if (!activeSession || typeof db === 'undefined') return;
+
+  onSnapshot(query(collection(db, "messages"), where("participants", "array-contains", activeSession.id), orderBy("ts", "asc")), (snapshot) => {
     const newStore = {};
     let changed = false;
 
-    msgs.forEach(m => {
+    snapshot.forEach((doc) => {
+      const m = doc.data();
+      if (m.deletedFor && m.deletedFor.includes(activeSession.id)) return;
+
       if (!newStore[m.chatId]) newStore[m.chatId] = [];
       const dir = m.senderId === activeSession.id ? 'outgoing' : 'incoming';
-      newStore[m.chatId].push({ ...m, dir });
+      newStore[m.chatId].push({ ...m, dir, docId: doc.id });
 
       if (!chatMeta[m.chatId]) {
         chatMeta[m.chatId] = {
@@ -240,9 +316,7 @@ async function fetchAndSyncMessages() {
       activeChat = Object.keys(chatStore)[0];
       renderMessages();
     }
-  } catch (err) {
-    console.error('Sync messages failed', err);
-  }
+  });
 }
 
 function syncState() {
@@ -453,12 +527,16 @@ async function localApiRequest(path, options = {}) {
 }
 
 async function syncAuthUsers() {
-  try {
-    const payload = await apiRequest('/api/auth/users');
-    authUsers = payload.users || [];
-  } catch {
-    // Keep using authUsers from hydrateState on sync failure
-  }
+  if (typeof db === 'undefined') return;
+  onSnapshot(collection(db, "users"), (snapshot) => {
+    const users = [];
+    snapshot.forEach((doc) => {
+      users.push(doc.data());
+    });
+    authUsers = users;
+    saveJson(AUTH_USERS_KEY, authUsers);
+    renderExploreUsers();
+  });
 }
 
 async function bootstrapUsers() {
@@ -534,6 +612,43 @@ function bindEvents() {
     confirmDeleteBtn.addEventListener('click', onDeleteAccount);
   }
 
+  const chatThemeToggle = document.getElementById('chatThemeToggle');
+  if (chatThemeToggle) {
+    chatThemeToggle.onclick = () => {
+      const chatLayout = document.querySelector('.chat-layout');
+      chatLayout.classList.toggle('chat-dark');
+    };
+  }
+
+  const contextEditBtn = document.getElementById('contextEditBtn');
+  if (contextEditBtn) {
+    contextEditBtn.onclick = () => {
+      const editMsgModal = document.getElementById('editMsgModal');
+      const editMsgInput = document.getElementById('editMsgInput');
+      editMsgInput.value = currentContextMsg.text || '';
+      editMsgModal.hidden = false;
+      document.getElementById('msgContextMenu').hidden = true;
+    };
+  }
+
+  const closeEditMsg = document.getElementById('closeEditMsg');
+  if (closeEditMsg) closeEditMsg.onclick = () => (document.getElementById('editMsgModal').hidden = true);
+
+  const saveEditMsgBtn = document.getElementById('saveEditMsgBtn');
+  if (saveEditMsgBtn) {
+    saveEditMsgBtn.onclick = async () => {
+      const newText = document.getElementById('editMsgInput').value.trim();
+      if (newText && currentContextMsg && currentContextMsg.docId) {
+        try {
+          await updateDoc(doc(db, "messages", currentContextMsg.docId), { text: newText, edited: true });
+          document.getElementById('editMsgModal').hidden = true;
+        } catch (err) {
+          alert("Failed to edit message: " + err.message);
+        }
+      }
+    };
+  }
+
   uploadTypeRow.addEventListener('click', (event) => {
     const btn = event.target.closest('.type-btn');
     if (!btn) return;
@@ -580,6 +695,9 @@ function bindEvents() {
   });
 
   closePostViewer.addEventListener('click', () => (postViewer.hidden = true));
+
+  if (prevPostBtn) prevPostBtn.onclick = () => navigatePostViewer(-1);
+  if (nextPostBtn) nextPostBtn.onclick = () => navigatePostViewer(1);
 
   confirmCancel.addEventListener('click', () => {
     confirmModal.hidden = true;
@@ -728,10 +846,28 @@ function renderProfileAvatar(el, user) {
 async function followUser(followingId) {
   if (!activeSession) return;
   try {
-    await apiRequest('/api/relationships/follow', {
-      method: 'POST',
-      body: JSON.stringify({ followerId: activeSession.id, followingId })
+    const followingUser = authUsers.find(u => u.id === followingId);
+    if (!followingUser) throw new Error("User not found");
+
+    const status = followingUser.isPrivate ? 'pending' : 'accepted';
+    const relId = `${activeSession.id}_${followingId}`;
+
+    await setDoc(doc(db, "relationships", relId), {
+      id: relId,
+      followerId: activeSession.id,
+      followingId,
+      status,
+      createdAt: Date.now()
     });
+
+    if (status === 'accepted') {
+      // Update stats
+      const myRef = doc(db, "users", activeSession.id);
+      await updateDoc(myRef, { "stats.following": (activeSession.stats?.following || 0) + 1 });
+      const theirRef = doc(db, "users", followingId);
+      await updateDoc(theirRef, { "stats.followers": (followingUser.stats?.followers || 0) + 1 });
+    }
+
     await renderExploreUsers(exploreSearchInput.value);
   } catch (err) {
     alert(err.message);
@@ -741,10 +877,21 @@ async function followUser(followingId) {
 async function unfollowUser(followingId) {
   if (!activeSession) return;
   try {
-    await apiRequest('/api/relationships/unfollow', {
-      method: 'POST',
-      body: JSON.stringify({ followerId: activeSession.id, followingId })
-    });
+    const relId = `${activeSession.id}_${followingId}`;
+    const relDoc = await getDoc(doc(db, "relationships", relId));
+    if (!relDoc.exists()) return;
+
+    const relData = relDoc.data();
+    await deleteDoc(doc(db, "relationships", relId));
+
+    if (relData.status === 'accepted') {
+      const followingUser = authUsers.find(u => u.id === followingId);
+      const myRef = doc(db, "users", activeSession.id);
+      await updateDoc(myRef, { "stats.following": Math.max(0, (activeSession.stats?.following || 0) - 1) });
+      const theirRef = doc(db, "users", followingId);
+      await updateDoc(theirRef, { "stats.followers": Math.max(0, (followingUser?.stats?.followers || 0) - 1) });
+    }
+
     await renderExploreUsers(exploreSearchInput.value);
   } catch (err) {
     alert(err.message);
@@ -794,22 +941,27 @@ async function renderOtherProfile(userId) {
   let relStatus = null;
   if (activeSession) {
     try {
-      const payload = await apiRequest(`/api/relationships/following?userId=${activeSession.id}`);
-      const rel = (payload.following || []).find(r => r.followingId === userId);
-      relStatus = rel ? rel.status : null;
+      const relId = `${activeSession.id}_${userId}`;
+      const relDoc = await getDoc(doc(db, "relationships", relId));
+      if (relDoc.exists()) relStatus = relDoc.data().status;
     } catch (err) {
       console.error(err);
     }
   }
 
+  const isFollowing = relStatus === 'accepted';
+
   // Populate Header
   myChannelHandle.textContent = user.username || user.name || 'User';
   myChannelDisplayName.textContent = user.name || user.username;
-  myChannelProfession.textContent = user.profession || 'Content Creator';
-  myChannelBio.textContent = user.bio || '';
+
+  const canSeeDetails = !user.isPrivate || isFollowing;
+
+  myChannelProfession.textContent = canSeeDetails ? (user.profession || 'Content Creator') : '';
+  myChannelBio.textContent = canSeeDetails ? (user.bio || '') : 'Follow to see bio';
 
   if (myChannelLocation) {
-    if (user.location) {
+    if (canSeeDetails && user.location) {
       myChannelLocation.hidden = false;
       myChannelLocation.querySelector('span').textContent = user.location;
     } else {
@@ -819,20 +971,66 @@ async function renderOtherProfile(userId) {
 
   if (myChannelSocialLinks) {
     myChannelSocialLinks.innerHTML = '';
-    const links = user.socialLinks || {};
-    if (links.twitter) myChannelSocialLinks.innerHTML += `<a href="${links.twitter}" target="_blank">🐦 Twitter</a>`;
-    if (links.linkedin) myChannelSocialLinks.innerHTML += `<a href="${links.linkedin}" target="_blank">🔗 LinkedIn</a>`;
-    if (links.github) myChannelSocialLinks.innerHTML += `<a href="${links.github}" target="_blank">💻 GitHub</a>`;
+    if (canSeeDetails) {
+      const links = user.socialLinks || {};
+      if (links.twitter) myChannelSocialLinks.innerHTML += `<a href="${links.twitter}" target="_blank">🐦 Twitter</a>`;
+      if (links.linkedin) myChannelSocialLinks.innerHTML += `<a href="${links.linkedin}" target="_blank">🔗 LinkedIn</a>`;
+      if (links.github) myChannelSocialLinks.innerHTML += `<a href="${links.github}" target="_blank">💻 GitHub</a>`;
+    }
   }
 
   myPostCount.textContent = user.stats?.posts || 0;
-  myFollowerCount.textContent = user.stats?.followers || 0;
-  myFollowingCount.textContent = user.stats?.following || 0;
+
+  // Requirement: hide names of followers/following lists (we already just show counts)
+  // Requirement: public accounts hide names from lists? Handled by showing only counts here.
+  myFollowerCount.textContent = isFollowing || !user.isPrivate ? (user.stats?.followers || 0) : "?";
+  myFollowingCount.textContent = isFollowing || !user.isPrivate ? (user.stats?.following || 0) : "?";
 
   renderProfileAvatar(myChannelAvatar, user);
 
+  // Buttons for other profile
+  const usernameRow = document.querySelector('.profile-username-row');
+  const editBtn = usernameRow.querySelector('.edit-profile-btn');
+  const settingsBtn = usernameRow.querySelector('.settings-btn');
+
+  // Clear existing extra buttons
+  const existingBtns = usernameRow.querySelectorAll('.dynamic-btn');
+  existingBtns.forEach(b => b.remove());
+
+  if (activeSession && userId !== activeSession.id) {
+    editBtn.hidden = true;
+    settingsBtn.hidden = true;
+
+    const followBtn = document.createElement('button');
+    followBtn.className = 'follow-btn dynamic-btn';
+    if (!relStatus) {
+      followBtn.textContent = 'Follow';
+      followBtn.onclick = () => followUser(userId);
+    } else if (relStatus === 'pending') {
+      followBtn.textContent = 'Requested';
+      followBtn.disabled = true;
+      followBtn.classList.add('requested');
+    } else {
+      followBtn.textContent = 'Unfollow';
+      followBtn.classList.add('following');
+      followBtn.onclick = () => unfollowUser(userId);
+    }
+    usernameRow.appendChild(followBtn);
+
+    if (!user.isPrivate || isFollowing) {
+      const msgBtn = document.createElement('button');
+      msgBtn.className = 'message-btn dynamic-btn';
+      msgBtn.textContent = 'Message';
+      msgBtn.onclick = () => onExploreMessageClick(userId, user.username || user.name);
+      usernameRow.appendChild(msgBtn);
+    }
+  } else {
+    editBtn.hidden = false;
+    settingsBtn.hidden = false;
+  }
+
   // Private account check
-  const canSeeContent = !user.isPrivate || relStatus === 'accepted';
+  const canSeeContent = !user.isPrivate || isFollowing;
 
   channelContentGrid.innerHTML = '';
   if (!canSeeContent) {
@@ -874,13 +1072,29 @@ async function renderOtherProfile(userId) {
 
 async function acceptFollowRequest(relationshipId) {
   try {
-    await apiRequest('/api/relationships/accept', {
-      method: 'POST',
-      body: JSON.stringify({ relationshipId })
-    });
-    renderFollowRequests(); // Need to implement this
+    const relRef = doc(db, "relationships", relationshipId);
+    const relDoc = await getDoc(relRef);
+    if (!relDoc.exists()) throw new Error("Request not found");
+
+    const relData = relDoc.data();
+    await updateDoc(relRef, { status: 'accepted' });
+
+    const followerRef = doc(db, "users", relData.followerId);
+    const followingRef = doc(db, "users", relData.followingId);
+
+    const followerDoc = await getDoc(followerRef);
+    const followingDoc = await getDoc(followingRef);
+
+    if (followerDoc.exists()) {
+      await updateDoc(followerRef, { "stats.following": (followerDoc.data().stats?.following || 0) + 1 });
+    }
+    if (followingDoc.exists()) {
+      await updateDoc(followingRef, { "stats.followers": (followingDoc.data().stats?.followers || 0) + 1 });
+    }
+
     await renderExploreUsers(exploreSearchInput.value);
     renderChannelManager();
+    renderFollowRequests();
   } catch (err) {
     alert(err.message);
   }
@@ -897,44 +1111,47 @@ async function onSaveProfile(e) {
   const linkedin = editProfileLinkedin.value.trim();
   const github = editProfileGithub.value.trim();
   const isPrivate = editProfilePrivate.checked;
-  const profilePic = activeSession.pendingProfilePic || activeSession.profilePic;
+  let profilePic = activeSession.profilePic;
 
   try {
-    // 1. Handle username change if needed
+    if (activeSession.pendingProfilePic) {
+      // Upload new profile pic to storage
+      const res = await uploadToBackend(dataURLtoFile(activeSession.pendingProfilePic, "profile.jpg"));
+      profilePic = res.dataUrl;
+    }
+
+    const updates = {
+      name,
+      bio,
+      profession,
+      location,
+      socialLinks: { twitter, linkedin, github },
+      profilePic,
+      isPrivate
+    };
+
+    // Handle username change if needed
     if (username && username !== activeSession.username) {
-      if (activeSession.username) {
-        const usernameId = activeSession.activeUsernameId;
-        if (usernameId) {
-          await apiRequest(`/api/usernames/${usernameId}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ userId: activeSession.id, username })
-          });
-        }
+      const exists = authUsers.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === username.toLowerCase() && u.id !== activeSession.id));
+      if (exists) throw new Error('Username already taken');
+
+      const usernames = activeSession.usernames || [];
+      const currentIdx = usernames.findIndex(x => x.id === activeSession.activeUsernameId);
+      if (currentIdx !== -1) {
+        usernames[currentIdx].value = username;
+        usernames[currentIdx].updatedAt = Date.now();
       } else {
-        await apiRequest('/api/usernames', {
-          method: 'POST',
-          body: JSON.stringify({ userId: activeSession.id, username })
-        });
+        const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+        usernames.push({ id, value: username, createdAt: Date.now(), updatedAt: Date.now() });
+        updates.activeUsernameId = id;
       }
+      updates.usernames = usernames;
       activeSession.username = username;
     }
 
-    // 2. Update other profile fields
-    const payload = await apiRequest('/api/auth/profile', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        userId: activeSession.id,
-        name,
-        bio,
-        profession,
-        location,
-        socialLinks: { twitter, linkedin, github },
-        profilePic,
-        isPrivate
-      })
-    });
+    await updateDoc(doc(db, "users", activeSession.id), updates);
 
-    activeSession = { ...activeSession, ...payload.user };
+    activeSession = { ...activeSession, ...updates };
     delete activeSession.pendingProfilePic;
     saveJson(AUTH_SESSION_KEY, activeSession);
 
@@ -944,6 +1161,15 @@ async function onSaveProfile(e) {
   } catch (err) {
     alert(err.message);
   }
+}
+
+function dataURLtoFile(dataurl, filename) {
+  var arr = dataurl.split(','), mime = arr[0].match(/:(.*?);/)[1],
+    bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
+  while(n--){
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new File([u8arr], filename, {type:mime});
 }
 
 
@@ -973,16 +1199,29 @@ async function onSignup(event) {
   try {
     btn.disabled = true;
     setAuthMessage('Creating account...', true);
-    await apiRequest('/api/auth/signup', {
-      method: 'POST',
-      body: JSON.stringify({ name, email, password })
-    });
-    // Auto-login after signup to proceed to onboarding
-    const loginPayload = await apiRequest('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password })
-    });
-    activeSession = loginPayload.session;
+
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+
+    const userData = {
+      id: user.uid,
+      name,
+      email,
+      usernames: [],
+      usernameChangeLogs: [],
+      activeUsernameId: null,
+      profilePic: '',
+      bio: '',
+      profession: '',
+      location: '',
+      socialLinks: { twitter: '', linkedin: '', github: '' },
+      stats: { posts: 0, followers: 0, following: 0 },
+      isPrivate: false
+    };
+
+    await setDoc(doc(db, "users", user.uid), userData);
+
+    activeSession = { ...userData, username: '' };
     saveJson(AUTH_SESSION_KEY, activeSession);
     signupForm.reset();
     await syncAuthUsers();
@@ -1002,12 +1241,18 @@ async function onLogin(event) {
   try {
     btn.disabled = true;
     setAuthMessage('Logging in...', true);
-    const payload = await apiRequest('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password })
-    });
-    saveJson(AUTH_SESSION_KEY, payload.session);
-    activeSession = payload.session;
+
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+
+    const userDoc = await getDoc(doc(db, "users", user.uid));
+    if (!userDoc.exists()) throw new Error("User data not found in Firestore.");
+
+    const userData = userDoc.data();
+    const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
+
+    activeSession = { ...userData, username };
+    saveJson(AUTH_SESSION_KEY, activeSession);
     syncState();
     setAuthMessage('', false);
     await loadSession();
@@ -1030,7 +1275,13 @@ async function onCheckUsername() {
   const val = usernameInput.value.trim().toLowerCase();
   if (!val) return;
   try {
-    await apiRequest('/api/usernames/check', { method: 'POST', body: JSON.stringify({ username: val }) });
+    const q = query(collection(db, "users"), where("usernames", "array-contains-any", [{ value: val }]));
+    // Wait, usernames is an array of objects. array-contains doesn't work for partial object.
+    // I'll fetch all users or use a separate collection for usernames if this was a real app.
+    // For now, I'll search through authUsers which is synced.
+    const exists = authUsers.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === val));
+
+    if (exists) throw new Error('Username already taken');
     usernameHint.textContent = 'Username available';
     usernameHint.style.color = '#0f8a3a';
   } catch (e) {
@@ -1044,14 +1295,27 @@ async function onCreateUsername(e) {
   const username = usernameInput.value.trim();
   if (!username) return;
   try {
-    const payload = await apiRequest('/api/usernames', {
-      method: 'POST',
-      body: JSON.stringify({ userId: activeSession.id, username })
+    const exists = authUsers.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === username.toLowerCase()));
+    if (exists) throw new Error('Username already taken');
+
+    const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+    const newName = { id, value: username, createdAt: Date.now(), updatedAt: Date.now() };
+
+    const userRef = doc(db, "users", activeSession.id);
+    const usernames = activeSession.usernames || [];
+    usernames.push(newName);
+
+    await updateDoc(userRef, {
+      usernames: usernames,
+      activeUsernameId: id
     });
-    activeSession = payload.session;
+
+    activeSession.usernames = usernames;
+    activeSession.activeUsernameId = id;
+    activeSession.username = username;
     saveJson(AUTH_SESSION_KEY, activeSession);
+
     usernameForm.hidden = true;
-    await loadSession();
     openTab('home');
   } catch (e) {
     usernameHint.textContent = e.message;
@@ -1138,9 +1402,11 @@ async function onDeleteAccount() {
 }
 
 function onLogout() {
-  localStorage.removeItem(AUTH_SESSION_KEY);
-  activeSession = null;
-  loadSession();
+  signOut(auth).then(() => {
+    localStorage.removeItem(AUTH_SESSION_KEY);
+    activeSession = null;
+    // loadSession(); // onAuthStateChanged will handle this
+  });
 }
 
 function toggleTheme() {
@@ -1289,33 +1555,24 @@ function makeOverlayDraggable(el, edit) {
 function uploadToBackend(file, onProgress) {
   return new Promise((resolve, reject) => {
     if (!activeSession) return reject(new Error('Not logged in'));
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload-media');
-    xhr.setRequestHeader('x-filename', file.name);
-    xhr.setRequestHeader('x-user-id', activeSession.id);
-    xhr.setRequestHeader('content-type', file.type);
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) {
-        onProgress(e.loaded / e.total);
+    const storageRef = ref(storage, `uploads/${activeSession.id}/${Date.now()}_${file.name}`);
+    const uploadTask = uploadBytesResumable(storageRef, file);
+
+    uploadTask.on('state_changed',
+      (snapshot) => {
+        const progress = snapshot.bytesTransferred / snapshot.totalBytes;
+        if (onProgress) onProgress(progress);
+      },
+      (error) => {
+        console.error('Upload failed:', error);
+        reject(new Error('Network error during upload: ' + error.message));
+      },
+      async () => {
+        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+        resolve({ name: file.name, type: file.type, size: file.size, dataUrl: downloadURL });
       }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const payload = JSON.parse(xhr.responseText);
-          resolve({ name: file.name, type: file.type, size: file.size, dataUrl: payload.url });
-        } catch (e) {
-          reject(new Error('Invalid server response'));
-        }
-      } else {
-        reject(new Error('Binary upload failed: ' + xhr.statusText));
-      }
-    };
-
-    xhr.onerror = () => reject(new Error('Network error during upload'));
-    xhr.send(file);
+    );
   });
 }
 
@@ -1358,26 +1615,26 @@ async function onUploadSubmit(event) {
 
     if (selectedUploadType === 'story') {
       for (let idx = 0; idx < prepared.length; idx++) {
-        await apiRequest('/api/posts', {
-          method: 'POST',
-          body: JSON.stringify({
-            ...baseRecord,
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-            files: [prepared[idx]],
-            edits: [edits[idx] || defaultEdit(prepared[idx].name)]
-          })
-        });
+        const postDoc = {
+          ...baseRecord,
+          id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          files: [prepared[idx]],
+          edits: [edits[idx] || defaultEdit(prepared[idx].name)]
+        };
+        await addDoc(collection(db, "posts"), postDoc);
       }
     } else {
-      await apiRequest('/api/posts', {
-        method: 'POST',
-        body: JSON.stringify({
-          ...baseRecord,
-          expiresAt: null,
-          files: prepared,
-          edits
-        })
-      });
+      const postDoc = {
+        ...baseRecord,
+        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+        createdAt: new Date().toISOString(),
+        expiresAt: null,
+        files: prepared,
+        edits
+      };
+      await addDoc(collection(db, "posts"), postDoc);
     }
 
     await fetchAndSyncPosts();
@@ -1393,20 +1650,20 @@ async function onUploadSubmit(event) {
     initEnhancedMessaging();
 
     // Announce to other tabs/devices
-    if (presenceBus) {
-      presenceBus.postMessage({ type: 'post_created', userId: activeSession.id });
-    }
+    sendWsMessage({ type: 'post_created', userId: activeSession.id });
   } catch (err) {
     uploadStatus.textContent = 'Upload failed: ' + err.message;
   }
 }
 
 async function fetchAndSyncPosts() {
-  try {
-    const payload = await apiRequest('/api/posts');
-    const newPosts = payload.posts || [];
+  if (typeof db === 'undefined') return;
+  onSnapshot(query(collection(db, "posts"), orderBy("createdAt", "desc")), (snapshot) => {
+    const newPosts = [];
+    snapshot.forEach((doc) => {
+      newPosts.push({ ...doc.data(), docId: doc.id });
+    });
 
-    // Check if anything actually changed before re-rendering
     if (JSON.stringify(newPosts) !== JSON.stringify(uploads)) {
       uploads = newPosts;
       saveJson(UPLOAD_STORE_KEY, uploads);
@@ -1414,9 +1671,7 @@ async function fetchAndSyncPosts() {
       renderUploads();
       renderChannelManager();
     }
-  } catch (err) {
-    console.error('Failed to sync posts', err);
-  }
+  });
 }
 
 function updateProgress(fraction) {
@@ -1518,6 +1773,10 @@ async function renderExploreUsers(query = '') {
   }
 
   rows.forEach((u) => {
+    // Only show name of followers/following?
+    // Wait, the requirement says "hide the names of their followers/following lists" for public accounts.
+    // This is handled in the profile view. In explore search, we show users.
+
     const card = document.createElement('div');
     card.className = 'explore-user-card glass';
 
@@ -1576,6 +1835,12 @@ async function renderExploreUsers(query = '') {
     if (msgBtn) {
       msgBtn.addEventListener('click', () => onExploreMessageClick(u.id, u.displayName));
     }
+    // Search must first land on that user's profile - let's make whole card go to profile
+    card.style.cursor = 'pointer';
+    card.onclick = (e) => {
+      if (e.target.tagName === 'BUTTON') return;
+      openOtherProfile(u.id);
+    };
     exploreUsersList.appendChild(card);
   });
 }
@@ -1787,6 +2052,13 @@ function openPostViewer(postId) {
   activePostViewerId = postId;
   const post = uploads.find((u) => u.id === postId);
   if (!post) return;
+
+  const userPosts = uploads.filter(u => u.userId === post.userId && u.type !== 'story').sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const idx = userPosts.findIndex(p => p.id === postId);
+
+  if (prevPostBtn) prevPostBtn.disabled = idx <= 0;
+  if (nextPostBtn) nextPostBtn.disabled = idx === -1 || idx >= userPosts.length - 1;
+
   postViewerTitle.textContent = `${post.type.toUpperCase()} · ${post.userName}`;
   postViewerMedia.innerHTML = renderFeedMedia(post);
 
@@ -1872,6 +2144,17 @@ function openPostViewer(postId) {
 
   bindInteractionEvents(postViewer, postId);
   postViewer.hidden = false;
+}
+
+function navigatePostViewer(dir) {
+  const post = uploads.find(u => u.id === activePostViewerId);
+  if (!post) return;
+  const userPosts = uploads.filter(u => u.userId === post.userId && u.type !== 'story').sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const idx = userPosts.findIndex(p => p.id === activePostViewerId);
+  const nextIdx = idx + dir;
+  if (nextIdx >= 0 && nextIdx < userPosts.length) {
+    openPostViewer(userPosts[nextIdx].id);
+  }
 }
 
 function persistAndRerender(postId) {
@@ -2027,6 +2310,11 @@ function showStoryByIndex(index) {
 
 function renderChatUsers() {
   if (!chatUsersWrap) return;
+
+  const onlineCount = authUsers.filter(u => u.online).length; // Need presence logic
+  const onlineUsersCount = document.getElementById('onlineUsersCount');
+  if (onlineUsersCount) onlineUsersCount.textContent = `Online users: ${onlineCount}`;
+
   chatUsersWrap.innerHTML = '';
   Object.keys(chatStore).forEach((chatId) => {
     const latest = chatStore[chatId].at(-1);
@@ -2053,6 +2341,34 @@ function renderChatUsers() {
         <small style="display:block; white-space:nowrap; text-overflow:ellipsis; overflow:hidden">${escapeHtml(preview)}</small>
       </div>
     `;
+
+    const avatarEl = btn.querySelector('.chat-avatar');
+    if (avatarEl) {
+      avatarEl.style.cursor = 'pointer';
+
+      let avatarLongPress;
+      const triggerProfile = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        openOtherProfile(chatId.split(':').pop());
+      };
+
+      avatarEl.onmousedown = (e) => {
+        if (e.button === 2) return; // Right click handled by contextmenu
+        avatarLongPress = setTimeout(() => triggerProfile(e), 600);
+      };
+      avatarEl.onmouseup = () => clearTimeout(avatarLongPress);
+      avatarEl.onmouseleave = () => clearTimeout(avatarLongPress);
+      avatarEl.oncontextmenu = (e) => triggerProfile(e);
+
+      avatarEl.ontouchstart = (e) => {
+        avatarLongPress = setTimeout(() => triggerProfile(e), 600);
+      };
+      avatarEl.ontouchend = () => clearTimeout(avatarLongPress);
+    }
+
     btn.addEventListener('click', () => {
       activeChat = chatId;
       renderChatUsers();
@@ -2079,6 +2395,14 @@ function renderMessages() {
     const bubble = document.createElement('div');
     const isImageOnly = !msg.text && !msg.replyToId && (msg.files || []).length > 0 && msg.files.every(f => (f.type || '').startsWith('image/'));
     bubble.className = `bubble ${msg.dir} ${isImageOnly ? 'image-only' : ''}`;
+
+    if (msg.deleted) {
+      bubble.innerHTML = '<i style="opacity: 0.7;">This message was deleted</i>';
+      bubble.classList.add('deleted-placeholder');
+      bubble.dataset.id = msg.id;
+      messages.appendChild(bubble);
+      return;
+    }
 
     let fileHtml = '';
     (msg.files || []).forEach((f) => {
@@ -2120,7 +2444,8 @@ function renderMessages() {
       reactionHtml = `<div class="bubble-reactions" style="position:absolute; bottom:-12px; right:4px; display:flex; gap:2px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:2px 4px; font-size:0.7rem; z-index:2">${Object.entries(counts).map(([emoji, count]) => `<span>${emoji}${count > 1 ? count : ''}</span>`).join('')}</div>`;
     }
 
-    bubble.innerHTML = `${replyHtml}${escapeHtml(msg.text || '')}${fileHtml}${reactionHtml}`;
+    const editedHtml = msg.edited ? '<small style="opacity:0.6; margin-left:4px">(edited)</small>' : '';
+    bubble.innerHTML = `${replyHtml}${escapeHtml(msg.text || '')}${editedHtml}${fileHtml}${reactionHtml}`;
     bubble.dataset.id = msg.id;
     messages.appendChild(bubble);
   });
@@ -2166,46 +2491,38 @@ async function sendMessage(prepared = null) {
   if (!meta) return;
 
   try {
-    const res = await apiRequest('/api/messages', {
-      method: 'POST',
-      headers: { 'x-user-id': activeSession.id },
-      body: JSON.stringify({
-        chatId: activeChat,
-        senderName: activeHandle(),
-        text: payload.text || '',
-        files: payload.files || [],
-        replyToId: payload.replyToId || null,
-        viewOnce: payload.viewOnce || false,
-        ts: Date.now(),
-        participants: meta.participants || []
-      })
+    const msg = {
+      chatId: activeChat,
+      senderId: activeSession.id,
+      senderName: activeHandle(),
+      text: payload.text || '',
+      files: payload.files || [],
+      replyToId: payload.replyToId || null,
+      viewOnce: payload.viewOnce || false,
+      ts: Date.now(),
+      participants: meta.participants || [],
+      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
+    };
+
+    await addDoc(collection(db, "messages"), msg);
+
+    meta.participants.forEach(pId => {
+      if (pId !== activeSession.id) {
+        sendWsMessage({
+          type: 'message',
+          toId: pId,
+          fromId: activeChat,
+          senderId: activeSession.id,
+          senderName: activeHandle(),
+          text: msg.text,
+          files: msg.files,
+          viewOnce: msg.viewOnce,
+          replyToId: msg.replyToId,
+          ts: msg.ts,
+          id: msg.id
+        });
+      }
     });
-
-    const msg = res.message;
-    if (!msg) throw new Error('Invalid server response');
-    if (!chatStore[activeChat]) chatStore[activeChat] = [];
-    chatStore[activeChat].push({ ...msg, dir: 'outgoing' });
-    saveJson(CHAT_STORE_KEY, chatStore);
-
-    if (presenceBus) {
-      meta.participants.forEach(pId => {
-        if (pId !== activeSession.id) {
-          presenceBus.postMessage({
-            type: 'message',
-            toId: pId,
-            fromId: activeChat,
-            senderId: activeSession.id,
-            senderName: activeHandle(),
-            text: msg.text,
-            files: msg.files,
-            viewOnce: msg.viewOnce,
-            replyToId: msg.replyToId,
-            ts: msg.ts,
-            id: msg.id
-          });
-        }
-      });
-    }
   } catch (err) {
     console.error('Send message failed', err);
     alert('Failed to send message: ' + err.message);
@@ -2343,65 +2660,65 @@ function initEnhancedMessaging() {
 
   setInterval(fetchAndSyncMessages, 10000);
   setInterval(fetchAndSyncPosts, 15000);
+}
 
-  if (presenceBus) {
-    presenceBus.onmessage = (event) => {
-      const msg = event.data || {};
-      if (msg.type === 'presence' && msg.userId && msg.userId !== activeSession?.id) {
-        Object.keys(chatMeta).forEach((chatId) => {
-          if ((chatMeta[chatId].participants || []).includes(msg.userId)) chatMeta[chatId].online = msg.online;
-        });
-        saveJson('chatbhar.chatMeta', chatMeta);
+function handleIncomingWsMessage(msg) {
+  if (msg.type === 'presence' && msg.userId && msg.userId !== activeSession?.id) {
+    const uIdx = authUsers.findIndex(u => u.id === msg.userId);
+    if (uIdx !== -1) authUsers[uIdx].online = msg.online;
+
+    Object.keys(chatMeta).forEach((chatId) => {
+      if ((chatMeta[chatId].participants || []).includes(msg.userId)) chatMeta[chatId].online = msg.online;
+    });
+    saveJson('chatbhar.chatMeta', chatMeta);
+    renderChatUsers();
+    renderMessages();
+  }
+  if (msg.type === 'typing' && msg.chatId === activeChat && msg.userId !== activeSession?.id) {
+    typingIndicator.textContent = msg.typing ? `${msg.name || 'User'} is typing...` : '';
+  }
+  if (msg.type === 'message' && msg.toId === activeSession?.id) {
+    const chatId = msg.fromId;
+    if (!chatMeta[chatId]) {
+      chatMeta[chatId] = { id: chatId, name: msg.senderName || 'User', participants: [msg.senderId, activeSession.id], isGroup: chatId.startsWith('group:'), online: true };
+      saveJson('chatbhar.chatMeta', chatMeta);
+    }
+    if (!chatStore[chatId]) chatStore[chatId] = [];
+    if (!chatStore[chatId].some(m => m.id === msg.id)) {
+      chatStore[chatId].push({
+        id: msg.id,
+        dir: 'incoming',
+        text: msg.text,
+        files: msg.files,
+        viewOnce: msg.viewOnce,
+        viewOnceConsumed: false,
+        ts: msg.ts,
+        replyToId: msg.replyToId,
+        senderName: msg.senderName,
+        senderId: msg.senderId
+      });
+      saveJson(CHAT_STORE_KEY, chatStore);
+      if (activeChat === chatId) renderMessages();
+      renderChatUsers();
+    }
+  }
+  if (msg.type === 'reaction' && msg.toId === activeSession?.id) {
+    fetchAndSyncMessages();
+  }
+  if (msg.type === 'post_created') {
+    fetchAndSyncPosts();
+  }
+  if (msg.type === 'delete_msg' && msg.toId === activeSession?.id) {
+    const chatId = msg.chatId;
+    if (chatStore[chatId]) {
+      const idx = chatStore[chatId].findIndex(m => m.id === msg.msgId || m.ts === msg.msgTs);
+      if (idx !== -1) {
+        chatStore[chatId].splice(idx, 1);
+        saveJson(CHAT_STORE_KEY, chatStore);
+        if (activeChat === chatId) renderMessages();
         renderChatUsers();
-        renderMessages();
       }
-      if (msg.type === 'typing' && msg.chatId === activeChat && msg.userId !== activeSession?.id) {
-        typingIndicator.textContent = msg.typing ? `${msg.name || 'User'} is typing...` : '';
-      }
-      if (msg.type === 'message' && msg.toId === activeSession?.id) {
-        const chatId = msg.fromId;
-        if (!chatMeta[chatId]) {
-          chatMeta[chatId] = { id: chatId, name: msg.senderName || 'User', participants: [msg.senderId, activeSession.id], isGroup: chatId.startsWith('group:'), online: true };
-          saveJson('chatbhar.chatMeta', chatMeta);
-        }
-        if (!chatStore[chatId]) chatStore[chatId] = [];
-        if (!chatStore[chatId].some(m => m.id === msg.id)) {
-          chatStore[chatId].push({
-            id: msg.id,
-            dir: 'incoming',
-            text: msg.text,
-            files: msg.files,
-            viewOnce: msg.viewOnce,
-            viewOnceConsumed: false,
-            ts: msg.ts,
-            replyToId: msg.replyToId,
-            senderName: msg.senderName,
-            senderId: msg.senderId
-          });
-          saveJson(CHAT_STORE_KEY, chatStore);
-          if (activeChat === chatId) renderMessages();
-          renderChatUsers();
-        }
-      }
-      if (msg.type === 'reaction' && msg.toId === activeSession?.id) {
-        fetchAndSyncMessages();
-      }
-      if (msg.type === 'post_created') {
-        fetchAndSyncPosts();
-      }
-      if (msg.type === 'delete_msg' && msg.toId === activeSession?.id) {
-        const chatId = msg.chatId;
-        if (chatStore[chatId]) {
-          const idx = chatStore[chatId].findIndex(m => m.id === msg.msgId || m.ts === msg.msgTs);
-          if (idx !== -1) {
-            chatStore[chatId].splice(idx, 1);
-            saveJson(CHAT_STORE_KEY, chatStore);
-            if (activeChat === chatId) renderMessages();
-            renderChatUsers();
-          }
-        }
-      }
-    };
+    }
   }
 }
 
@@ -2472,15 +2789,13 @@ function bindMessagingUI() {
             });
             await fetchAndSyncMessages();
             renderMessages();
-            if (presenceBus) {
-              const meta = chatMeta[activeChat];
-              if (meta) {
-                meta.participants.forEach(pId => {
-                  if (pId !== activeSession.id) {
-                    presenceBus.postMessage({ type: 'reaction', toId: pId });
-                  }
-                });
-              }
+            const meta = chatMeta[activeChat];
+            if (meta) {
+              meta.participants.forEach(pId => {
+                if (pId !== activeSession.id) {
+                  sendWsMessage({ type: 'reaction', toId: pId });
+                }
+              });
             }
           } catch (err) {
             console.error('Reaction failed', err);
@@ -2565,50 +2880,62 @@ function showContextMenu(e, bubble) {
   msgContextMenu.style.top = `${top}px`;
 
   const deleteEveryoneBtn = document.getElementById('deleteEveryoneBtn');
+  const contextEditBtn = document.getElementById('contextEditBtn');
+  const isOutgoing = currentContextMsg.dir === 'outgoing';
+  const ageInMinutes = (Date.now() - (currentContextMsg.ts || 0)) / 1000 / 60;
+
   if (deleteEveryoneBtn) {
-    const isOutgoing = currentContextMsg.dir === 'outgoing';
-    const ageInMinutes = (Date.now() - (currentContextMsg.ts || 0)) / 1000 / 60;
     deleteEveryoneBtn.hidden = !isOutgoing || ageInMinutes > 15;
+  }
+  if (contextEditBtn) {
+    contextEditBtn.hidden = !isOutgoing || ageInMinutes > 15 || !!currentContextMsg.files?.length;
   }
 }
 
 async function deleteMessage(type) {
   if (!currentContextMsg || !activeSession) return;
-  const msgIdx = chatStore[activeChat].indexOf(currentContextMsg);
-  if (msgIdx === -1) return;
 
   if (type === 'everyone') {
     try {
-      await apiRequest(`/api/messages/${currentContextMsg.id}`, {
-        method: 'DELETE',
-        headers: { 'x-user-id': activeSession.id }
-      });
+      if (currentContextMsg.docId) {
+        await updateDoc(doc(db, "messages", currentContextMsg.docId), { deleted: true, text: '', files: [] });
+      }
 
-      if (presenceBus) {
-        const meta = chatMeta[activeChat];
-        if (meta) {
-          meta.participants.forEach(pId => {
-            if (pId !== activeSession.id) {
-              presenceBus.postMessage({
-                type: 'delete_msg',
-                toId: pId,
-                chatId: activeChat,
-                senderId: activeSession.id,
-                msgTs: currentContextMsg.ts,
-                msgId: currentContextMsg.id
-              });
-            }
-          });
-        }
+      const meta = chatMeta[activeChat];
+      if (meta) {
+        meta.participants.forEach(pId => {
+          if (pId !== activeSession.id) {
+            sendWsMessage({
+              type: 'delete_msg',
+              toId: pId,
+              chatId: activeChat,
+              senderId: activeSession.id,
+              msgTs: currentContextMsg.ts,
+              msgId: currentContextMsg.id
+            });
+          }
+        });
       }
     } catch (err) {
       alert('Delete failed: ' + err.message);
       return;
     }
+  } else {
+    // Delete for me - persistent via Firestore
+    try {
+      if (currentContextMsg.docId) {
+        const deletedFor = currentContextMsg.deletedFor || [];
+        if (!deletedFor.includes(activeSession.id)) {
+          deletedFor.push(activeSession.id);
+          await updateDoc(doc(db, "messages", currentContextMsg.docId), { deletedFor });
+        }
+      }
+    } catch (err) {
+      alert('Delete for Me failed: ' + err.message);
+      return;
+    }
   }
 
-  chatStore[activeChat].splice(msgIdx, 1);
-  saveJson(CHAT_STORE_KEY, chatStore);
   renderMessages();
   renderChatUsers();
   document.getElementById('msgContextMenu').hidden = true;
@@ -2657,17 +2984,10 @@ async function openContactModal() {
       avatarHtml = `<div class="chat-avatar" style="background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-size:12px">${(u.name[0]||'U').toUpperCase()}</div>`;
     }
 
-    row.innerHTML = `${avatarHtml} <span>${escapeHtml(u.name)}</span><button type="button" class="edit-profile-btn" style="margin-left:auto">Select</button>`;
+    row.innerHTML = `${avatarHtml} <span>${escapeHtml(u.name)}</span><button type="button" class="edit-profile-btn" style="margin-left:auto">View Profile</button>`;
     row.querySelector('button').addEventListener('click', () => {
-      const id = `dm:${u.id}`;
-      if (!chatStore[id]) chatStore[id] = [];
-      chatMeta[id] = { id, name: u.username || u.name, participants: [u.id, activeSession.id], isGroup: false, online: true };
-      saveJson(CHAT_STORE_KEY, chatStore);
-      saveJson('chatbhar.chatMeta', chatMeta);
-      activeChat = id;
-      renderChatUsers();
-      renderMessages();
       contactModal.hidden = true;
+      openOtherProfile(u.id);
     });
     contactList.appendChild(row);
   });
@@ -2719,13 +3039,13 @@ function closeImagePreviewModal() {
 }
 
 function sendTyping(typing) {
-  if (!presenceBus || !activeSession) return;
-  presenceBus.postMessage({ type: 'typing', chatId: activeChat, userId: activeSession.id, name: activeSession.name, typing });
+  if (!activeSession) return;
+  sendWsMessage({ type: 'typing', chatId: activeChat, userId: activeSession.id, name: activeSession.name, typing });
 }
 
 function announcePresence(online) {
-  if (!presenceBus || !activeSession) return;
-  presenceBus.postMessage({ type: 'presence', userId: activeSession.id, online });
+  if (!activeSession) return;
+  sendWsMessage({ type: 'presence', userId: activeSession.id, online });
 }
 
 async function migrateOldUploads() {
@@ -2868,27 +3188,37 @@ function sharePostToChat(postId, targetUserId) {
   post.interactions.shares++;
   saveJson(UPLOAD_STORE_KEY, uploads);
 
-  if (presenceBus) {
-    presenceBus.postMessage({
-      type: 'message',
-      toId: targetUserId,
-      fromId: `dm:${activeSession.id}`,
-      senderId: activeSession.id,
-      senderName: activeHandle(),
-      text,
-      files,
-      ts
-    });
-  }
+  sendWsMessage({
+    type: 'message',
+    toId: targetUserId,
+    fromId: `dm:${activeSession.id}`,
+    senderId: activeSession.id,
+    senderName: activeHandle(),
+    text,
+    files,
+    ts
+  });
   alert('Post shared successfully!');
   renderChatUsers();
   if (activeChat === chatId) renderMessages();
 }
 
 async function renderFollowRequests() {
-  if (!activeSession || !followRequestsSection || !followRequestsList) return;
+  if (!activeSession || !followRequestsSection || !followRequestsList || typeof db === 'undefined') return;
   try {
-    const { requests } = await apiRequest(`/api/relationships/requests?userId=${activeSession.id}`);
+    const q = query(collection(db, "relationships"), where("followingId", "==", activeSession.id), where("status", "==", "pending"));
+    const snapshot = await getDocs(q);
+    const requests = [];
+    for (const d of snapshot.docs) {
+      const rel = d.data();
+      const follower = authUsers.find(u => u.id === rel.followerId);
+      requests.push({
+        ...rel,
+        followerName: follower ? (follower.name || (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value) : 'Unknown',
+        followerHandle: follower ? (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value : ''
+      });
+    }
+
     if (requests && requests.length > 0) {
       followRequestsSection.hidden = false;
       followRequestsList.innerHTML = '';
