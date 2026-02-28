@@ -1,3 +1,8 @@
+import { initializeApp } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+
 const AUTH_USERS_KEY = 'chatbhar.users';
 const AUTH_RESET_DONE_KEY = 'chatbhar.authResetDone';
 const AUTH_SESSION_KEY = 'chatbhar.session';
@@ -179,11 +184,6 @@ let replyToMsg = null;
 let touchStartX = 0;
 let swipeBubble = null;
 
-import { initializeApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit } from 'firebase/firestore';
-import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-
 const firebaseConfig = {
   apiKey: "PLACEHOLDER",
   authDomain: "PLACEHOLDER.firebaseapp.com",
@@ -193,11 +193,16 @@ const firebaseConfig = {
   appId: "PLACEHOLDER"
 };
 
+if (firebaseConfig.apiKey === "PLACEHOLDER") {
+  console.warn("%c[Firebase Warning] firebaseConfig is using placeholders. You must replace them with your real credentials from the Firebase Console to enable cross-device sync and storage.", "font-size: 14px; color: #ff9800; font-weight: bold;");
+}
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
 
+// Initialize App only after Firebase is ready
 initApp();
 
 async function initApp() {
@@ -2447,6 +2452,10 @@ function renderMessages() {
     const editedHtml = msg.edited ? '<small style="opacity:0.6; margin-left:4px">(edited)</small>' : '';
     bubble.innerHTML = `${replyHtml}${escapeHtml(msg.text || '')}${editedHtml}${fileHtml}${reactionHtml}`;
     bubble.dataset.id = msg.id;
+
+    bubble.onclick = (e) => showContextMenu(e, bubble);
+    bubble.oncontextmenu = (e) => showContextMenu(e, bubble);
+
     messages.appendChild(bubble);
   });
 
@@ -2852,6 +2861,10 @@ function bindMessagingUI() {
 }
 
 function showContextMenu(e, bubble) {
+  if (e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
   const msgContextMenu = document.getElementById('msgContextMenu');
   if (!msgContextMenu) return;
 
@@ -2860,9 +2873,11 @@ function showContextMenu(e, bubble) {
   currentContextMsg = chatStore[activeChat][msgIdx];
   if (!currentContextMsg) return;
 
+  if (currentContextMsg.deleted) return;
+
   msgContextMenu.hidden = false;
 
-  const x = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+  const x = (e && e.touches && e.touches[0]) ? e.touches[0].clientX : (e ? e.clientX : 100);
   const y = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
 
   const menuWidth = 200;
