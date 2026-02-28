@@ -184,30 +184,33 @@ let replyToMsg = null;
 let touchStartX = 0;
 let swipeBubble = null;
 
-const firebaseConfig = {
-  apiKey: "PLACEHOLDER",
-  authDomain: "PLACEHOLDER.firebaseapp.com",
-  projectId: "PLACEHOLDER",
-  storageBucket: "PLACEHOLDER.appspot.com",
-  messagingSenderId: "PLACEHOLDER",
-  appId: "PLACEHOLDER"
-};
+let auth, db, storage;
 
-if (firebaseConfig.apiKey === "PLACEHOLDER") {
-  console.warn("%c[Firebase Warning] firebaseConfig is using placeholders. You must replace them with your real credentials from the Firebase Console to enable cross-device sync and storage.", "font-size: 14px; color: #ff9800; font-weight: bold;");
-}
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const storage = getStorage(app);
-
-// Initialize App only after Firebase is ready
+// Initialize App only after config is fetched
 initApp();
 
 async function initApp() {
-  bindEvents();
   hydrateState(); // Hydrate immediately for fast feedback
+
+  try {
+    const configRes = await fetch('/api/config');
+    const { firebaseConfig } = await configRes.json();
+
+    if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey === 'PLACEHOLDER') {
+      throw new Error('Firebase configuration missing or invalid.');
+    }
+
+    const app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    storage = getStorage(app);
+
+    bindEvents();
+  } catch (err) {
+    console.error('Firebase initialization failed:', err.message);
+    setAuthMessage('System error: Firebase configuration missing. Please check your .env file.', false);
+    return;
+  }
 
   onAuthStateChanged(auth, async (user) => {
     if (user) {
