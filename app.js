@@ -263,7 +263,7 @@ function hydrateState() {
     authUsers = localUsers.users;
   }
 
-  if (activeSession) {
+  if (activeSession && activeSession.username) {
     authGate.hidden = true;
     appShell.hidden = false;
     renderHome();
@@ -285,22 +285,25 @@ async function apiRequest(path, options = {}) {
     ...options
   };
 
+  let response;
   try {
-    const response = await fetch(path, requestOptions);
-    if (!response.ok) {
-      if (response.status === 405 || response.status === 501) {
-        return await localApiRequest(path, options);
-      }
-      const contentType = response.headers.get('content-type') || '';
-      const payload = contentType.includes('application/json') ? await response.json() : {};
-      throw new Error(payload.error || `Request failed (${response.status})`);
-    }
-    const contentType = response.headers.get('content-type') || '';
-    return contentType.includes('application/json') ? await response.json() : {};
+    response = await fetch(path, requestOptions);
   } catch (error) {
-    console.warn(`API request to ${path} failed, falling back to local storage:`, error.message);
+    console.warn(`Network error for ${path}, falling back to local storage:`, error.message);
     return await localApiRequest(path, options);
   }
+
+  if (!response.ok) {
+    if (response.status === 405 || response.status === 501) {
+      return await localApiRequest(path, options);
+    }
+    const contentType = response.headers.get('content-type') || '';
+    const payload = contentType.includes('application/json') ? await response.json() : {};
+    throw new Error(payload.error || `Request failed (${response.status})`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  return contentType.includes('application/json') ? await response.json() : {};
 }
 
 async function localApiRequest(path, options = {}) {
@@ -315,6 +318,9 @@ async function localApiRequest(path, options = {}) {
 
   if (path === '/api/auth/signup' && method === 'POST') {
     const { email, password, name } = body;
+    if (!name || !email || !password) throw new Error('Please fill all signup fields.');
+    if (!/^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(String(email || '').toLowerCase())) throw new Error('Signup requires a valid @gmail.com address.');
+    if (String(password || '').length < 8) throw new Error('Password must be at least 8 characters.');
     if (users.some(u => u.email === email)) throw new Error('Email already exists');
     const newUser = {
       id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
@@ -909,14 +915,19 @@ function applyUploadType() {
 
 async function onSignup(event) {
   event.preventDefault();
+  const btn = signupForm.querySelector('button[type="submit"]');
   const name = document.getElementById('signupName').value.trim();
   const email = document.getElementById('signupEmail').value.trim().toLowerCase();
   const password = document.getElementById('signupPassword').value;
   const confirmPassword = document.getElementById('signupConfirmPassword').value;
   if (!name || !email || !password || !confirmPassword) return setAuthMessage('Please fill all signup fields.', false);
+  if (!/^[a-zA-Z0-9._%+-]+@gmail\.com$/.test(email)) return setAuthMessage('Signup requires a valid @gmail.com address.', false);
+  if (password.length < 8) return setAuthMessage('Password must be at least 8 characters.', false);
   if (password !== confirmPassword) return setAuthMessage('Passwords do not match.', false);
 
   try {
+    btn.disabled = true;
+    setAuthMessage('Creating account...', true);
     await apiRequest('/api/auth/signup', {
       method: 'POST',
       body: JSON.stringify({ name, email, password })
@@ -933,14 +944,19 @@ async function onSignup(event) {
     openOnboarding();
   } catch (error) {
     setAuthMessage(error.message, false);
+  } finally {
+    btn.disabled = false;
   }
 }
 
 async function onLogin(event) {
   event.preventDefault();
+  const btn = loginForm.querySelector('button[type="submit"]');
   const email = document.getElementById('emailInput').value.trim().toLowerCase();
   const password = document.getElementById('passwordInput').value;
   try {
+    btn.disabled = true;
+    setAuthMessage('Logging in...', true);
     const payload = await apiRequest('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password })
@@ -953,6 +969,8 @@ async function onLogin(event) {
     if (activeSession.username) openTab('home');
   } catch (error) {
     setAuthMessage(error.message || 'Invalid email/password.', false);
+  } finally {
+    btn.disabled = false;
   }
 }
 
