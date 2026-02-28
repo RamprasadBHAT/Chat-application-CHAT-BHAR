@@ -43,15 +43,25 @@ A responsive social media prototype with a CMS-style upload pipeline, creative s
 
 ## Run locally
 
-To run the application with full backend support (Login, Signup, Chat, and Media Uploads), use:
+The application supports two modes of operation:
+
+### 1. Full Backend Mode (Recommended)
+This mode uses a Node.js server to persist data and media on the disk, allowing for real-time messaging and cross-device synchronization.
 
 ```bash
 npm start
 ```
-
 Open: `http://localhost:4173`
 
-> **Note:** Do not use `python3 -m http.server` or other static file servers, as they do not support the `POST` requests required for authentication and messaging, which will result in a **405 Method Not Allowed** error.
+### 2. Static-only Mode (Browser Storage)
+If you prefer to run the app without a Node.js environment, you can use any static file server. Data will be saved to your browser's `localStorage`.
+
+```bash
+python3 -m http.server 4173
+```
+Open: `http://localhost:4173`
+
+> **Note:** In static-only mode, media uploads (images/videos) are stored as Base64 strings in your browser storage, which may have limited capacity compared to the full backend.
 
 ## Implemented capabilities
 

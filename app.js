@@ -285,33 +285,120 @@ async function apiRequest(path, options = {}) {
     ...options
   };
 
-  let response;
   try {
-    response = await fetch(path, requestOptions);
+    const response = await fetch(path, requestOptions);
+    if (!response.ok) {
+      if (response.status === 405 || response.status === 501) {
+        return await localApiRequest(path, options);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json') ? await response.json() : {};
+      throw new Error(payload.error || `Request failed (${response.status})`);
+    }
+    const contentType = response.headers.get('content-type') || '';
+    return contentType.includes('application/json') ? await response.json() : {};
   } catch (error) {
-    throw new Error(`Network error: ${error.message}`);
+    console.warn(`API request to ${path} failed, falling back to local storage:`, error.message);
+    return await localApiRequest(path, options);
+  }
+}
+
+async function localApiRequest(path, options = {}) {
+  const method = options.method || 'GET';
+  const body = options.body ? JSON.parse(options.body) : {};
+  const users = loadJson(AUTH_USERS_KEY, []);
+  const localPosts = loadJson(UPLOAD_STORE_KEY, []);
+
+  if (path === '/api/auth/users' && method === 'GET') {
+    return { users: users.map(u => ({ ...u, password: '' })) };
   }
 
-  const contentType = response.headers.get('content-type') || '';
-  const isJsonResponse = contentType.includes('application/json');
+  if (path === '/api/auth/signup' && method === 'POST') {
+    const { email, password, name } = body;
+    if (users.some(u => u.email === email)) throw new Error('Email already exists');
+    const newUser = {
+      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+      name, email, password,
+      usernames: [], activeUsernameId: null,
+      stats: { posts: 0, followers: 0, following: 0 },
+      socialLinks: { twitter: '', linkedin: '', github: '' }
+    };
+    users.push(newUser);
+    saveJson(AUTH_USERS_KEY, users);
+    return { user: newUser };
+  }
 
-  let payload = {};
-  if (isJsonResponse) {
-    try {
-      payload = await response.json();
-    } catch (e) {
-      console.error('Failed to parse JSON response', e);
+  if (path === '/api/auth/login' && method === 'POST') {
+    const { email, password } = body;
+    const user = users.find(u => u.email === email && u.password === password);
+    if (!user) throw new Error('Invalid email/password');
+    const username = (user.usernames || []).find(x => x.id === user.activeUsernameId)?.value || '';
+    return { session: { ...user, username, password: '' }, usernames: user.usernames || [] };
+  }
+
+  if (path === '/api/usernames/check' && method === 'POST') {
+    const { username } = body;
+    const exists = users.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === username.toLowerCase()));
+    if (exists) throw new Error('Username already taken');
+    return { available: true };
+  }
+
+  if (path === '/api/usernames' && method === 'POST') {
+    const { userId, username } = body;
+    const user = users.find(u => u.id === userId);
+    if (!user) throw new Error('User not found');
+    const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+    const newName = { id, value: username, createdAt: Date.now(), updatedAt: Date.now() };
+    user.usernames = user.usernames || [];
+    user.usernames.push(newName);
+    user.activeUsernameId = id;
+    saveJson(AUTH_USERS_KEY, users);
+    return { session: { ...user, username, password: '' } };
+  }
+
+  if (path === '/api/posts' && method === 'GET') {
+    return { posts: localPosts };
+  }
+
+  if (path === '/api/posts' && method === 'POST') {
+    const newPost = { ...body, id: body.id || (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)), createdAt: new Date().toISOString() };
+    localPosts.push(newPost);
+    saveJson(UPLOAD_STORE_KEY, localPosts);
+    return { post: newPost };
+  }
+
+  if (path === '/api/messages' && method === 'GET') {
+    // Return empty to avoid wiping chatStore, or better, don't sync if local
+    return { messages: [] };
+  }
+
+  if (path === '/api/auth/profile' && method === 'PATCH') {
+    const { userId } = body;
+    const idx = users.findIndex(u => u.id === userId);
+    if (idx === -1) throw new Error('User not found');
+    users[idx] = { ...users[idx], ...body };
+    saveJson(AUTH_USERS_KEY, users);
+    return { user: { ...users[idx], password: '' } };
+  }
+
+  if (path.startsWith('/api/posts/') && method === 'PATCH') {
+    const id = path.split('/').pop();
+    const idx = localPosts.findIndex(p => p.id === id);
+    if (idx !== -1) {
+      localPosts[idx] = { ...localPosts[idx], ...body };
+      saveJson(UPLOAD_STORE_KEY, localPosts);
+      return { post: localPosts[idx] };
     }
   }
 
-  if (!response.ok) {
-    if (response.status === 405 || response.status === 501) {
-      const code = response.status;
-      throw new Error(`Request failed (${code}): Method Not Allowed. This usually happens if you are using a static file server (like python -m http.server) instead of the actual backend. Please use 'npm start' to run the server correctly.`);
-    }
-    throw new Error(payload.error || `Request failed (${response.status})`);
+  if (path.startsWith('/api/posts/') && method === 'DELETE') {
+    const id = path.split('/').pop();
+    const filtered = localPosts.filter(p => p.id !== id);
+    saveJson(UPLOAD_STORE_KEY, filtered);
+    return { ok: true };
   }
-  return payload;
+
+  return { ok: true };
 }
 
 async function syncAuthUsers() {
