@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 
@@ -208,8 +208,8 @@ async function initApp() {
 
   onAuthStateChanged(auth, async (user) => {
     if (user) {
-      const userDoc = await getDoc(doc(db, "users", user.uid));
-      if (userDoc.exists()) {
+      const userDoc = await getDocWithRetry(doc(db, "users", user.uid));
+      if (userDoc) {
         const userData = userDoc.data();
         const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
         activeSession = { ...userData, username };
@@ -329,6 +329,15 @@ function loadJson(key, fallback) {
   try { return JSON.parse(raw); } catch { return structuredClone(fallback); }
 }
 function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
+
+async function getDocWithRetry(docRef, maxRetries = 5, delay = 1000) {
+  for (let i = 0; i < maxRetries; i++) {
+    const snap = await getDoc(docRef);
+    if (snap.exists()) return snap;
+    if (i < maxRetries - 1) await new Promise(r => setTimeout(r, delay));
+  }
+  return null;
+}
 
 
 
@@ -1032,7 +1041,7 @@ async function onSignup(event) {
     activeSession = { ...userData, username: '' };
     saveJson(AUTH_SESSION_KEY, activeSession);
     signupForm.reset();
-    await syncAuthUsers();
+    await bootstrapUsers(); // Sync users immediately
     openOnboarding();
   } catch (error) {
     setAuthMessage(error.message, false);
@@ -1053,8 +1062,8 @@ async function onLogin(event) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
 
-    const userDoc = await getDoc(doc(db, "users", user.uid));
-    if (!userDoc.exists()) throw new Error("User data not found in Firestore.");
+    const userDoc = await getDocWithRetry(doc(db, "users", user.uid));
+    if (!userDoc) throw new Error("User data not found in Firestore.");
 
     const userData = userDoc.data();
     const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
@@ -1195,13 +1204,24 @@ async function loadSession() {
 async function onDeleteAccount() {
   const password = deleteConfirmPassword.value;
   if (!password) return alert('Please confirm your password.');
-  if (!activeSession) return;
+  if (!activeSession || !auth.currentUser) return;
 
   try {
-    await apiRequest('/api/auth/delete-account', {
-      method: 'POST',
-      body: JSON.stringify({ email: activeSession.email, password })
-    });
+    const credential = EmailAuthProvider.credential(activeSession.email, password);
+    await reauthenticateWithCredential(auth.currentUser, credential);
+
+    const userId = activeSession.id;
+    // Cleanup user data in Firestore
+    await deleteDoc(doc(db, "users", userId));
+
+    // Cleanup posts
+    const q = query(collection(db, "posts"), where("userId", "==", userId));
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+      await deleteDoc(doc(db, "posts", d.id));
+    }
+
+    await deleteUser(auth.currentUser);
     deleteAccountModal.hidden = true;
     onLogout();
   } catch (error) {
