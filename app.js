@@ -305,6 +305,10 @@ async function apiRequest(path, options = {}) {
   }
 
   if (!response.ok) {
+    if (response.status === 405 || response.status === 501) {
+      const code = response.status;
+      throw new Error(`Request failed (${code}): Method Not Allowed. This usually happens if you are using a static file server (like python -m http.server) instead of the actual backend. Please use 'npm start' to run the server correctly.`);
+    }
     throw new Error(payload.error || `Request failed (${response.status})`);
   }
   return payload;

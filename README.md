@@ -43,12 +43,15 @@ A responsive social media prototype with a CMS-style upload pipeline, creative s
 
 ## Run locally
 
+To run the application with full backend support (Login, Signup, Chat, and Media Uploads), use:
+
 ```bash
-python3 -m http.server 4173
+npm start
 ```
 
 Open: `http://localhost:4173`
-A responsive social media prototype with a CMS-style upload pipeline, creative suite editing, channel management dashboard, interactive public feed, and Gmail-based authentication with username onboarding.
+
+> **Note:** Do not use `python3 -m http.server` or other static file servers, as they do not support the `POST` requests required for authentication and messaging, which will result in a **405 Method Not Allowed** error.
 
 ## Implemented capabilities
 
@@ -101,18 +104,6 @@ The application uses a hybrid storage model to ensure high performance and scala
 }
 ```
 
-## Run locally
-
-Preferred (full backend + API):
-
-```bash
-npm start
-```
-
-Open: `http://localhost:4173`
-
-Static-only mode (`python3 -m http.server`) is also supported now via frontend local API fallback for signup/login/onboarding if backend endpoints are unavailable.
-Open: `http://localhost:4173`GIT
 
 ## API highlights
 
