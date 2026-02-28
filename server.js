@@ -242,7 +242,21 @@ const server = http.createServer(async (req, res) => {
     const db = readDb();
     const idx = db.users.findIndex(u => u.email === email && u.password === password);
     if (idx === -1) return json(res, 401, { error: 'Confirmation failed: Incorrect password.' });
+    const userToDelete = db.users[idx];
+
+    // Remove the user
     db.users.splice(idx, 1);
+
+    // Cleanup user's posts
+    if (db.posts) {
+      db.posts = db.posts.filter(p => p.userId !== userToDelete.id);
+    }
+
+    // Cleanup user's relationships
+    if (db.relationships) {
+      db.relationships = db.relationships.filter(r => r.followerId !== userToDelete.id && r.followingId !== userToDelete.id);
+    }
+
     writeDb(db);
     return json(res, 200, { ok: true });
   }
