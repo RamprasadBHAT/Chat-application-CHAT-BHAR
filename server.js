@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { WebSocketServer } = require('ws');
 
 const PORT = process.env.PORT || 4173;
 const DB_PATH = path.join(__dirname, 'db', 'auth-db.json');
@@ -592,6 +593,40 @@ const server = http.createServer(async (req, res) => {
     'Access-Control-Allow-Origin': '*'
   });
   fs.createReadStream(filePath).pipe(res);
+});
+
+const wss = new WebSocketServer({ server });
+const clients = new Map();
+
+wss.on('connection', (ws) => {
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      if (data.type === 'auth') {
+        clients.set(data.userId, ws);
+        ws.userId = data.userId;
+      } else if (data.toId) {
+        // Deliver to specific client if online
+        const targetWs = clients.get(data.toId);
+        if (targetWs && targetWs.readyState === 1) {
+          targetWs.send(JSON.stringify(data));
+        }
+      } else if (data.type === 'presence' || data.type === 'post_created') {
+        // Broadcast to all
+        wss.clients.forEach(client => {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify(data));
+          }
+        });
+      }
+    } catch (e) {
+      console.error('WS error', e);
+    }
+  });
+
+  ws.on('close', () => {
+    if (ws.userId) clients.delete(ws.userId);
+  });
 });
 
 server.listen(PORT, () => {
