@@ -309,7 +309,10 @@ async function apiRequest(path, options = {}) {
 async function localApiRequest(path, options = {}) {
   const method = options.method || 'GET';
   const body = options.body ? JSON.parse(options.body) : {};
-  const users = loadJson(AUTH_USERS_KEY, []);
+  let users = loadJson(AUTH_USERS_KEY, []);
+  if (!Array.isArray(users)) {
+    users = users.users || [];
+  }
   const localPosts = loadJson(UPLOAD_STORE_KEY, []);
 
   if (path === '/api/auth/users' && method === 'GET') {
@@ -324,10 +327,19 @@ async function localApiRequest(path, options = {}) {
     if (users.some(u => u.email === email)) throw new Error('Email already exists');
     const newUser = {
       id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
-      name, email, password,
-      usernames: [], activeUsernameId: null,
+      name,
+      email,
+      password,
+      usernames: [],
+      usernameChangeLogs: [],
+      activeUsernameId: null,
+      profilePic: '',
+      bio: '',
+      profession: '',
+      location: '',
+      socialLinks: { twitter: '', linkedin: '', github: '' },
       stats: { posts: 0, followers: 0, following: 0 },
-      socialLinks: { twitter: '', linkedin: '', github: '' }
+      isPrivate: false
     };
     users.push(newUser);
     saveJson(AUTH_USERS_KEY, users);
@@ -404,6 +416,19 @@ async function localApiRequest(path, options = {}) {
     return { ok: true };
   }
 
+  if (path === '/api/auth/delete-account' && method === 'POST') {
+    const { email, password } = body;
+    const idx = users.findIndex(u => u.email === email && u.password === password);
+    if (idx === -1) throw new Error('Confirmation failed: Incorrect password.');
+    users.splice(idx, 1);
+    saveJson(AUTH_USERS_KEY, users);
+    // Also cleanup posts and relationships if we had them locally
+    const myPosts = localPosts.filter(p => p.email === email); // Simplified check
+    const remainingPosts = localPosts.filter(p => !myPosts.includes(p));
+    saveJson(UPLOAD_STORE_KEY, remainingPosts);
+    return { ok: true };
+  }
+
   return { ok: true };
 }
 
@@ -412,7 +437,7 @@ async function syncAuthUsers() {
     const payload = await apiRequest('/api/auth/users');
     authUsers = payload.users || [];
   } catch {
-    authUsers = [];
+    // Keep using authUsers from hydrateState on sync failure
   }
 }
 

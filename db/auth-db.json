@@ -505,6 +505,54 @@
         "following": 0
       },
       "isPrivate": false
+    },
+    {
+      "id": "c9940f96-0f82-45db-96c1-3457b3e694ec",
+      "name": "New User",
+      "email": "existing@gmail.com",
+      "password": "password123",
+      "usernames": [],
+      "usernameChangeLogs": [],
+      "activeUsernameId": null,
+      "profilePic": "",
+      "bio": "",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
+    },
+    {
+      "id": "36199ee7-5646-4a23-ad29-6834574ab675",
+      "name": "Test User",
+      "email": "test_1772279713341@gmail.com",
+      "password": "password123",
+      "usernames": [],
+      "usernameChangeLogs": [],
+      "activeUsernameId": null,
+      "profilePic": "",
+      "bio": "",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
     }
   ],
   "posts": [
