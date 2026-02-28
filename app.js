@@ -1532,7 +1532,7 @@ function validateUploadForType(type, files, caption, description) {
 }
 
 
-async function renderExploreUsers(query = '') {
+async function renderExploreUsers(searchQuery = '') {
   await syncAuthUsers();
   const users = authUsers;
 
@@ -1547,7 +1547,7 @@ async function renderExploreUsers(query = '') {
     }
   }
 
-  const normalizedQuery = String(query).trim().toLowerCase();
+  const normalizedQuery = String(searchQuery).trim().toLowerCase();
   const now = Date.now();
 
   const byUserLatestUpload = new Map();
