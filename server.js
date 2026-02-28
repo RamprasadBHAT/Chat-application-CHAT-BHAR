@@ -14,6 +14,21 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+// Verify storage is writable
+try {
+  const testFile = path.join(path.dirname(DB_PATH), '.write-test');
+  fs.writeFileSync(testFile, '');
+  fs.unlinkSync(testFile);
+  const testUpload = path.join(UPLOADS_DIR, '.write-test');
+  fs.writeFileSync(testUpload, '');
+  fs.unlinkSync(testUpload);
+} catch (e) {
+  console.error('\x1b[31m%s\x1b[0m', 'CRITICAL ERROR: Storage directories are not writable!');
+  console.error('\x1b[31m%s\x1b[0m', 'Please check permissions for the "db/" and "uploads/" folders.');
+  console.error(e);
+  process.exit(1);
+}
+
 function readDb() {
   let data;
   try {

@@ -450,6 +450,30 @@
         "following": 0
       },
       "isPrivate": false
+    },
+    {
+      "id": "49aa5ef9-400c-4e63-8e4c-b3798c5e07c8",
+      "name": "Verify User",
+      "email": "verify@gmail.com",
+      "password": "password123",
+      "usernames": [],
+      "usernameChangeLogs": [],
+      "activeUsernameId": null,
+      "profilePic": "",
+      "bio": "",
+      "profession": "",
+      "location": "",
+      "socialLinks": {
+        "twitter": "",
+        "linkedin": "",
+        "github": ""
+      },
+      "stats": {
+        "posts": 0,
+        "followers": 0,
+        "following": 0
+      },
+      "isPrivate": false
     }
   ],
   "posts": [
