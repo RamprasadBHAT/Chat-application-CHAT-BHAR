@@ -184,6 +184,26 @@ let activeChat = null;
 let messageUnsubscribe = null;
 let chatMeta = loadJson('chatbhar.chatMeta', {});
 
+function getUnifiedChatId(id) {
+  if (!id) return null;
+  if (!id.startsWith('dm:')) return id; // Group chats
+
+  // Format is dm:UID or dm:UID1_UID2
+  const content = id.replace('dm:', '');
+  if (content.includes('_')) {
+    const uids = content.split('_').sort();
+    return `dm:${uids[0]}_${uids[1]}`;
+  }
+
+  // Legacy dm:UID (single UID) - should be normalized to dm:myUID_otherUID
+  if (activeSession && activeSession.id) {
+    const uids = [activeSession.id, content].sort();
+    return `dm:${uids[0]}_${uids[1]}`;
+  }
+
+  return id;
+}
+
 function getDmChatId(uid1, uid2) {
   const ids = [uid1, uid2].sort();
   return `dm:${ids[0]}_${ids[1]}`;
@@ -279,8 +299,14 @@ function startRealTimeSync() {
     fetchAndSyncRelationships();
 }
 
-async function fetchAndSyncMessages() {
-  if (!activeSession || typeof db === 'undefined' || !activeChat) return;
+async function fetchAndSyncMessages(chatIdArg = null) {
+  if (!activeSession || typeof db === 'undefined') return;
+
+  if (chatIdArg) {
+    activeChat = getUnifiedChatId(chatIdArg);
+  }
+
+  if (!activeChat) return;
 
   if (messageUnsubscribe) {
     messageUnsubscribe();
@@ -333,9 +359,8 @@ function fetchAndSyncConversations() {
     if (!activeChat && myConversations.length > 0) {
       // Pick the most recent conversation as active
       const sorted = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-      activeChat = sorted[0].id;
       renderChatUsers();
-      fetchAndSyncMessages();
+      fetchAndSyncMessages(sorted[0].id);
     }
   });
 }
@@ -951,11 +976,10 @@ async function onExploreMessageClick(userId, username) {
     console.error("Failed to create/check conversation doc:", err);
   }
 
-  activeChat = chatId;
   const navBtn = document.querySelector('.nav-btn[data-tab="chat"]');
   if (navBtn) navBtn.click();
   renderChatUsers();
-  fetchAndSyncMessages();
+  fetchAndSyncMessages(chatId);
 }
 
 let otherProfileUserId = null;
@@ -2412,7 +2436,7 @@ function renderChatUsers() {
   const sortedConvs = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
   sortedConvs.forEach((conv) => {
-    const chatId = conv.id;
+    const chatId = getUnifiedChatId(conv.id);
     const isGroup = conv.isGroup;
     let otherUser = null;
     let chatName = conv.name || "Chat";
@@ -2426,7 +2450,7 @@ function renderChatUsers() {
 
     const latestMsg = chatStore[chatId]?.at(-1) || { text: conv.lastMessage || 'No messages yet' };
     const btn = document.createElement('button');
-    btn.className = `chat-user ${chatId === activeChat ? 'active' : ''}`;
+    btn.className = `chat-user ${getUnifiedChatId(chatId) === getUnifiedChatId(activeChat) ? 'active' : ''}`;
 
     // We don't have real-time presence for all users here yet, so default to offline/white
     const status = (otherUser && otherUser.online) ? '🟢' : '⚪';
@@ -2477,9 +2501,8 @@ function renderChatUsers() {
     }
 
     btn.addEventListener('click', () => {
-      activeChat = chatId;
       renderChatUsers();
-      fetchAndSyncMessages();
+      fetchAndSyncMessages(chatId);
     });
     chatUsersWrap.appendChild(btn);
   });
@@ -2592,7 +2615,7 @@ async function sendMessage(prepared = null) {
   if (!activeSession || !activeChat) return;
 
   // Create conversation doc if it doesn't exist (e.g. for legacy chats)
-  const convRef = doc(db, "conversations", activeChat);
+  const convRef = doc(db, "conversations", getUnifiedChatId(activeChat));
   const convSnap = await getDoc(convRef);
   if (!convSnap.exists()) {
     const isGroup = activeChat.startsWith('group:');
@@ -2630,7 +2653,7 @@ async function sendMessage(prepared = null) {
 
   try {
     const msg = {
-      chatId: activeChat,
+      chatId: getUnifiedChatId(activeChat),
       senderId: activeSession.id,
       senderName: activeHandle(),
       text: payload.text || '',
@@ -2645,7 +2668,8 @@ async function sendMessage(prepared = null) {
     await addDoc(collection(db, "messages"), msg);
 
     // Update conversation record
-    const convRef = doc(db, "conversations", activeChat);
+    const unifiedId = getUnifiedChatId(activeChat);
+    const convRef = doc(db, "conversations", unifiedId);
     await updateDoc(convRef, {
       lastMessage: payload.text || (payload.files?.length ? '📎 Attachment' : ''),
       updatedAt: now
