@@ -3,6 +3,11 @@ import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, on
 import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
+function getDmChatId(uid1, uid2) {
+  const ids = [uid1, uid2].sort();
+  return `dm:${ids[0]}_${ids[1]}`;
+}
+
 const AUTH_USERS_KEY = 'chatbhar.users';
 const AUTH_RESET_DONE_KEY = 'chatbhar.authResetDone';
 const AUTH_SESSION_KEY = 'chatbhar.session';
@@ -10,11 +15,6 @@ const CHAT_STORE_KEY = 'chatbhar.chatStore';
 const UPLOAD_STORE_KEY = 'chatbhar.uploads';
 
 let selectedUser = null;
-
-function getDmChatId(uid1, uid2) {
-  const ids = [uid1, uid2].sort();
-  return `dm:${ids[0]}_${ids[1]}`;
-}
 
 const authGate = document.getElementById('authGate');
 const appShell = document.getElementById('appShell');
@@ -93,7 +93,7 @@ const editProfilePrivate = document.getElementById('editProfilePrivate');
 const usernameAvailabilityHint = document.getElementById('usernameAvailabilityHint');
 
 const activeChatTitle = document.getElementById('activeChatTitle');
-const messages = document.getElementById('messages');
+const messagesContainer = document.getElementById('messages');
 const chatForm = document.getElementById('chatForm');
 const messageInput = document.getElementById('messageInput');
 const fileInput = document.getElementById('fileInput');
@@ -193,22 +193,21 @@ let chatMeta = loadJson('chatbhar.chatMeta', {});
 
 function getUnifiedChatId(id) {
   if (!id) return null;
-  if (!id.startsWith('dm:')) return id; // Group chats
+  if (!id.startsWith('dm:')) return id;
 
-  // Format is dm:UID or dm:UID1_UID2
   const content = id.replace('dm:', '');
+  let uids;
   if (content.includes('_')) {
-    const uids = content.split('_').sort();
-    return `dm:${uids[0]}_${uids[1]}`;
+    uids = content.split('_');
+  } else {
+    // Legacy single UID format: dm:OTHER_UID
+    const myUid = auth.currentUser?.uid || activeSession?.id;
+    if (!myUid) return id;
+    uids = [myUid, content];
   }
 
-  // Legacy dm:UID (single UID) - should be normalized to dm:myUID_otherUID
-  if (activeSession && activeSession.id) {
-    const uids = [activeSession.id, content].sort();
-    return `dm:${uids[0]}_${uids[1]}`;
-  }
-
-  return id;
+  uids.sort();
+  return `dm:${uids[0]}_${uids[1]}`;
 }
 
 let previewPendingMessage = null;
@@ -303,82 +302,121 @@ function startRealTimeSync() {
 }
 
 async function fetchAndSyncMessages(chatIdArg = null) {
-  if (!activeSession || typeof db === 'undefined') return;
+  if (!activeSession || !auth.currentUser || typeof db === 'undefined') return;
 
-  if (chatIdArg) {
-    activeChat = getUnifiedChatId(chatIdArg);
-  }
+  // 1. Target ID Selection and Selected User State
+  let targetChatId = chatIdArg ? getUnifiedChatId(chatIdArg) : activeChat;
+  if (!targetChatId) return;
 
-  if (!activeChat) return;
+  const myUid = auth.currentUser.uid;
 
-  // Update selectedUser if it's a DM
-  if (activeChat.startsWith('dm:')) {
-    const uids = activeChat.replace('dm:', '').split('_');
-    const otherUid = uids.find(id => id !== activeSession.id) || uids[0];
-    selectedUser = authUsers.find(u => u.id === otherUid) || { id: otherUid };
+  if (targetChatId.startsWith('dm:')) {
+    const content = targetChatId.replace('dm:', '');
+    const otherUid = content.includes('_') ? content.split('_').find(id => id !== myUid) : content;
+    const finalOtherUid = otherUid || myUid;
+
+    // Fix: Ensure 'Selected User' state is being updated correctly
+    const u = authUsers.find(x => x.id === finalOtherUid) || { id: finalOtherUid, name: 'User' };
+    selectedUser = { ...u, uid: u.id };
+
+    // The ID Generator Fix (Alphabetical sort fix)
+    targetChatId = getDmChatId(myUid, selectedUser.uid);
+
+    // Ensure chat metadata is present for the header
+    if (!chatMeta[targetChatId]) {
+      chatMeta[targetChatId] = {
+        id: targetChatId,
+        name: selectedUser.username || selectedUser.name || 'User',
+        participants: [myUid, selectedUser.uid],
+        isGroup: false
+      };
+      saveJson('chatbhar.chatMeta', chatMeta);
+    }
   } else {
     selectedUser = null;
   }
+
+  // Update Global State immediately
+  activeChat = targetChatId;
+  const currentChatId = activeChat;
 
   if (messageUnsubscribe) {
     messageUnsubscribe();
     messageUnsubscribe = null;
   }
 
-  // Use a local variable to capture the chatId for this listener instance
-  const currentChatId = activeChat;
-
-  renderMessages(); // Immediate feedback
-
-  messageUnsubscribe = onSnapshot(query(
+  // 2. The Message Listener (Look for where your app loads messages)
+  // Ensure your query is triggered immediately after chatId generation
+  const q = query(
     collection(db, "messages"),
     where("chatId", "==", currentChatId),
     orderBy("createdAt", "asc")
-  ), (snapshot) => {
-    const msgs = [];
-    snapshot.forEach((doc) => {
-      const m = doc.data();
-      if (m.deletedFor && m.deletedFor.includes(activeSession.id)) return;
-      const dir = m.senderId === activeSession.id ? 'outgoing' : 'incoming';
-      msgs.push({ ...m, dir, docId: doc.id });
+  );
+
+  // Fast Feedback: Render from local store while waiting for snapshot
+  renderMessages(chatStore[currentChatId] || []);
+  renderChatUsers();
+
+  // 3. The Real-time sync (OnSnapshot)
+  messageUnsubscribe = onSnapshot(q, (snapshot) => {
+    // Map snapshot to message objects with dir helper
+    const snapshotMsgs = snapshot.docs.map(doc => {
+      const data = doc.data();
+      const dir = data.senderId === myUid ? 'outgoing' : 'incoming';
+      return { id: doc.id, ...data, dir, docId: doc.id };
     });
 
-    // Ensure correct chronological order
-    msgs.sort((a, b) => Number(new Date(a.createdAt)) - Number(new Date(b.createdAt)));
+    // Filter "Delete for Me"
+    const visible = snapshotMsgs.filter(m => !m.deletedFor || !m.deletedFor.includes(myUid));
 
-    chatStore[currentChatId] = msgs;
+    // Sort Chronologically
+    visible.sort((a, b) => {
+      const getMs = (v) => v?.seconds ? v.seconds * 1000 : (v ? new Date(v).getTime() : 0);
+      const ta = getMs(a.createdAt);
+      const tb = getMs(b.createdAt);
+      return ta - tb;
+    });
+
+    // Update the local store (used by sidebar preview)
+    chatStore[currentChatId] = visible;
     saveJson(CHAT_STORE_KEY, chatStore);
 
+    // This puts the messages into the big chat box
     if (activeChat === currentChatId) {
-      renderMessages();
-      if (messages) messages.scrollTop = messages.scrollHeight;
+      renderMessages(visible);
+      if (messagesContainer) {
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        // Scroll again after a short delay to ensure rendering is complete
+        setTimeout(() => { messagesContainer.scrollTop = messagesContainer.scrollHeight; }, 100);
+      }
     }
-  });
+  }, (err) => console.error("Firestore Message Sync Error:", err));
 }
 
 function fetchAndSyncConversations() {
-  if (!activeSession || typeof db === 'undefined') return;
+  if (!activeSession || typeof db === 'undefined' || !auth.currentUser) return;
 
-  onSnapshot(query(collection(db, "conversations"), where("participants", "array-contains", activeSession.id)), (snapshot) => {
+  onSnapshot(query(collection(db, "conversations"), where("participants", "array-contains", auth.currentUser.uid)), (snapshot) => {
     myConversations = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
-    // Update chatMeta with conversation data if needed
+
+    // Update chatMeta with unified conversation IDs
     myConversations.forEach(conv => {
-        if (!chatMeta[conv.id]) {
-             chatMeta[conv.id] = {
-                 id: conv.id,
-                 name: conv.name || 'Group',
+        const unifiedId = getUnifiedChatId(conv.id);
+        if (!chatMeta[unifiedId]) {
+             chatMeta[unifiedId] = {
+                 id: unifiedId,
+                 name: conv.name || (conv.isGroup ? 'Group' : 'User'),
                  participants: conv.participants,
-                 isGroup: true,
+                 isGroup: conv.isGroup,
                  online: false
              };
         }
     });
+
     renderChatUsers();
 
     if (!activeChat && myConversations.length > 0) {
-      // Pick the most recent conversation as active
       const sorted = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-      renderChatUsers();
       fetchAndSyncMessages(sorted[0].id);
     }
   });
@@ -965,12 +1003,20 @@ async function sendContactRequest() {
 }
 
 async function onExploreMessageClick(userId, username) {
-  const chatId = getUnifiedChatId(getDmChatId(activeSession.id, userId));
-  if (!chatMeta[chatId]) {
-    chatMeta[chatId] = {
-      id: chatId,
+  if (!auth.currentUser) return;
+
+  // Explicitly set selectedUser
+  selectedUser = authUsers.find(u => u.id === userId) || { id: userId, uid: userId, name: username };
+  if (!selectedUser.uid) selectedUser.uid = selectedUser.id;
+
+  // Generate exact chatId
+  const currentChatId = getDmChatId(auth.currentUser.uid, selectedUser.uid);
+
+  if (!chatMeta[currentChatId]) {
+    chatMeta[currentChatId] = {
+      id: currentChatId,
       name: username,
-      participants: [activeSession.id, userId],
+      participants: [auth.currentUser.uid, selectedUser.uid],
       isGroup: false,
       online: true
     };
@@ -979,12 +1025,12 @@ async function onExploreMessageClick(userId, username) {
 
   // Ensure conversation doc exists
   try {
-    const convRef = doc(db, "conversations", chatId);
+    const convRef = doc(db, "conversations", currentChatId);
     const convSnap = await getDoc(convRef);
     if (!convSnap.exists()) {
       await setDoc(convRef, {
-        id: chatId,
-        participants: [activeSession.id, userId],
+        id: currentChatId,
+        participants: [auth.currentUser.uid, selectedUser.uid],
         isGroup: false,
         name: "", // Will use user names for DMs
         lastMessage: "Start of conversation",
@@ -998,7 +1044,7 @@ async function onExploreMessageClick(userId, username) {
   const navBtn = document.querySelector('.nav-btn[data-tab="chat"]');
   if (navBtn) navBtn.click();
   renderChatUsers();
-  fetchAndSyncMessages(chatId);
+  fetchAndSyncMessages(currentChatId);
 }
 
 let otherProfileUserId = null;
@@ -2527,29 +2573,33 @@ function renderChatUsers() {
   });
 }
 
-function renderMessages() {
-  if (!messages) return;
+function renderMessages(msgsArg = null) {
+  if (!messagesContainer) return;
   if (!activeChat) {
-    messages.innerHTML = '<div style="text-align:center; padding: 20px; color: var(--muted);">Select a contact to start chatting</div>';
+    messagesContainer.innerHTML = '<div style="text-align:center; padding: 20px; color: var(--muted);">Select a contact to start chatting</div>';
     if (activeChatTitle) activeChatTitle.textContent = 'Chat';
     return;
   }
-  if (!chatStore[activeChat]) chatStore[activeChat] = [];
+
+  const msgs = msgsArg || chatStore[activeChat] || [];
+  const myUid = auth.currentUser?.uid;
+
   const meta = chatMeta[activeChat] || { name: activeChat, online: false };
   activeChatTitle.textContent = meta.name;
   if (typingIndicator && !typingIndicator.textContent) typingIndicator.textContent = meta.online ? 'online' : 'offline';
 
-  messages.innerHTML = '';
-  chatStore[activeChat].forEach((msg, idx) => {
+  messagesContainer.innerHTML = '';
+  msgs.forEach((msg, idx) => {
     const bubble = document.createElement('div');
     const isImageOnly = !msg.text && !msg.replyToId && (msg.files || []).length > 0 && msg.files.every(f => (f.type || '').startsWith('image/'));
-    bubble.className = `bubble ${msg.dir} ${isImageOnly ? 'image-only' : ''}`;
+    const dir = msg.dir || (msg.senderId === myUid ? 'outgoing' : 'incoming');
+    bubble.className = `bubble ${dir} ${isImageOnly ? 'image-only' : ''}`;
 
     if (msg.deleted) {
       bubble.innerHTML = '<i style="opacity: 0.7;">This message was deleted</i>';
       bubble.classList.add('deleted-placeholder');
       bubble.dataset.id = msg.id;
-      messages.appendChild(bubble);
+      messagesContainer.appendChild(bubble);
       return;
     }
 
@@ -2575,7 +2625,7 @@ function renderMessages() {
 
     let replyHtml = '';
     if (msg.replyToId) {
-      const original = chatStore[activeChat].find(m => m.createdAt === msg.replyToId);
+      const original = msgs.find(m => m.createdAt === msg.replyToId);
       if (original) {
         replyHtml = `
           <div class="reply-ref">
@@ -2600,21 +2650,22 @@ function renderMessages() {
     bubble.onclick = (e) => showContextMenu(e, bubble);
     bubble.oncontextmenu = (e) => showContextMenu(e, bubble);
 
-    messages.appendChild(bubble);
+    messagesContainer.appendChild(bubble);
   });
 
-  messages.querySelectorAll('[data-open-img]').forEach((el) => {
+  messagesContainer.querySelectorAll('[data-open-img]').forEach((el) => {
     el.addEventListener('click', () => {
       const idx = Number(el.getAttribute('data-open-img'));
-      openImageFromMessage(idx);
+      openImageFromMessage(idx, msgs);
     });
   });
 
-  messages.scrollTop = messages.scrollHeight;
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
-function openImageFromMessage(idx) {
-  const msg = chatStore[activeChat][idx];
+function openImageFromMessage(idx, msgsSource = null) {
+  const msgs = msgsSource || chatStore[activeChat];
+  const msg = msgs[idx];
   const img = (msg.files || []).find((f) => (f.type || '').startsWith('image/'));
   if (!img) return;
   postViewerTitle.textContent = msg.viewOnce ? 'View Once Photo' : 'Photo';
@@ -2631,10 +2682,13 @@ function openImageFromMessage(idx) {
 }
 
 async function sendMessage(prepared = null) {
-  if (!activeSession || !activeChat) return;
+  if (!activeSession || !activeChat || !auth.currentUser) return;
 
-  // Use unified chatId consistently
-  const unifiedChatId = getUnifiedChatId(activeChat);
+  // Ensure EXACT same chatId format as generator
+  let unifiedChatId = activeChat;
+  if (selectedUser) {
+    unifiedChatId = getDmChatId(auth.currentUser.uid, selectedUser.uid);
+  }
 
   // Create conversation doc if it doesn't exist
   const convRef = doc(db, "conversations", unifiedChatId);
@@ -2643,7 +2697,8 @@ async function sendMessage(prepared = null) {
     const isGroup = unifiedChatId.startsWith('group:');
     let participants = [];
     if (!isGroup) {
-      participants = unifiedChatId.replace('dm:', '').split('_');
+      const uids = unifiedChatId.replace('dm:', '').split('_');
+      participants = uids;
     } else {
       participants = [activeSession.id];
     }
@@ -2667,20 +2722,17 @@ async function sendMessage(prepared = null) {
   const now = Date.now();
   if (!payload.text && !(payload.files || []).length) return;
 
-  const meta = chatMeta[unifiedChatId];
-  if (!meta) return;
-
   try {
     const msg = {
       chatId: unifiedChatId,
-      senderId: activeSession.id,
+      senderId: auth.currentUser.uid,
       senderName: activeHandle(),
       text: payload.text || '',
       files: payload.files || [],
       replyToId: payload.replyToId || null,
       viewOnce: payload.viewOnce || false,
       createdAt: now,
-      participants: meta.participants || [],
+      participants: selectedUser ? [auth.currentUser.uid, selectedUser.uid] : (chatMeta[unifiedChatId]?.participants || []),
       id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
     };
 
@@ -2835,10 +2887,10 @@ function bindMessagingUI() {
   if (createGroupConfirm) createGroupConfirm.addEventListener('click', createGroupChat);
 
   const msgContextMenu = document.getElementById('msgContextMenu');
-  if (messages && msgContextMenu) {
+  if (messagesContainer && msgContextMenu) {
     let longPressTimer;
     let touchX, touchY;
-    messages.addEventListener('touchstart', (e) => {
+    messagesContainer.addEventListener('touchstart', (e) => {
       const bubble = e.target.closest('.bubble');
       if (!bubble) return;
       touchStartX = e.touches[0].clientX;
@@ -2848,7 +2900,7 @@ function bindMessagingUI() {
       longPressTimer = setTimeout(() => showContextMenu({ clientX: touchX, clientY: touchY }, bubble), 600);
     }, { passive: true });
 
-    messages.addEventListener('touchmove', (e) => {
+    messagesContainer.addEventListener('touchmove', (e) => {
       clearTimeout(longPressTimer);
       if (!swipeBubble) return;
       const deltaX = e.touches[0].clientX - touchStartX;
@@ -2857,13 +2909,13 @@ function bindMessagingUI() {
       }
     }, { passive: true });
 
-    messages.addEventListener('touchend', (e) => {
+    messagesContainer.addEventListener('touchend', (e) => {
       clearTimeout(longPressTimer);
       if (!swipeBubble) return;
       const deltaX = e.changedTouches[0].clientX - touchStartX;
       swipeBubble.style.transform = '';
       if (deltaX > 50) {
-        const bubbleList = Array.from(messages.querySelectorAll('.bubble'));
+        const bubbleList = Array.from(messagesContainer.querySelectorAll('.bubble'));
         const msgIdx = bubbleList.indexOf(swipeBubble);
         const msg = chatStore[activeChat][msgIdx];
         if (msg) prepareReply(msg);
@@ -2871,7 +2923,7 @@ function bindMessagingUI() {
       swipeBubble = null;
     });
 
-    messages.addEventListener('contextmenu', (e) => {
+    messagesContainer.addEventListener('contextmenu', (e) => {
       const bubble = e.target.closest('.bubble');
       if (!bubble) return;
       e.preventDefault();
@@ -2955,7 +3007,7 @@ function showContextMenu(e, bubble) {
   const msgContextMenu = document.getElementById('msgContextMenu');
   if (!msgContextMenu) return;
 
-  const bubbleList = Array.from(messages.querySelectorAll('.bubble'));
+  const bubbleList = Array.from(messagesContainer.querySelectorAll('.bubble'));
   const msgIdx = bubbleList.indexOf(bubble);
   currentContextMsg = chatStore[activeChat][msgIdx];
   if (!currentContextMsg) return;
@@ -3042,7 +3094,7 @@ function prepareReply(msg) {
 
 function ensureChatMeta() {
   myConversations.forEach((conv) => {
-    const chatId = conv.id;
+    const chatId = getUnifiedChatId(conv.id);
     if (!chatMeta[chatId]) {
       let chatName = conv.name || "Chat";
       let participants = conv.participants || [];
@@ -3050,10 +3102,11 @@ function ensureChatMeta() {
 
       if (!isGroup) {
         const uids = chatId.replace('dm:', '').split('_');
-        const otherUid = uids.find(id => id !== activeSession?.id) || uids[0];
+        const myUid = auth.currentUser?.uid || activeSession?.id;
+        const otherUid = uids.find(id => id !== myUid) || uids[0];
         const otherUser = authUsers.find(u => u.id === otherUid);
         chatName = otherUser ? (otherUser.username || otherUser.name) : "User";
-        participants = [activeSession?.id, otherUid];
+        participants = [myUid, otherUid];
       }
 
       chatMeta[chatId] = {
