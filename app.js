@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit } from 'firebase/firestore';
-import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 const AUTH_USERS_KEY = 'chatbhar.users';
 const AUTH_RESET_DONE_KEY = 'chatbhar.authResetDone';
@@ -255,7 +255,7 @@ async function initApp() {
 async function fetchAndSyncMessages() {
   if (!activeSession || typeof db === 'undefined') return;
 
-  onSnapshot(query(collection(db, "messages"), where("participants", "array-contains", activeSession.id), orderBy("ts", "asc")), (snapshot) => {
+  onSnapshot(query(collection(db, "messages"), where("participants", "array-contains", activeSession.id), orderBy("createdAt", "asc")), (snapshot) => {
     const newStore = {};
     let changed = false;
 
@@ -289,6 +289,8 @@ async function fetchAndSyncMessages() {
       saveJson('chatbhar.chatMeta', chatMeta);
       renderChatUsers();
       renderMessages();
+      // Auto-Scroll: Ensure the chat window scrolls to the bottom for new messages
+      if (messages) messages.scrollTop = messages.scrollHeight;
     }
     if (!activeChat && Object.keys(chatStore).length > 0) {
       activeChat = Object.keys(chatStore)[0];
@@ -401,13 +403,20 @@ function bindEvents() {
     });
   }
 
-  if (deleteAccountOpenBtn) {
-    deleteAccountOpenBtn.addEventListener('click', () => {
+  const settingsBtn = document.querySelector('.settings-btn');
+  if (settingsBtn) {
+    settingsBtn.onclick = () => {
       deleteAccountModal.hidden = false;
       deleteConfirmPassword.value = '';
       deleteTick.checked = false;
       confirmDeleteBtn.disabled = true;
-    });
+
+      if (deleteTick) {
+        deleteTick.onchange = () => {
+          confirmDeleteBtn.disabled = !deleteTick.checked;
+        };
+      }
+    };
   }
   if (closeDeleteModal) closeDeleteModal.addEventListener('click', () => deleteAccountModal.hidden = true);
   if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', () => deleteAccountModal.hidden = true);
@@ -1211,17 +1220,34 @@ async function onDeleteAccount() {
     await reauthenticateWithCredential(auth.currentUser, credential);
 
     const userId = activeSession.id;
-    // Cleanup user data in Firestore
+
+    // First: Delete the user's document from the Firestore users collection
     await deleteDoc(doc(db, "users", userId));
 
-    // Cleanup posts
+    // Second: Delete the user's files/posts from Firebase Storage & Firestore
     const q = query(collection(db, "posts"), where("userId", "==", userId));
     const snap = await getDocs(q);
     for (const d of snap.docs) {
+      const postData = d.data();
+      // Delete files from storage if they are firebase storage URLs
+      if (postData.files) {
+        for (const file of postData.files) {
+          if (file.dataUrl && file.dataUrl.includes('firebasestorage.googleapis.com')) {
+            try {
+              const fileRef = ref(storage, file.dataUrl);
+              await deleteObject(fileRef);
+            } catch (storageErr) {
+              console.warn('Could not delete storage file:', file.dataUrl, storageErr);
+            }
+          }
+        }
+      }
       await deleteDoc(doc(db, "posts", d.id));
     }
 
+    // Third: Delete the account from Firebase Authentication
     await deleteUser(auth.currentUser);
+
     deleteAccountModal.hidden = true;
     onLogout();
   } catch (error) {
@@ -1992,6 +2018,23 @@ function renderChannelManager() {
   // Populate Header
   if (myChannelHandle) myChannelHandle.textContent = activeSession.username || activeSession.name || 'User';
   if (myChannelDisplayName) myChannelDisplayName.textContent = activeSession.name || activeHandle();
+
+  const settingsBtnInProfile = document.querySelector('.settings-btn');
+  if (settingsBtnInProfile) {
+    settingsBtnInProfile.onclick = () => {
+      deleteAccountModal.hidden = false;
+      deleteConfirmPassword.value = '';
+      deleteTick.checked = false;
+      confirmDeleteBtn.disabled = true;
+
+      if (deleteTick) {
+        deleteTick.onchange = () => {
+          confirmDeleteBtn.disabled = !deleteTick.checked;
+        };
+      }
+    };
+  }
+
   if (myChannelProfession) myChannelProfession.textContent = activeSession.profession || 'Content Creator';
   if (myChannelBio) myChannelBio.textContent = activeSession.bio || 'Digital Creator | Tech Enthusiast | Travel Lover 🌍';
 
@@ -2242,7 +2285,7 @@ function renderMessages() {
 
     let replyHtml = '';
     if (msg.replyToId) {
-      const original = chatStore[activeChat].find(m => m.ts === msg.replyToId);
+      const original = chatStore[activeChat].find(m => m.createdAt === msg.replyToId);
       if (original) {
         replyHtml = `
           <div class="reply-ref">
@@ -2303,7 +2346,7 @@ async function sendMessage(prepared = null) {
     text: messageInput.value.trim(),
     files: pendingFiles,
     viewOnce: Boolean(viewOnceToggle?.checked),
-    replyToId: replyToMsg ? replyToMsg.ts : null
+    replyToId: replyToMsg ? replyToMsg.createdAt : null
   };
   if (!payload.text && !(payload.files || []).length) return;
 
@@ -2319,7 +2362,7 @@ async function sendMessage(prepared = null) {
       files: payload.files || [],
       replyToId: payload.replyToId || null,
       viewOnce: payload.viewOnce || false,
-      ts: Date.now(),
+      createdAt: Date.now(),
       participants: meta.participants || [],
       id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
     };
@@ -2618,7 +2661,7 @@ function showContextMenu(e, bubble) {
   const deleteEveryoneBtn = document.getElementById('deleteEveryoneBtn');
   const contextEditBtn = document.getElementById('contextEditBtn');
   const isOutgoing = currentContextMsg.dir === 'outgoing';
-  const ageInMinutes = (Date.now() - (currentContextMsg.ts || 0)) / 1000 / 60;
+  const ageInMinutes = (Date.now() - (currentContextMsg.createdAt || 0)) / 1000 / 60;
 
   if (deleteEveryoneBtn) {
     deleteEveryoneBtn.hidden = !isOutgoing || ageInMinutes > 15;
@@ -2866,7 +2909,7 @@ async function sharePostToChat(postId, targetUserId) {
   const post = uploads.find(u => u.id === postId);
   if (!post || !activeSession) return;
 
-  const ts = Date.now();
+  const createdAt = Date.now();
   const text = `Check out this post: ${post.caption || 'Untitled'}`;
   const files = [post.files[0]];
   const chatId = `dm:${targetUserId}`;
@@ -2878,7 +2921,7 @@ async function sharePostToChat(postId, targetUserId) {
       senderName: activeHandle(),
       text,
       files,
-      ts,
+      createdAt,
       participants: [activeSession.id, targetUserId],
       id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
     });
