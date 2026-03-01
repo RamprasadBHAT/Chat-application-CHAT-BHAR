@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, or, and } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 function getDmChatId(uid1, uid2) {
@@ -351,11 +351,23 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   // 2. The Message Listener (Look for where your app loads messages)
   // Ensure your query is triggered immediately after chatId generation
-  const q = query(
-    collection(db, "messages"),
-    where("chatId", "==", currentChatId),
-    orderBy("createdAt", "asc")
-  );
+  let q;
+  if (selectedUser) {
+    q = query(
+      collection(db, "messages"),
+      or(
+        and(where("senderId", "==", myUid), where("receiverId", "==", selectedUser.uid)),
+        and(where("senderId", "==", selectedUser.uid), where("receiverId", "==", myUid))
+      ),
+      orderBy("createdAt", "asc")
+    );
+  } else {
+    q = query(
+      collection(db, "messages"),
+      where("chatId", "==", currentChatId),
+      orderBy("createdAt", "asc")
+    );
+  }
 
   // Fast Feedback: Render from local store while waiting for snapshot
   renderMessages(chatStore[currentChatId] || []);
@@ -388,11 +400,7 @@ async function fetchAndSyncMessages(chatIdArg = null) {
     // This puts the messages into the big chat box
     if (activeChat === currentChatId) {
       renderMessages(visible);
-      if (messagesContainer) {
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        // Scroll again after a short delay to ensure rendering is complete
-        setTimeout(() => { messagesContainer.scrollTop = messagesContainer.scrollHeight; }, 100);
-      }
+      scrollToBottom();
     }
   }, (err) => console.error("Firestore Message Sync Error:", err));
 }
@@ -2658,6 +2666,14 @@ function renderChatUsers() {
   });
 }
 
+function scrollToBottom() {
+  if (messagesContainer) {
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    // Scroll again after a short delay to ensure rendering is complete
+    setTimeout(() => { messagesContainer.scrollTop = messagesContainer.scrollHeight; }, 100);
+  }
+}
+
 function renderMessages(msgsArg = null) {
   if (!messagesContainer) return;
   if (!activeChat) {
@@ -2745,7 +2761,7 @@ function renderMessages(msgsArg = null) {
     });
   });
 
-  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  scrollToBottom();
 }
 
 function openImageFromMessage(idx, msgsSource = null) {
@@ -2811,6 +2827,7 @@ async function sendMessage(prepared = null) {
     const msg = {
       chatId: unifiedChatId,
       senderId: auth.currentUser.uid,
+      receiverId: selectedUser ? selectedUser.uid : null,
       senderName: activeHandle(),
       text: payload.text || '',
       files: payload.files || [],
