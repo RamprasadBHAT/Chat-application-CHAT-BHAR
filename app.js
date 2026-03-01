@@ -9,6 +9,13 @@ const AUTH_SESSION_KEY = 'chatbhar.session';
 const CHAT_STORE_KEY = 'chatbhar.chatStore';
 const UPLOAD_STORE_KEY = 'chatbhar.uploads';
 
+let selectedUser = null;
+
+function getDmChatId(uid1, uid2) {
+  const ids = [uid1, uid2].sort();
+  return `dm:${ids[0]}_${ids[1]}`;
+}
+
 const authGate = document.getElementById('authGate');
 const appShell = document.getElementById('appShell');
 const signupForm = document.getElementById('signupForm');
@@ -204,10 +211,6 @@ function getUnifiedChatId(id) {
   return id;
 }
 
-function getDmChatId(uid1, uid2) {
-  const ids = [uid1, uid2].sort();
-  return `dm:${ids[0]}_${ids[1]}`;
-}
 let previewPendingMessage = null;
 let typingTimeout = null;
 let ws = null;
@@ -308,14 +311,28 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   if (!activeChat) return;
 
+  // Update selectedUser if it's a DM
+  if (activeChat.startsWith('dm:')) {
+    const uids = activeChat.replace('dm:', '').split('_');
+    const otherUid = uids.find(id => id !== activeSession.id) || uids[0];
+    selectedUser = authUsers.find(u => u.id === otherUid) || { id: otherUid };
+  } else {
+    selectedUser = null;
+  }
+
   if (messageUnsubscribe) {
     messageUnsubscribe();
     messageUnsubscribe = null;
   }
 
+  // Use a local variable to capture the chatId for this listener instance
+  const currentChatId = activeChat;
+
+  renderMessages(); // Immediate feedback
+
   messageUnsubscribe = onSnapshot(query(
     collection(db, "messages"),
-    where("chatId", "==", activeChat),
+    where("chatId", "==", currentChatId),
     orderBy("createdAt", "asc")
   ), (snapshot) => {
     const msgs = [];
@@ -326,14 +343,16 @@ async function fetchAndSyncMessages(chatIdArg = null) {
       msgs.push({ ...m, dir, docId: doc.id });
     });
 
-    // Ensure correct chronological order even if some legacy data exists as numeric strings or ISO strings
+    // Ensure correct chronological order
     msgs.sort((a, b) => Number(new Date(a.createdAt)) - Number(new Date(b.createdAt)));
 
-    chatStore[activeChat] = msgs;
+    chatStore[currentChatId] = msgs;
     saveJson(CHAT_STORE_KEY, chatStore);
-    renderMessages();
 
-    if (messages) messages.scrollTop = messages.scrollHeight;
+    if (activeChat === currentChatId) {
+      renderMessages();
+      if (messages) messages.scrollTop = messages.scrollHeight;
+    }
   });
 }
 
@@ -946,7 +965,7 @@ async function sendContactRequest() {
 }
 
 async function onExploreMessageClick(userId, username) {
-  const chatId = getDmChatId(activeSession.id, userId);
+  const chatId = getUnifiedChatId(getDmChatId(activeSession.id, userId));
   if (!chatMeta[chatId]) {
     chatMeta[chatId] = {
       id: chatId,
@@ -2614,25 +2633,25 @@ function openImageFromMessage(idx) {
 async function sendMessage(prepared = null) {
   if (!activeSession || !activeChat) return;
 
-  // Create conversation doc if it doesn't exist (e.g. for legacy chats)
-  const convRef = doc(db, "conversations", getUnifiedChatId(activeChat));
+  // Use unified chatId consistently
+  const unifiedChatId = getUnifiedChatId(activeChat);
+
+  // Create conversation doc if it doesn't exist
+  const convRef = doc(db, "conversations", unifiedChatId);
   const convSnap = await getDoc(convRef);
   if (!convSnap.exists()) {
-    const isGroup = activeChat.startsWith('group:');
+    const isGroup = unifiedChatId.startsWith('group:');
     let participants = [];
     if (!isGroup) {
-      participants = activeChat.replace('dm:', '').split('_');
+      participants = unifiedChatId.replace('dm:', '').split('_');
     } else {
-      // For groups, we might not have the participant list handy here,
-      // but groups should already have conv docs.
-      // In emergency, we at least put the sender.
       participants = [activeSession.id];
     }
     await setDoc(convRef, {
-      id: activeChat,
+      id: unifiedChatId,
       participants,
       isGroup,
-      name: isGroup ? activeChat.replace('group:', '').split('-')[0] : "",
+      name: isGroup ? unifiedChatId.replace('group:', '').split('-')[0] : "",
       lastMessage: "Conversation initialized",
       updatedAt: Date.now()
     });
@@ -2648,12 +2667,12 @@ async function sendMessage(prepared = null) {
   const now = Date.now();
   if (!payload.text && !(payload.files || []).length) return;
 
-  const meta = chatMeta[activeChat];
+  const meta = chatMeta[unifiedChatId];
   if (!meta) return;
 
   try {
     const msg = {
-      chatId: getUnifiedChatId(activeChat),
+      chatId: unifiedChatId,
       senderId: activeSession.id,
       senderName: activeHandle(),
       text: payload.text || '',
@@ -2668,8 +2687,6 @@ async function sendMessage(prepared = null) {
     await addDoc(collection(db, "messages"), msg);
 
     // Update conversation record
-    const unifiedId = getUnifiedChatId(activeChat);
-    const convRef = doc(db, "conversations", unifiedId);
     await updateDoc(convRef, {
       lastMessage: payload.text || (payload.files?.length ? '📎 Attachment' : ''),
       updatedAt: now
@@ -3242,7 +3259,7 @@ async function sharePostToChat(postId, targetUserId) {
   const now = Date.now();
   const text = `Check out this post: ${post.caption || 'Untitled'}`;
   const files = [post.files[0]];
-  const chatId = getDmChatId(activeSession.id, targetUserId);
+  const chatId = getUnifiedChatId(getDmChatId(activeSession.id, targetUserId));
 
   try {
     await addDoc(collection(db, "messages"), {
