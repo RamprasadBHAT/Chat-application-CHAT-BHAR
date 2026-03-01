@@ -180,8 +180,14 @@ let selectedUploadEdits = [];
 let activeSuiteIndex = 0;
 let pendingFiles = [];
 let chatStore = loadJson(CHAT_STORE_KEY, {});
-let activeChat = Object.keys(chatStore)[0] || null;
+let activeChat = null;
+let messageUnsubscribe = null;
 let chatMeta = loadJson('chatbhar.chatMeta', {});
+
+function getDmChatId(uid1, uid2) {
+  const ids = [uid1, uid2].sort();
+  return `dm:${ids[0]}_${ids[1]}`;
+}
 let previewPendingMessage = null;
 let typingTimeout = null;
 let ws = null;
@@ -274,41 +280,34 @@ function startRealTimeSync() {
 }
 
 async function fetchAndSyncMessages() {
-  if (!activeSession || typeof db === 'undefined') return;
+  if (!activeSession || typeof db === 'undefined' || !activeChat) return;
 
-  onSnapshot(query(collection(db, "messages"), where("participants", "array-contains", activeSession.id), orderBy("createdAt", "asc")), (snapshot) => {
-    const newStore = {};
+  if (messageUnsubscribe) {
+    messageUnsubscribe();
+    messageUnsubscribe = null;
+  }
+
+  messageUnsubscribe = onSnapshot(query(
+    collection(db, "messages"),
+    where("chatId", "==", activeChat),
+    orderBy("createdAt", "asc")
+  ), (snapshot) => {
+    const msgs = [];
     snapshot.forEach((doc) => {
       const m = doc.data();
       if (m.deletedFor && m.deletedFor.includes(activeSession.id)) return;
-
-      if (!newStore[m.chatId]) newStore[m.chatId] = [];
       const dir = m.senderId === activeSession.id ? 'outgoing' : 'incoming';
-      newStore[m.chatId].push({ ...m, dir, docId: doc.id });
-
-      if (!chatMeta[m.chatId]) {
-        chatMeta[m.chatId] = {
-          id: m.chatId,
-          name: m.senderName || 'User',
-          participants: m.participants || [],
-          isGroup: m.chatId.startsWith('group:'),
-          online: false
-        };
-      }
+      msgs.push({ ...m, dir, docId: doc.id });
     });
 
-    chatStore = newStore;
+    // Ensure correct chronological order even if some legacy data exists as numeric strings or ISO strings
+    msgs.sort((a, b) => Number(new Date(a.createdAt)) - Number(new Date(b.createdAt)));
+
+    chatStore[activeChat] = msgs;
     saveJson(CHAT_STORE_KEY, chatStore);
-    saveJson('chatbhar.chatMeta', chatMeta);
-    renderChatUsers();
     renderMessages();
 
     if (messages) messages.scrollTop = messages.scrollHeight;
-
-    if (!activeChat && Object.keys(chatStore).length > 0) {
-      activeChat = Object.keys(chatStore)[0];
-      renderMessages();
-    }
   });
 }
 
@@ -330,6 +329,14 @@ function fetchAndSyncConversations() {
         }
     });
     renderChatUsers();
+
+    if (!activeChat && myConversations.length > 0) {
+      // Pick the most recent conversation as active
+      const sorted = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      activeChat = sorted[0].id;
+      renderChatUsers();
+      fetchAndSyncMessages();
+    }
   });
 }
 
@@ -914,7 +921,7 @@ async function sendContactRequest() {
 }
 
 async function onExploreMessageClick(userId, username) {
-  const chatId = `dm:${userId}`;
+  const chatId = getDmChatId(activeSession.id, userId);
   if (!chatMeta[chatId]) {
     chatMeta[chatId] = {
       id: chatId,
@@ -925,11 +932,30 @@ async function onExploreMessageClick(userId, username) {
     };
     saveJson('chatbhar.chatMeta', chatMeta);
   }
+
+  // Ensure conversation doc exists
+  try {
+    const convRef = doc(db, "conversations", chatId);
+    const convSnap = await getDoc(convRef);
+    if (!convSnap.exists()) {
+      await setDoc(convRef, {
+        id: chatId,
+        participants: [activeSession.id, userId],
+        isGroup: false,
+        name: "", // Will use user names for DMs
+        lastMessage: "Start of conversation",
+        updatedAt: Date.now()
+      });
+    }
+  } catch (err) {
+    console.error("Failed to create/check conversation doc:", err);
+  }
+
   activeChat = chatId;
   const navBtn = document.querySelector('.nav-btn[data-tab="chat"]');
   if (navBtn) navBtn.click();
   renderChatUsers();
-  renderMessages();
+  fetchAndSyncMessages();
 }
 
 let otherProfileUserId = null;
@@ -1688,8 +1714,8 @@ async function onUploadSubmit(event) {
         const postDoc = {
           ...baseRecord,
           id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
-          createdAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 24 * 60 * 60 * 1000,
           files: [prepared[idx]],
           edits: [edits[idx] || defaultEdit(prepared[idx].name)]
         };
@@ -1699,7 +1725,7 @@ async function onUploadSubmit(event) {
       const postDoc = {
         ...baseRecord,
         id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
-        createdAt: new Date().toISOString(),
+        createdAt: Date.now(),
         expiresAt: null,
         files: prepared,
         edits
@@ -1926,7 +1952,7 @@ function renderHome() {
 
 function liveStories() {
   const now = Date.now();
-  return uploads.filter((u) => u.type === 'story' && u.expiresAt && new Date(u.expiresAt).getTime() > now);
+  return uploads.filter((u) => u.type === 'story' && u.expiresAt && (typeof u.expiresAt === 'number' ? u.expiresAt : new Date(u.expiresAt).getTime()) > now);
 }
 
 function renderStories() {
@@ -1964,7 +1990,7 @@ function renderStories() {
 
 function renderFeed() {
   feedList.innerHTML = '';
-  const items = uploads.filter((u) => u.type !== 'story').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const items = uploads.filter((u) => u.type !== 'story').sort((a, b) => Number(new Date(b.createdAt)) - Number(new Date(a.createdAt)));
   if (!items.length) {
     feedList.innerHTML = '<article class="feed-card glass"><p>No uploads yet. Use Post tab to publish.</p></article>';
     return;
@@ -2104,7 +2130,7 @@ function openPostViewer(postId) {
   const post = uploads.find((u) => u.id === postId);
   if (!post) return;
 
-  const userPosts = uploads.filter(u => u.userId === post.userId && u.type !== 'story').sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const userPosts = uploads.filter(u => u.userId === post.userId && u.type !== 'story').sort((a,b) => Number(new Date(b.createdAt)) - Number(new Date(a.createdAt)));
   const idx = userPosts.findIndex(p => p.id === postId);
 
   if (prevPostBtn) prevPostBtn.disabled = idx <= 0;
@@ -2199,7 +2225,7 @@ function openPostViewer(postId) {
 function navigatePostViewer(dir) {
   const post = uploads.find(u => u.id === activePostViewerId);
   if (!post) return;
-  const userPosts = uploads.filter(u => u.userId === post.userId && u.type !== 'story').sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const userPosts = uploads.filter(u => u.userId === post.userId && u.type !== 'story').sort((a,b) => Number(new Date(b.createdAt)) - Number(new Date(a.createdAt)));
   const idx = userPosts.findIndex(p => p.id === activePostViewerId);
   const nextIdx = idx + dir;
   if (nextIdx >= 0 && nextIdx < userPosts.length) {
@@ -2376,39 +2402,55 @@ function showStoryByIndex(index) {
 function renderChatUsers() {
   if (!chatUsersWrap) return;
 
-  const onlineCount = authUsers.filter(u => u.online).length; // Need presence logic
+  const onlineCount = authUsers.filter(u => u.online).length;
   const onlineUsersCount = document.getElementById('onlineUsersCount');
   if (onlineUsersCount) onlineUsersCount.textContent = `Online users: ${onlineCount}`;
 
   chatUsersWrap.innerHTML = '';
-  Object.keys(chatStore).forEach((chatId) => {
-    const latest = chatStore[chatId].at(-1);
-    const meta = chatMeta[chatId] || { name: chatId, online: false };
+
+  // Sort conversations by updatedAt descending
+  const sortedConvs = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+  sortedConvs.forEach((conv) => {
+    const chatId = conv.id;
+    const isGroup = conv.isGroup;
+    let otherUser = null;
+    let chatName = conv.name || "Chat";
+
+    if (!isGroup) {
+      const uids = chatId.replace('dm:', '').split('_');
+      const otherUid = uids.find(id => id !== activeSession.id) || uids[0];
+      otherUser = authUsers.find(u => u.id === otherUid);
+      chatName = otherUser ? (otherUser.username || otherUser.name) : "User";
+    }
+
+    const latestMsg = chatStore[chatId]?.at(-1) || { text: conv.lastMessage || 'No messages yet' };
     const btn = document.createElement('button');
     btn.className = `chat-user ${chatId === activeChat ? 'active' : ''}`;
-    const status = meta.online ? '🟢' : '⚪';
-    const preview = latest?.text || latest?.files?.[0]?.name || 'No messages yet';
 
-    const user = authUsers.find(u => u.name === meta.name || u.id === chatId.split(':').pop());
+    // We don't have real-time presence for all users here yet, so default to offline/white
+    const status = (otherUser && otherUser.online) ? '🟢' : '⚪';
+    const preview = latestMsg.text || (latestMsg.files?.length ? '📎 Attachment' : 'No messages yet');
+
     let avatarHtml = '';
-    if (user?.profilePic) {
-      avatarHtml = `<img src="${user.profilePic}" class="chat-avatar" />`;
+    if (otherUser?.profilePic) {
+      avatarHtml = `<img src="${otherUser.profilePic}" class="chat-avatar" />`;
     } else {
-      avatarHtml = `<div class="chat-avatar" style="background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-size:12px">${(meta.name[0]||'U').toUpperCase()}</div>`;
+      avatarHtml = `<div class="chat-avatar" style="background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-size:12px">${(chatName[0]||'U').toUpperCase()}</div>`;
     }
 
     btn.innerHTML = `
       ${avatarHtml}
       <div style="flex:1; text-align:left; overflow:hidden">
         <div style="display:flex; justify-content:space-between">
-          <span>${status} ${escapeHtml(meta.name)}</span>
+          <span>${status} ${escapeHtml(chatName)}</span>
         </div>
         <small style="display:block; white-space:nowrap; text-overflow:ellipsis; overflow:hidden">${escapeHtml(preview)}</small>
       </div>
     `;
 
     const avatarEl = btn.querySelector('.chat-avatar');
-    if (avatarEl) {
+    if (avatarEl && otherUser) {
       avatarEl.style.cursor = 'pointer';
 
       let avatarLongPress;
@@ -2417,11 +2459,11 @@ function renderChatUsers() {
           e.preventDefault();
           e.stopPropagation();
         }
-        openOtherProfile(chatId.split(':').pop());
+        openOtherProfile(otherUser.id);
       };
 
       avatarEl.onmousedown = (e) => {
-        if (e.button === 2) return; // Right click handled by contextmenu
+        if (e.button === 2) return;
         avatarLongPress = setTimeout(() => triggerProfile(e), 600);
       };
       avatarEl.onmouseup = () => clearTimeout(avatarLongPress);
@@ -2437,7 +2479,7 @@ function renderChatUsers() {
     btn.addEventListener('click', () => {
       activeChat = chatId;
       renderChatUsers();
-      renderMessages();
+      fetchAndSyncMessages();
     });
     chatUsersWrap.appendChild(btn);
   });
@@ -2548,12 +2590,39 @@ function openImageFromMessage(idx) {
 
 async function sendMessage(prepared = null) {
   if (!activeSession || !activeChat) return;
+
+  // Create conversation doc if it doesn't exist (e.g. for legacy chats)
+  const convRef = doc(db, "conversations", activeChat);
+  const convSnap = await getDoc(convRef);
+  if (!convSnap.exists()) {
+    const isGroup = activeChat.startsWith('group:');
+    let participants = [];
+    if (!isGroup) {
+      participants = activeChat.replace('dm:', '').split('_');
+    } else {
+      // For groups, we might not have the participant list handy here,
+      // but groups should already have conv docs.
+      // In emergency, we at least put the sender.
+      participants = [activeSession.id];
+    }
+    await setDoc(convRef, {
+      id: activeChat,
+      participants,
+      isGroup,
+      name: isGroup ? activeChat.replace('group:', '').split('-')[0] : "",
+      lastMessage: "Conversation initialized",
+      updatedAt: Date.now()
+    });
+  }
+
   const payload = prepared || {
     text: messageInput.value.trim(),
     files: pendingFiles,
     viewOnce: Boolean(viewOnceToggle?.checked),
     replyToId: replyToMsg ? replyToMsg.createdAt : null
   };
+
+  const now = Date.now();
   if (!payload.text && !(payload.files || []).length) return;
 
   const meta = chatMeta[activeChat];
@@ -2568,12 +2637,19 @@ async function sendMessage(prepared = null) {
       files: payload.files || [],
       replyToId: payload.replyToId || null,
       viewOnce: payload.viewOnce || false,
-      createdAt: Date.now(),
+      createdAt: now,
       participants: meta.participants || [],
       id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
     };
 
     await addDoc(collection(db, "messages"), msg);
+
+    // Update conversation record
+    const convRef = doc(db, "conversations", activeChat);
+    await updateDoc(convRef, {
+      lastMessage: payload.text || (payload.files?.length ? '📎 Attachment' : ''),
+      updatedAt: now
+    });
 
   } catch (err) {
     console.error('Send message failed', err);
@@ -2924,13 +3000,26 @@ function prepareReply(msg) {
 }
 
 function ensureChatMeta() {
-  Object.keys(chatStore).forEach((chatId) => {
+  myConversations.forEach((conv) => {
+    const chatId = conv.id;
     if (!chatMeta[chatId]) {
+      let chatName = conv.name || "Chat";
+      let participants = conv.participants || [];
+      const isGroup = conv.isGroup;
+
+      if (!isGroup) {
+        const uids = chatId.replace('dm:', '').split('_');
+        const otherUid = uids.find(id => id !== activeSession?.id) || uids[0];
+        const otherUser = authUsers.find(u => u.id === otherUid);
+        chatName = otherUser ? (otherUser.username || otherUser.name) : "User";
+        participants = [activeSession?.id, otherUid];
+      }
+
       chatMeta[chatId] = {
         id: chatId,
-        name: chatId.startsWith('dm:') ? chatId : chatId.replace('group:', ''),
-        participants: [],
-        isGroup: chatId.startsWith('group:'),
+        name: chatName,
+        participants: participants,
+        isGroup: isGroup,
         online: false
       };
     }
@@ -2976,21 +3065,32 @@ async function openGroupModal() {
   groupModal.hidden = false;
 }
 
-function createGroupChat() {
+async function createGroupChat() {
   const name = groupNameInput.value.trim();
   if (!name) return;
   const members = [...groupContactList.querySelectorAll('input:checked')].map((x) => x.value);
   if (!members.length) return;
   const id = `group:${name}-${Date.now()}`;
-  chatStore[id] = [];
-  chatMeta[id] = { id, name, participants: [activeSession.id, ...members], isGroup: true, online: true };
-  saveJson(CHAT_STORE_KEY, chatStore);
-  saveJson('chatbhar.chatMeta', chatMeta);
+  const participants = [activeSession.id, ...members];
+
+  try {
+    await setDoc(doc(db, "conversations", id), {
+      id,
+      name,
+      participants,
+      isGroup: true,
+      lastMessage: "Group created",
+      updatedAt: Date.now()
+    });
+  } catch (err) {
+    console.error("Failed to create group conversation:", err);
+  }
+
   activeChat = id;
   groupNameInput.value = '';
   groupModal.hidden = true;
   renderChatUsers();
-  renderMessages();
+  fetchAndSyncMessages();
 }
 
 function maybeOpenImagePreview() {
@@ -3115,10 +3215,10 @@ async function sharePostToChat(postId, targetUserId) {
   const post = uploads.find(u => u.id === postId);
   if (!post || !activeSession) return;
 
-  const createdAt = Date.now();
+  const now = Date.now();
   const text = `Check out this post: ${post.caption || 'Untitled'}`;
   const files = [post.files[0]];
-  const chatId = `dm:${targetUserId}`;
+  const chatId = getDmChatId(activeSession.id, targetUserId);
 
   try {
     await addDoc(collection(db, "messages"), {
@@ -3127,10 +3227,29 @@ async function sharePostToChat(postId, targetUserId) {
       senderName: activeHandle(),
       text,
       files,
-      createdAt,
+      createdAt: now,
       participants: [activeSession.id, targetUserId],
       id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
     });
+
+    // Ensure conversation doc exists and is updated
+    const convRef = doc(db, "conversations", chatId);
+    const convSnap = await getDoc(convRef);
+    if (!convSnap.exists()) {
+      await setDoc(convRef, {
+        id: chatId,
+        participants: [activeSession.id, targetUserId],
+        isGroup: false,
+        name: "",
+        lastMessage: text,
+        updatedAt: now
+      });
+    } else {
+      await updateDoc(convRef, {
+        lastMessage: text,
+        updatedAt: now
+      });
+    }
 
     if (!post.interactions.shares) post.interactions.shares = 0;
     const shares = post.interactions.shares + 1;
