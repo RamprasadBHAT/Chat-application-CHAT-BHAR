@@ -153,6 +153,19 @@ const createGroupConfirm = document.getElementById('createGroupConfirm');
 const followRequestsSection = document.getElementById('followRequestsSection');
 const followRequestsList = document.getElementById('followRequestsList');
 
+const contactRequestModal = document.getElementById('contactRequestModal');
+const closeContactRequestModal = document.getElementById('closeContactRequestModal');
+const sendContactRequestBtn = document.getElementById('sendContactRequestBtn');
+const cancelContactRequestBtn = document.getElementById('cancelContactRequestBtn');
+const contactRequestAvatar = document.getElementById('contactRequestAvatar');
+const contactRequestName = document.getElementById('contactRequestName');
+
+const incomingRequestModal = document.getElementById('incomingRequestModal');
+const closeIncomingRequestModal = document.getElementById('closeIncomingRequestModal');
+const acceptRequestBtn = document.getElementById('acceptRequestBtn');
+const declineRequestBtn = document.getElementById('declineRequestBtn');
+const incomingRequestName = document.getElementById('incomingRequestName');
+
 const typeRules = {
   short: { accept: 'video/*', multiple: false, hint: 'Shorts: choose 1 short-form video.', captionRequired: true, descriptionRequired: false },
   carousel: { accept: 'image/*', multiple: true, hint: 'Carousel: choose multiple images.', captionRequired: true, descriptionRequired: false },
@@ -183,6 +196,10 @@ let currentContextMsg = null;
 let replyToMsg = null;
 let touchStartX = 0;
 let swipeBubble = null;
+let currentPendingRequest = null;
+let recentSearches = loadJson('chatbhar.recentSearches', []);
+let myRelationships = [];
+let myConversations = [];
 
 const firebaseConfig = {
   apiKey: "FIREBASE_API_KEY_PLACEHOLDER",
@@ -221,11 +238,9 @@ async function initApp() {
         if (!activeSession.username) {
           openOnboarding();
         } else {
-          fetchAndSyncPosts();
-          fetchAndSyncMessages();
+          startRealTimeSync();
           renderHome();
           renderChannelManager();
-          renderFollowRequests();
         }
       }
     } else {
@@ -236,20 +251,26 @@ async function initApp() {
     }
   });
 
-  await fetchAndSyncPosts();
   await bootstrapUsers();
-  // loadSession is now handled by onAuthStateChanged
   migrateOldUploads();
   applyUploadType();
-  await fetchAndSyncMessages();
-  renderChatUsers();
-  renderMessages();
+
+  if (activeSession && activeSession.id) {
+      startRealTimeSync();
+  }
+
   renderUploads();
   renderHome();
-  await renderExploreUsers();
   renderChannelManager();
-  renderFollowRequests();
   initEnhancedMessaging();
+}
+
+function startRealTimeSync() {
+    fetchAndSyncPosts();
+    fetchAndSyncMessages();
+    fetchAndSyncConversations();
+    fetchAndSyncContactRequests();
+    fetchAndSyncRelationships();
 }
 
 async function fetchAndSyncMessages() {
@@ -257,8 +278,6 @@ async function fetchAndSyncMessages() {
 
   onSnapshot(query(collection(db, "messages"), where("participants", "array-contains", activeSession.id), orderBy("createdAt", "asc")), (snapshot) => {
     const newStore = {};
-    let changed = false;
-
     snapshot.forEach((doc) => {
       const m = doc.data();
       if (m.deletedFor && m.deletedFor.includes(activeSession.id)) return;
@@ -275,28 +294,108 @@ async function fetchAndSyncMessages() {
           isGroup: m.chatId.startsWith('group:'),
           online: false
         };
-        changed = true;
       }
     });
 
-    if (JSON.stringify(newStore) !== JSON.stringify(chatStore)) {
-      chatStore = newStore;
-      changed = true;
-    }
+    chatStore = newStore;
+    saveJson(CHAT_STORE_KEY, chatStore);
+    saveJson('chatbhar.chatMeta', chatMeta);
+    renderChatUsers();
+    renderMessages();
 
-    if (changed) {
-      saveJson(CHAT_STORE_KEY, chatStore);
-      saveJson('chatbhar.chatMeta', chatMeta);
-      renderChatUsers();
-      renderMessages();
-      // Auto-Scroll: Ensure the chat window scrolls to the bottom for new messages
-      if (messages) messages.scrollTop = messages.scrollHeight;
-    }
+    if (messages) messages.scrollTop = messages.scrollHeight;
+
     if (!activeChat && Object.keys(chatStore).length > 0) {
       activeChat = Object.keys(chatStore)[0];
       renderMessages();
     }
   });
+}
+
+function fetchAndSyncConversations() {
+  if (!activeSession || typeof db === 'undefined') return;
+
+  onSnapshot(query(collection(db, "conversations"), where("participants", "array-contains", activeSession.id)), (snapshot) => {
+    myConversations = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
+    // Update chatMeta with conversation data if needed
+    myConversations.forEach(conv => {
+        if (!chatMeta[conv.id]) {
+             chatMeta[conv.id] = {
+                 id: conv.id,
+                 name: conv.name || 'Group',
+                 participants: conv.participants,
+                 isGroup: true,
+                 online: false
+             };
+        }
+    });
+    renderChatUsers();
+  });
+}
+
+function fetchAndSyncRelationships() {
+    if (!activeSession || typeof db === 'undefined') return;
+    onSnapshot(query(collection(db, "relationships"), where("followerId", "==", activeSession.id)), (snapshot) => {
+        myRelationships = snapshot.docs.map(d => d.data());
+        renderExploreUsers(exploreSearchInput.value);
+    });
+}
+
+function fetchAndSyncContactRequests() {
+  if (!activeSession || typeof db === 'undefined') return;
+
+  onSnapshot(query(collection(db, "requests"), where("toUid", "==", activeSession.id), where("status", "==", "pending")), (snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+      if (change.type === "added") {
+        const req = change.doc.data();
+        req.id = change.doc.id;
+        showIncomingRequest(req);
+      }
+    });
+  });
+}
+
+function showIncomingRequest(req) {
+  currentPendingRequest = req;
+  const sender = authUsers.find(u => u.id === req.fromUid);
+  incomingRequestName.textContent = sender ? (sender.username || sender.name) : 'Someone';
+  incomingRequestModal.hidden = false;
+}
+
+async function acceptContactRequest() {
+  if (!currentPendingRequest) return;
+  try {
+    const reqRef = doc(db, "requests", currentPendingRequest.id);
+    await updateDoc(reqRef, { status: 'accepted' });
+
+    // Create a follow relationship as well
+    const relId = `${currentPendingRequest.fromUid}_${activeSession.id}`;
+    await setDoc(doc(db, "relationships", relId), {
+      id: relId,
+      followerId: currentPendingRequest.fromUid,
+      followingId: activeSession.id,
+      status: 'accepted',
+      createdAt: Date.now()
+    });
+
+    incomingRequestModal.hidden = true;
+    currentPendingRequest = null;
+    alert('Request accepted!');
+  } catch (err) {
+    alert('Error accepting request: ' + err.message);
+  }
+}
+
+async function declineContactRequest() {
+  if (!currentPendingRequest) return;
+  try {
+    const reqRef = doc(db, "requests", currentPendingRequest.id);
+    await updateDoc(reqRef, { status: 'declined' });
+    incomingRequestModal.hidden = true;
+    currentPendingRequest = null;
+  } catch (err) {
+    alert('Error declining request: ' + err.message);
+  }
 }
 
 function syncState() {
@@ -367,8 +466,48 @@ function bindEvents() {
   usernameForm.addEventListener('submit', onCreateUsername);
   logoutBtn.addEventListener('click', onLogout);
   themeToggle.addEventListener('click', toggleTheme);
-  navButtons.forEach((btn) => btn.addEventListener('click', () => openTab(btn.dataset.tab)));
-  exploreSearchInput.addEventListener('input', () => renderExploreUsers(exploreSearchInput.value));
+  navButtons.forEach((btn) => {
+    if (btn.dataset.tab === 'channels') {
+      let timer;
+      btn.addEventListener('mousedown', () => {
+        timer = setTimeout(() => {
+          openTab('channels');
+          // Special view for long press
+          document.getElementById('analyticsTabBtn').click();
+          timer = null;
+        }, 800);
+      });
+      btn.addEventListener('mouseup', () => {
+        if (timer) {
+          clearTimeout(timer);
+          openTab('channels');
+        }
+      });
+      btn.addEventListener('touchstart', (e) => {
+        timer = setTimeout(() => {
+          openTab('channels');
+          document.getElementById('analyticsTabBtn').click();
+          timer = null;
+        }, 800);
+      }, { passive: true });
+      btn.addEventListener('touchend', () => {
+        if (timer) {
+          clearTimeout(timer);
+          openTab('channels');
+        }
+      });
+    } else {
+      btn.addEventListener('click', () => openTab(btn.dataset.tab));
+    }
+  });
+  exploreSearchInput.addEventListener('input', () => {
+    const val = exploreSearchInput.value;
+    renderExploreUsers(val);
+    if (val.trim()) {
+      updateRecentSearches(val.trim());
+    }
+  });
+  renderRecentSearches();
 
   document.querySelectorAll('.toggle-password').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -435,6 +574,14 @@ function bindEvents() {
   if (confirmDeleteBtn) {
     confirmDeleteBtn.addEventListener('click', onDeleteAccount);
   }
+
+  if (closeContactRequestModal) closeContactRequestModal.onclick = () => contactRequestModal.hidden = true;
+  if (cancelContactRequestBtn) cancelContactRequestBtn.onclick = () => contactRequestModal.hidden = true;
+  if (sendContactRequestBtn) sendContactRequestBtn.onclick = sendContactRequest;
+
+  if (closeIncomingRequestModal) closeIncomingRequestModal.onclick = () => incomingRequestModal.hidden = true;
+  if (acceptRequestBtn) acceptRequestBtn.onclick = acceptContactRequest;
+  if (declineRequestBtn) declineRequestBtn.onclick = declineContactRequest;
 
   const chatThemeToggle = document.getElementById('chatThemeToggle');
   if (chatThemeToggle) {
@@ -721,6 +868,48 @@ async function unfollowUser(followingId) {
     await renderExploreUsers(exploreSearchInput.value);
   } catch (err) {
     alert(err.message);
+  }
+}
+
+let contactRequestUserId = null;
+
+async function openContactRequestModal(userId) {
+  contactRequestUserId = userId;
+  const user = authUsers.find(u => u.id === userId);
+  if (!user) return;
+
+  contactRequestName.textContent = user.username || user.name;
+  renderProfileAvatar(contactRequestAvatar, user);
+
+  // Check if request already exists
+  const q = query(collection(db, "requests"), where("fromUid", "==", activeSession.id), where("toUid", "==", userId));
+  const snap = await getDocs(q);
+  if (!snap.empty) {
+    const req = snap.docs[0].data();
+    document.getElementById('contactRequestStatus').textContent = `Request Status: ${req.status}`;
+    sendContactRequestBtn.disabled = true;
+  } else {
+    document.getElementById('contactRequestStatus').textContent = `You need to be contacts to message this user.`;
+    sendContactRequestBtn.disabled = false;
+  }
+
+  contactRequestModal.hidden = false;
+}
+
+async function sendContactRequest() {
+  if (!activeSession || !contactRequestUserId) return;
+  try {
+    const reqId = `${activeSession.id}_${contactRequestUserId}`;
+    await setDoc(doc(db, "requests", reqId), {
+      fromUid: activeSession.id,
+      toUid: contactRequestUserId,
+      status: 'pending',
+      createdAt: Date.now()
+    });
+    alert('Contact request sent!');
+    contactRequestModal.hidden = true;
+  } catch (err) {
+    alert('Error sending request: ' + err.message);
   }
 }
 
@@ -1154,6 +1343,33 @@ function setAuthMessage(message, success) {
   authMessage.textContent = message;
 }
 
+function updateRecentSearches(query) {
+  const users = authUsers.filter(u => (u.username || u.name)?.toLowerCase().includes(query.toLowerCase()));
+  if (users.length > 0) {
+    const user = users[0];
+    const item = { id: user.id, username: user.username || user.name };
+    recentSearches = recentSearches.filter(s => s.id !== item.id);
+    recentSearches.unshift(item);
+    recentSearches = recentSearches.slice(0, 5);
+    saveJson('chatbhar.recentSearches', recentSearches);
+    renderRecentSearches();
+  }
+}
+
+function renderRecentSearches() {
+  const container = document.getElementById('recentSearches');
+  if (!container) return;
+  container.innerHTML = recentSearches.map(s => `
+    <button class="glass" style="padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; cursor: pointer;">${escapeHtml(s.username)}</button>
+  `).join('');
+  container.querySelectorAll('button').forEach((btn, idx) => {
+    btn.onclick = () => {
+      exploreSearchInput.value = recentSearches[idx].username;
+      renderExploreUsers(recentSearches[idx].username);
+    };
+  });
+}
+
 async function loadSession() {
   activeSession = loadJson(AUTH_SESSION_KEY, null);
   if (activeSession) {
@@ -1579,19 +1795,8 @@ function validateUploadForType(type, files, caption, description) {
 
 
 async function renderExploreUsers(searchQuery = '') {
-  await syncAuthUsers();
   const users = authUsers;
-
-  let myFollowings = [];
-  if (activeSession) {
-    try {
-      const q = query(collection(db, "relationships"), where("followerId", "==", activeSession.id));
-      const snap = await getDocs(q);
-      myFollowings = snap.docs.map(d => d.data());
-    } catch (err) {
-      console.error('Failed to fetch following status', err);
-    }
-  }
+  const myFollowings = myRelationships;
 
   const normalizedQuery = String(searchQuery).trim().toLowerCase();
   const now = Date.now();
@@ -1692,7 +1897,8 @@ async function renderExploreUsers(searchQuery = '') {
     card.style.cursor = 'pointer';
     card.onclick = (e) => {
       if (e.target.tagName === 'BUTTON') return;
-      openOtherProfile(u.id);
+      // Requirement: When clicked from search, do NOT redirect to profile. Instead open Contact Request Modal.
+      openContactRequestModal(u.id);
     };
     exploreUsersList.appendChild(card);
   });
@@ -2936,13 +3142,12 @@ async function sharePostToChat(postId, targetUserId) {
   }
 }
 
-async function renderFollowRequests() {
+function fetchAndSyncFollowRequests() {
   if (!activeSession || !followRequestsSection || !followRequestsList || typeof db === 'undefined') return;
-  try {
-    const q = query(collection(db, "relationships"), where("followingId", "==", activeSession.id), where("status", "==", "pending"));
-    const snapshot = await getDocs(q);
+
+  onSnapshot(query(collection(db, "relationships"), where("followingId", "==", activeSession.id), where("status", "==", "pending")), (snapshot) => {
     const requests = [];
-    for (const d of snapshot.docs) {
+    snapshot.forEach((d) => {
       const rel = d.data();
       const follower = authUsers.find(u => u.id === rel.followerId);
       requests.push({
@@ -2950,9 +3155,9 @@ async function renderFollowRequests() {
         followerName: follower ? (follower.name || (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value) : 'Unknown',
         followerHandle: follower ? (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value : ''
       });
-    }
+    });
 
-    if (requests && requests.length > 0) {
+    if (requests.length > 0) {
       followRequestsSection.hidden = false;
       followRequestsList.innerHTML = '';
       requests.forEach(req => {
@@ -2971,9 +3176,7 @@ async function renderFollowRequests() {
     } else {
       followRequestsSection.hidden = true;
     }
-  } catch (err) {
-    console.error('Failed to fetch follow requests', err);
-  }
+  });
 }
 
 

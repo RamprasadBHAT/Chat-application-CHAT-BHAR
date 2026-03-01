@@ -112,6 +112,7 @@
               <span>🔎</span>
               <input id="exploreSearchInput" placeholder="Search by name or email..." />
             </div>
+            <div id="recentSearches" class="recent-searches" style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;"></div>
             <div id="exploreUsersList" class="explore-users-list"></div>
           </section>
 
@@ -298,6 +299,40 @@
         <div class="story-viewer-actions">
           <button id="prevStory">← Prev</button>
           <button id="nextStory">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="contactRequestModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top">
+          <h3 id="contactRequestTitle">Contact Request</h3>
+          <button id="closeContactRequestModal" class="icon-btn">✕</button>
+        </div>
+        <div id="contactRequestContent" style="padding: 20px; text-align: center;">
+          <div class="profile-avatar" id="contactRequestAvatar" style="margin: 0 auto 15px;">U</div>
+          <strong id="contactRequestName">User Name</strong>
+          <p id="contactRequestStatus" style="color: var(--muted); margin-top: 5px;">You need to be contacts to message this user.</p>
+        </div>
+        <div class="upload-btn-row" id="contactRequestActions">
+          <button id="sendContactRequestBtn">Send Request</button>
+          <button id="cancelContactRequestBtn">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="incomingRequestModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top">
+          <h3>New Contact Request</h3>
+          <button id="closeIncomingRequestModal" class="icon-btn">✕</button>
+        </div>
+        <div style="padding: 20px; text-align: center;">
+          <p><strong id="incomingRequestName">User Name</strong> wants to connect with you.</p>
+        </div>
+        <div class="upload-btn-row">
+          <button id="acceptRequestBtn" class="primary">Accept</button>
+          <button id="declineRequestBtn" class="danger">Decline</button>
         </div>
       </div>
     </div>
