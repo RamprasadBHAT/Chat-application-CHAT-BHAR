@@ -242,6 +242,7 @@ const firebaseConfig = {
   measurementId: "FIREBASE_MEASUREMENT_ID_PLACEHOLDER"
 };
 
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
