@@ -738,6 +738,3 @@ button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
 .outgoing .reply-ref { background: rgba(255,255,255,0.2); border-left-color: #fff; }
 .outgoing .reply-ref strong { color: #fff; }
 .outgoing .reply-ref p { color: rgba(255,255,255,0.9); }
-
-.settings-btn{position:relative}
-.notif-badge{position:absolute;top:-6px;right:-6px;background:#ff3b30;color:#fff;border-radius:999px;min-width:18px;height:18px;padding:0 5px;font-size:10px;display:flex;align-items:center;justify-content:center;font-weight:700;border:2px solid var(--panel)}
