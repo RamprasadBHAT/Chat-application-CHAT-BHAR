@@ -314,11 +314,9 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   const myUid = auth.currentUser.uid;
 
-  let dmPeerUid = null;
   if (targetChatId.startsWith('dm:')) {
     const otherUid = getOtherUserIdFromConversation(targetChatId);
     const finalOtherUid = otherUid || myUid;
-    dmPeerUid = finalOtherUid;
 
     // Fix: Ensure 'Selected User' state is being updated correctly
     const u = authUsers.find(x => x.id === finalOtherUid) || { id: finalOtherUid, name: 'User' };
@@ -357,14 +355,16 @@ async function fetchAndSyncMessages(chatIdArg = null) {
     q = query(
       collection(db, "messages"),
       or(
-        and(where("senderId", "==", myUid), where("receiverId", "==", dmPeerUid)),
-        and(where("senderId", "==", dmPeerUid), where("receiverId", "==", myUid))
-      )
+        and(where("senderId", "==", myUid), where("receiverId", "==", selectedUser.uid)),
+        and(where("senderId", "==", selectedUser.uid), where("receiverId", "==", myUid))
+      ),
+      orderBy("createdAt", "asc")
     );
   } else {
     q = query(
       collection(db, "messages"),
-      where("chatId", "==", currentChatId)
+      where("chatId", "==", currentChatId),
+      orderBy("createdAt", "asc")
     );
   }
 
@@ -384,19 +384,11 @@ async function fetchAndSyncMessages(chatIdArg = null) {
     // Filter "Delete for Me"
     const visible = snapshotMsgs.filter(m => !m.deletedFor || !m.deletedFor.includes(myUid));
 
-    // Sort Chronologically (supports timestamp/createdAt from Firestore/local values)
+    // Sort Chronologically
     visible.sort((a, b) => {
-      const getMs = (msg) => {
-        const value = msg?.timestamp ?? msg?.createdAt;
-        if (value?.toMillis) return value.toMillis();
-        if (typeof value?.seconds === 'number') return (value.seconds * 1000) + Math.round((value.nanoseconds || 0) / 1000000);
-        if (typeof value === 'number') return value;
-        if (!value) return 0;
-        const parsed = new Date(value).getTime();
-        return Number.isNaN(parsed) ? 0 : parsed;
-      };
-      const ta = getMs(a);
-      const tb = getMs(b);
+      const getMs = (v) => v?.seconds ? v.seconds * 1000 : (v ? new Date(v).getTime() : 0);
+      const ta = getMs(a.createdAt);
+      const tb = getMs(b.createdAt);
       return ta - tb;
     });
 
@@ -2701,18 +2693,7 @@ function renderMessages(msgsArg = null) {
     return;
   }
 
-  const msgs = [...(msgsArg || chatStore[activeChat] || [])].sort((a, b) => {
-    const time = (msg) => {
-      const value = msg?.timestamp ?? msg?.createdAt;
-      if (value?.toMillis) return value.toMillis();
-      if (typeof value?.seconds === 'number') return (value.seconds * 1000) + Math.round((value.nanoseconds || 0) / 1000000);
-      if (typeof value === 'number') return value;
-      if (!value) return 0;
-      const parsed = new Date(value).getTime();
-      return Number.isNaN(parsed) ? 0 : parsed;
-    };
-    return time(a) - time(b);
-  });
+  const msgs = msgsArg || chatStore[activeChat] || [];
   const myUid = auth.currentUser?.uid;
 
   const meta = chatMeta[activeChat] || { name: activeChat, online: false };
@@ -3620,4 +3601,5 @@ function renderFollowRequests() {
       followRequestsSection.hidden = true;
     }
 }
+
 
