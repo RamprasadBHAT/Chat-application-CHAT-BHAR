@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, or, and } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 function getDmChatId(uid1, uid2) {
@@ -314,10 +314,12 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   const myUid = auth.currentUser.uid;
 
+  let dmPeerUid = null;
   if (targetChatId.startsWith('dm:')) {
     const content = targetChatId.replace('dm:', '');
     const otherUid = content.includes('_') ? content.split('_').find(id => id !== myUid) : content;
     const finalOtherUid = otherUid || myUid;
+    dmPeerUid = finalOtherUid;
 
     // Fix: Ensure 'Selected User' state is being updated correctly
     const u = authUsers.find(x => x.id === finalOtherUid) || { id: finalOtherUid, name: 'User' };
@@ -355,17 +357,12 @@ async function fetchAndSyncMessages(chatIdArg = null) {
   if (selectedUser) {
     q = query(
       collection(db, "messages"),
-      or(
-        and(where("senderId", "==", myUid), where("receiverId", "==", selectedUser.uid)),
-        and(where("senderId", "==", selectedUser.uid), where("receiverId", "==", myUid))
-      ),
-      orderBy("createdAt", "asc")
+      where("participants", "array-contains", myUid)
     );
   } else {
     q = query(
       collection(db, "messages"),
-      where("chatId", "==", currentChatId),
-      orderBy("createdAt", "asc")
+      where("chatId", "==", currentChatId)
     );
   }
 
@@ -382,14 +379,35 @@ async function fetchAndSyncMessages(chatIdArg = null) {
       return { id: doc.id, ...data, dir, docId: doc.id };
     });
 
-    // Filter "Delete for Me"
-    const visible = snapshotMsgs.filter(m => !m.deletedFor || !m.deletedFor.includes(myUid));
+    // Filter by active conversation and hide "Delete for Me"
+    const visible = snapshotMsgs.filter((m) => {
+      const notDeletedForMe = !m.deletedFor || !m.deletedFor.includes(myUid);
+      if (!notDeletedForMe) return false;
 
-    // Sort Chronologically
+      if (!selectedUser) {
+        return m.chatId === currentChatId;
+      }
+
+      const dmPairMatch =
+        (m.senderId === myUid && m.receiverId === dmPeerUid) ||
+        (m.senderId === dmPeerUid && m.receiverId === myUid);
+      const dmChatIdMatch = m.chatId === currentChatId;
+      return dmPairMatch || dmChatIdMatch;
+    });
+
+    // Sort Chronologically (supports timestamp/createdAt from Firestore/local values)
     visible.sort((a, b) => {
-      const getMs = (v) => v?.seconds ? v.seconds * 1000 : (v ? new Date(v).getTime() : 0);
-      const ta = getMs(a.createdAt);
-      const tb = getMs(b.createdAt);
+      const getMs = (msg) => {
+        const value = msg?.timestamp ?? msg?.createdAt;
+        if (value?.toMillis) return value.toMillis();
+        if (typeof value?.seconds === 'number') return (value.seconds * 1000) + Math.round((value.nanoseconds || 0) / 1000000);
+        if (typeof value === 'number') return value;
+        if (!value) return 0;
+        const parsed = new Date(value).getTime();
+        return Number.isNaN(parsed) ? 0 : parsed;
+      };
+      const ta = getMs(a);
+      const tb = getMs(b);
       return ta - tb;
     });
 
@@ -2682,7 +2700,18 @@ function renderMessages(msgsArg = null) {
     return;
   }
 
-  const msgs = msgsArg || chatStore[activeChat] || [];
+  const msgs = [...(msgsArg || chatStore[activeChat] || [])].sort((a, b) => {
+    const time = (msg) => {
+      const value = msg?.timestamp ?? msg?.createdAt;
+      if (value?.toMillis) return value.toMillis();
+      if (typeof value?.seconds === 'number') return (value.seconds * 1000) + Math.round((value.nanoseconds || 0) / 1000000);
+      if (typeof value === 'number') return value;
+      if (!value) return 0;
+      const parsed = new Date(value).getTime();
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+    return time(a) - time(b);
+  });
   const myUid = auth.currentUser?.uid;
 
   const meta = chatMeta[activeChat] || { name: activeChat, online: false };
@@ -3591,5 +3620,4 @@ function renderFollowRequests() {
       followRequestsSection.hidden = true;
     }
 }
-
 
