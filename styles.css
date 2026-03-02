@@ -403,6 +403,24 @@ button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
   box-shadow: none;
   font-size: 0.85rem;
   padding: 6px 12px;
+  position: relative;
+}
+.badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: #d14343;
+  color: white;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--card);
+  pointer-events: none;
+  z-index: 5;
 }
 .profile-stats {
   display: flex;
