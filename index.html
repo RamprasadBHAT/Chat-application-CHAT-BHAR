@@ -161,7 +161,7 @@
                   <div class="profile-username-row">
                     <h2 id="myChannelHandle">Username</h2>
                     <button class="edit-profile-btn">Edit Profile</button>
-                    <button class="settings-btn icon-btn">⚙️</button>
+                    <button id="settingsActivityBtn" class="settings-btn icon-btn" title="Follow request center">⚙️<span id="requestCenterBadge" class="notif-badge" hidden>0</span></button>
                   </div>
                   <div class="profile-stats">
                     <span><strong id="myPostCount">0</strong> posts</span>
@@ -404,6 +404,14 @@
       <div class="modal-card glass confirm-card">
         <div class="modal-top"><h3>Select Contact</h3><button id="closeContactModal" class="icon-btn">✕</button></div>
         <div id="contactList" class="contact-list"></div>
+      </div>
+    </div>
+
+
+    <div id="requestCenterModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top"><h3>Follow Request Center</h3><button id="closeRequestCenterModal" class="icon-btn">✕</button></div>
+        <div id="requestCenterList" class="contact-list"></div>
       </div>
     </div>
 
