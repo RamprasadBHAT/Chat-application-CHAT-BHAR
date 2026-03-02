@@ -397,23 +397,12 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   // 2. The Message Listener (Look for where your app loads messages)
   // Ensure your query is triggered immediately after chatId generation
-  let q;
-  if (selectedUser) {
-    q = query(
-      collection(db, "messages"),
-      or(
-        and(where("senderId", "==", myUid), where("receiverId", "==", selectedUser.uid)),
-        and(where("senderId", "==", selectedUser.uid), where("receiverId", "==", myUid))
-      ),
-      orderBy("createdAt", "asc")
-    );
-  } else {
-    q = query(
-      collection(db, "messages"),
-      where("chatId", "==", currentChatId),
-      orderBy("createdAt", "asc")
-    );
-  }
+  // We use chatId as the primary filter for both DMs and Groups for better performance and simpler indices.
+  const q = query(
+    collection(db, "messages"),
+    where("chatId", "==", currentChatId),
+    orderBy("createdAt", "asc")
+  );
 
   // Fast Feedback: Render from local store while waiting for snapshot
   renderMessages(chatStore[currentChatId] || []);
