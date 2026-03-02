@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction, or, and } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 function getDmChatId(uid1, uid2) {
@@ -431,17 +431,20 @@ async function fetchAndSyncMessages(chatIdArg = null) {
     const isDm = currentChatId.startsWith('dm:') && selectedUser?.uid;
     const messagesRef = collection(db, 'messages');
 
+    // Requirement: Both ways filter for DMs (A->B or B->A)
+    // For Groups, we use chatId.
     const messageQuery = isDm
       ? query(
           messagesRef,
           or(
             and(where('senderId', '==', myUid), where('receiverId', '==', selectedUser.uid)),
             and(where('senderId', '==', selectedUser.uid), where('receiverId', '==', myUid))
-          )
+          ),
+          orderBy('createdAt', 'asc')
         )
-      : query(messagesRef, where('chatId', '==', currentChatId));
+      : query(messagesRef, where('chatId', '==', currentChatId), orderBy('createdAt', 'asc'));
 
-    messageUnsubscribe = onSnapshot(messageQuery, (snapshot) => {
+    const onSnapshotSuccess = (snapshot) => {
       const visible = mapAndSortVisibleMessages(snapshot.docs);
       chatStore[currentChatId] = visible;
       saveJson(CHAT_STORE_KEY, chatStore);
@@ -449,7 +452,24 @@ async function fetchAndSyncMessages(chatIdArg = null) {
         renderMessages(visible);
         scrollToBottom();
       }
-    }, (err) => console.error('Firestore Message Sync Error:', err));
+    };
+
+    const onSnapshotError = (err) => {
+      console.warn('Firestore Message Sync Error (likely missing index), falling back:', err);
+      const fallbackQuery = isDm
+        ? query(
+            messagesRef,
+            or(
+              and(where('senderId', '==', myUid), where('receiverId', '==', selectedUser.uid)),
+              and(where('senderId', '==', selectedUser.uid), where('receiverId', '==', myUid))
+            )
+          )
+        : query(messagesRef, where('chatId', '==', currentChatId));
+
+      messageUnsubscribe = onSnapshot(fallbackQuery, onSnapshotSuccess, (err2) => console.error('Final Message Sync Error:', err2));
+    };
+
+    messageUnsubscribe = onSnapshot(messageQuery, onSnapshotSuccess, onSnapshotError);
   } else {
     // In local mode, we rely on chatStore being updated by sendMessage/apiRequest
     const visible = (chatStore[currentChatId] || []).filter(m => !m.deletedFor || !m.deletedFor.includes(activeSession.id));
@@ -2170,7 +2190,11 @@ function toggleTheme() {
 function openTab(tabId) {
   screens.forEach((s) => s.classList.toggle('active', s.id === tabId));
   navButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === tabId));
-  if (tabId === 'chat') renderFollowRequests();
+  if (tabId === 'chat') {
+    renderFollowRequests();
+    renderMessages();
+    scrollToBottom();
+  }
   if (tabId === 'channels') {
     document.getElementById('otherProfileHeader').hidden = true;
     renderChannelManager();
@@ -3236,7 +3260,12 @@ function scrollToBottom() {
   if (messagesContainer) {
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
     // Scroll again after a short delay to ensure rendering is complete
-    setTimeout(() => { messagesContainer.scrollTop = messagesContainer.scrollHeight; }, 100);
+    setTimeout(() => {
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }, 100);
+    setTimeout(() => {
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }, 300);
   }
 }
 
@@ -3258,7 +3287,8 @@ function renderMessages(msgsArg = null) {
   messagesContainer.innerHTML = '';
   msgs.forEach((msg, idx) => {
     const bubble = document.createElement('div');
-    const isImageOnly = !msg.text && !msg.replyToId && (msg.files || []).length > 0 && msg.files.every(f => (f.type || '').startsWith('image/'));
+    const files = msg.files || [];
+    const isImageOnly = !msg.text && !msg.replyToId && files.length > 0 && files.every(f => (f.type || '').startsWith('image/'));
     const dir = msg.dir || (msg.senderId === myUid ? 'outgoing' : 'incoming');
     bubble.className = `bubble ${dir} ${isImageOnly ? 'image-only' : ''}`;
 
@@ -3736,7 +3766,8 @@ function showContextMenu(e, bubble) {
 
   const bubbleList = Array.from(messagesContainer.querySelectorAll('.bubble'));
   const msgIdx = bubbleList.indexOf(bubble);
-  currentContextMsg = chatStore[activeChat][msgIdx];
+  const currentMsgs = chatStore[activeChat] || [];
+  currentContextMsg = currentMsgs[msgIdx];
   if (!currentContextMsg) return;
 
   if (currentContextMsg.deleted) return;

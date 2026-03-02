@@ -23,6 +23,12 @@ test('Verify Messaging UI and Real-time Sync Fix', async ({ page }) => {
             { id: 'm1', chatId: chatId, senderId: 'u2', senderName: 'other', text: 'Hi from other!', createdAt: Date.now() - 1000, dir: 'incoming' }
         ];
         localStorage.setItem('chatbhar.chatStore', JSON.stringify({ [chatId]: initialMessages }));
+
+        // Also setup conversation record
+        const conversations = [
+            { id: chatId, name: 'other', participants: ['u1', 'u2'], isGroup: false, lastMessage: 'Hi from other!', updatedAt: Date.now() }
+        ];
+        localStorage.setItem('chatbhar.conversations', JSON.stringify(conversations));
     });
 
     await page.reload();
@@ -43,11 +49,13 @@ test('Verify Messaging UI and Real-time Sync Fix', async ({ page }) => {
     // 5. Send a new message
     const myMessage = 'Test reply ' + Date.now();
     await page.fill('#messageInput', myMessage);
-    await page.click('#chatForm button[type="submit"]');
+    await page.press('#messageInput', 'Enter');
 
     // 6. Verify our message appears in the main window
     const outgoingMessage = page.locator('.bubble.outgoing:has-text("' + myMessage + '")');
     await expect(outgoingMessage).toBeVisible();
+
+    await page.screenshot({ path: 'verification_chat_fix.png' });
 
     console.log('Verification successful: Main chat window displays messages and updates correctly.');
 });
