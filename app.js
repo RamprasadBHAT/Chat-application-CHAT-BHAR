@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, or, and } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, or, and, increment, runTransaction } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 function getDmChatId(uid1, uid2) {
@@ -190,6 +190,18 @@ let chatStore = loadJson(CHAT_STORE_KEY, {});
 let activeChat = null;
 let messageUnsubscribe = null;
 let chatMeta = loadJson('chatbhar.chatMeta', {});
+
+function getOtherUserIdFromConversation(convOrId) {
+  if (typeof convOrId === 'string') {
+    if (!convOrId.startsWith('dm:')) return null;
+    const ids = convOrId.replace('dm:', '').split('_');
+    return ids.find(id => id !== auth.currentUser?.uid);
+  }
+  if (convOrId && convOrId.participants) {
+    return convOrId.participants.find(id => id !== auth.currentUser?.uid);
+  }
+  return null;
+}
 
 function getUnifiedChatId(id) {
   if (!id) return null;
@@ -449,7 +461,7 @@ function fetchAndSyncRelationships() {
         updateCombined();
     });
 
-    onSnapshot(query(collection(db, "followRequests"), where("followerId", "==", activeSession.id)), (snapshot) => {
+    onSnapshot(query(collection(db, "followRequests"), where("fromUserId", "==", activeSession.id)), (snapshot) => {
         myFollowRequests = snapshot.docs.map(d => d.data());
         updateCombined();
     });
@@ -672,18 +684,25 @@ function bindEvents() {
   }
 
   const settingsBtn = document.querySelector('.settings-btn');
+  const activityModal = document.getElementById('activityModal');
+  const closeActivityModal = document.getElementById('closeActivityModal');
+  const activityFollowRequests = document.getElementById('activityFollowRequests');
+  const activityFollowRequestsList = document.getElementById('activityFollowRequestsList');
+  const openDeleteAccountBtn = document.getElementById('openDeleteAccountBtn');
+
   if (settingsBtn) {
     settingsBtn.onclick = () => {
+      activityModal.hidden = false;
+    };
+  }
+  if (closeActivityModal) closeActivityModal.onclick = () => activityModal.hidden = true;
+  if (openDeleteAccountBtn) {
+    openDeleteAccountBtn.onclick = () => {
+      activityModal.hidden = true;
       deleteAccountModal.hidden = false;
       deleteConfirmPassword.value = '';
       deleteTick.checked = false;
       confirmDeleteBtn.disabled = true;
-
-      if (deleteTick) {
-        deleteTick.onchange = () => {
-          confirmDeleteBtn.disabled = !deleteTick.checked;
-        };
-      }
     };
   }
   if (closeDeleteModal) closeDeleteModal.addEventListener('click', () => deleteAccountModal.hidden = true);
@@ -956,24 +975,27 @@ async function followUser(followingId) {
     if (followingUser.isPrivate) {
       await setDoc(doc(db, "followRequests", relId), {
         id: relId,
-        followerId: activeSession.id,
-        followingId,
+        fromUserId: activeSession.id,
+        toUserId: followingId,
+        status: 'pending',
         createdAt: Date.now()
       });
       alert('Follow request sent');
     } else {
-      await setDoc(doc(db, "follows", relId), {
-        id: relId,
-        followerId: activeSession.id,
-        followingId,
-        createdAt: Date.now()
-      });
+      await runTransaction(db, async (transaction) => {
+        const myRef = doc(db, "users", activeSession.id);
+        const theirRef = doc(db, "users", followingId);
+        const followRef = doc(db, "follows", relId);
 
-      // Update stats
-      const myRef = doc(db, "users", activeSession.id);
-      await updateDoc(myRef, { "stats.following": (activeSession.stats?.following || 0) + 1 });
-      const theirRef = doc(db, "users", followingId);
-      await updateDoc(theirRef, { "stats.followers": (followingUser.stats?.followers || 0) + 1 });
+        transaction.set(followRef, {
+          id: relId,
+          followerId: activeSession.id,
+          followingId,
+          createdAt: Date.now()
+        });
+        transaction.update(myRef, { "stats.following": increment(1), followingCount: increment(1) });
+        transaction.update(theirRef, { "stats.followers": increment(1), followerCount: increment(1) });
+      });
     }
 
     await renderExploreUsers(exploreSearchInput.value);
@@ -989,12 +1011,15 @@ async function unfollowUser(followingId) {
     const followDoc = await getDoc(doc(db, "follows", relId));
 
     if (followDoc.exists()) {
-      await deleteDoc(doc(db, "follows", relId));
-      const followingUser = authUsers.find(u => u.id === followingId);
-      const myRef = doc(db, "users", activeSession.id);
-      await updateDoc(myRef, { "stats.following": Math.max(0, (activeSession.stats?.following || 0) - 1) });
-      const theirRef = doc(db, "users", followingId);
-      await updateDoc(theirRef, { "stats.followers": Math.max(0, (followingUser?.stats?.followers || 0) - 1) });
+      await runTransaction(db, async (transaction) => {
+        const myRef = doc(db, "users", activeSession.id);
+        const theirRef = doc(db, "users", followingId);
+        const followRef = doc(db, "follows", relId);
+
+        transaction.delete(followRef);
+        transaction.update(myRef, { "stats.following": increment(-1), followingCount: increment(-1) });
+        transaction.update(theirRef, { "stats.followers": increment(-1), followerCount: increment(-1) });
+      });
     } else {
       // Maybe it was a pending request
       await deleteDoc(doc(db, "followRequests", relId));
@@ -1175,6 +1200,8 @@ async function renderOtherProfile(userId) {
       if (links.twitter) myChannelSocialLinks.innerHTML += `<a href="${links.twitter}" target="_blank">🐦 Twitter</a>`;
       if (links.linkedin) myChannelSocialLinks.innerHTML += `<a href="${links.linkedin}" target="_blank">🔗 LinkedIn</a>`;
       if (links.github) myChannelSocialLinks.innerHTML += `<a href="${links.github}" target="_blank">💻 GitHub</a>`;
+    } else {
+      myChannelSocialLinks.innerHTML = '<span style="color:var(--muted); font-size:0.8rem;">Links hidden</span>';
     }
   }
 
@@ -1182,8 +1209,8 @@ async function renderOtherProfile(userId) {
 
   // Requirement: hide names of followers/following lists (we already just show counts)
   // Requirement: public accounts hide names from lists? Handled by showing only counts here.
-  myFollowerCount.textContent = isFollowing || !user.isPrivate ? (user.stats?.followers || 0) : "?";
-  myFollowingCount.textContent = isFollowing || !user.isPrivate ? (user.stats?.following || 0) : "?";
+  myFollowerCount.textContent = isFollowing || !user.isPrivate ? (user.followerCount || user.stats?.followers || 0) : "?";
+  myFollowingCount.textContent = isFollowing || !user.isPrivate ? (user.followingCount || user.stats?.following || 0) : "?";
 
   myFollowerCount.parentElement.style.cursor = 'pointer';
   myFollowerCount.parentElement.onclick = () => openUserListModal(userId, 'followers');
@@ -1250,7 +1277,13 @@ async function renderOtherProfile(userId) {
         <p style="color: var(--muted);">Follow this account to see their photos and videos.</p>
       </div>
     `;
+    // Extra visibility check for private profile tabs
+    profileTabs.forEach(t => {
+      if (t.dataset.profileTab !== 'posts') t.style.opacity = '0.5';
+    });
     return;
+  } else {
+    profileTabs.forEach(t => t.style.opacity = '1');
   }
 
   const userPosts = uploads.filter(u => u.userId === userId && u.type !== 'story');
@@ -1281,37 +1314,34 @@ async function renderOtherProfile(userId) {
 
 async function acceptFollowRequest(relationshipId) {
   try {
-    const reqRef = doc(db, "followRequests", relationshipId);
-    const reqDoc = await getDoc(reqRef);
-    if (!reqDoc.exists()) throw new Error("Request not found");
+    await runTransaction(db, async (transaction) => {
+      const reqRef = doc(db, "followRequests", relationshipId);
+      const reqSnap = await transaction.get(reqRef);
+      if (!reqSnap.exists()) throw new Error("Request not found");
 
-    const relData = reqDoc.data();
+      const relData = reqSnap.data();
+      const followerId = relData.fromUserId;
+      const followingId = relData.toUserId;
 
-    // Create follow document
-    await setDoc(doc(db, "follows", relationshipId), {
-      ...relData,
-      createdAt: Date.now()
+      const followerRef = doc(db, "users", followerId);
+      const followingRef = doc(db, "users", followingId);
+      const followRef = doc(db, "follows", relationshipId);
+
+      transaction.set(followRef, {
+        id: relationshipId,
+        followerId: followerId,
+        followingId: followingId,
+        createdAt: Date.now()
+      });
+      transaction.delete(reqRef);
+      transaction.update(followerRef, { "stats.following": increment(1), followingCount: increment(1) });
+      transaction.update(followingRef, { "stats.followers": increment(1), followerCount: increment(1) });
     });
-
-    // Delete request document
-    await deleteDoc(reqRef);
-
-    const followerRef = doc(db, "users", relData.followerId);
-    const followingRef = doc(db, "users", relData.followingId);
-
-    const followerDoc = await getDoc(followerRef);
-    const followingDoc = await getDoc(followingRef);
-
-    if (followerDoc.exists()) {
-      await updateDoc(followerRef, { "stats.following": (followerDoc.data().stats?.following || 0) + 1 });
-    }
-    if (followingDoc.exists()) {
-      await updateDoc(followingRef, { "stats.followers": (followingDoc.data().stats?.followers || 0) + 1 });
-    }
 
     await renderExploreUsers(exploreSearchInput.value);
     renderChannelManager();
-    renderFollowRequests();
+    // Re-sync follow requests to update UI/badges
+    fetchAndSyncFollowRequests();
   } catch (err) {
     alert(err.message);
   }
@@ -1320,7 +1350,8 @@ async function acceptFollowRequest(relationshipId) {
 async function declineFollowRequest(relationshipId) {
   try {
     await deleteDoc(doc(db, "followRequests", relationshipId));
-    renderFollowRequests();
+    // Re-sync follow requests to update UI/badges
+    fetchAndSyncFollowRequests();
   } catch (err) {
     alert(err.message);
   }
@@ -1442,6 +1473,8 @@ async function onSignup(event) {
       location: '',
       socialLinks: { twitter: '', linkedin: '', github: '' },
       stats: { posts: 0, followers: 0, following: 0 },
+      followerCount: 0,
+      followingCount: 0,
       isPrivate: false
     };
 
@@ -2105,12 +2138,11 @@ async function renderExploreUsers(searchQuery = '') {
     if (msgBtn) {
       msgBtn.addEventListener('click', () => onExploreMessageClick(u.id, u.displayName));
     }
-    // Search must first land on that user's profile - let's make whole card go to profile
+    // Search must land on that user's profile first
     card.style.cursor = 'pointer';
     card.onclick = (e) => {
       if (e.target.tagName === 'BUTTON') return;
-      // Requirement: When clicked from search, do NOT redirect to profile. Instead open Contact Request Modal.
-      openContactRequestModal(u.id);
+      openOtherProfile(u.id);
     };
     exploreUsersList.appendChild(card);
   });
@@ -2138,7 +2170,20 @@ function renderHome() {
 
 function liveStories() {
   const now = Date.now();
-  return uploads.filter((u) => u.type === 'story' && u.expiresAt && (typeof u.expiresAt === 'number' ? u.expiresAt : new Date(u.expiresAt).getTime()) > now);
+  return uploads.filter((u) => {
+    if (u.type !== 'story') return false;
+    const expiry = typeof u.expiresAt === 'number' ? u.expiresAt : new Date(u.expiresAt).getTime();
+    if (expiry <= now) return false;
+
+    if (!activeSession) return false;
+    if (u.userId === activeSession.id) return true;
+
+    const storyUser = authUsers.find(user => user.id === u.userId);
+    if (!storyUser) return true;
+    if (!storyUser.isPrivate) return true;
+
+    return myFollows.some(f => f.followingId === u.userId);
+  });
 }
 
 function renderStories() {
@@ -2176,7 +2221,18 @@ function renderStories() {
 
 function renderFeed() {
   feedList.innerHTML = '';
-  const items = uploads.filter((u) => u.type !== 'story').sort((a, b) => Number(new Date(b.createdAt)) - Number(new Date(a.createdAt)));
+  const items = uploads.filter((u) => {
+    if (u.type === 'story') return false;
+    if (!activeSession) return false;
+    if (u.userId === activeSession.id) return true;
+
+    const postUser = authUsers.find(user => user.id === u.userId);
+    if (!postUser) return true;
+    if (!postUser.isPrivate) return true;
+
+    return myFollows.some(f => f.followingId === u.userId);
+  }).sort((a, b) => Number(new Date(b.createdAt)) - Number(new Date(a.createdAt)));
+
   if (!items.length) {
     feedList.innerHTML = '<article class="feed-card glass"><p>No uploads yet. Use Post tab to publish.</p></article>';
     return;
@@ -2475,12 +2531,12 @@ function renderChannelManager() {
 
   if (myPostCount) myPostCount.textContent = activeSession.stats?.posts || mine.length;
   if (myFollowerCount) {
-    myFollowerCount.textContent = activeSession.stats?.followers || 0;
+    myFollowerCount.textContent = activeSession.followerCount || activeSession.stats?.followers || 0;
     myFollowerCount.parentElement.style.cursor = 'pointer';
     myFollowerCount.parentElement.onclick = () => openUserListModal(activeSession.id, 'followers');
   }
   if (myFollowingCount) {
-    myFollowingCount.textContent = activeSession.stats?.following || 0;
+    myFollowingCount.textContent = activeSession.followingCount || activeSession.stats?.following || 0;
     myFollowingCount.parentElement.style.cursor = 'pointer';
     myFollowingCount.parentElement.onclick = () => openUserListModal(activeSession.id, 'following');
   }
@@ -2668,6 +2724,27 @@ function renderChatUsers() {
       };
       avatarEl.ontouchend = () => clearTimeout(avatarLongPress);
     }
+
+    // Requirement: On longPress of a chat tile, extract otherUserId and navigate to Profile
+    let tileLongPress;
+    btn.onmousedown = (e) => {
+      if (e.target === avatarEl) return;
+      if (e.button === 2) return;
+      tileLongPress = setTimeout(() => {
+        const otherUid = getOtherUserIdFromConversation(conv) || getOtherUserIdFromConversation(chatId);
+        if (otherUid) openOtherProfile(otherUid);
+      }, 800);
+    };
+    btn.onmouseup = () => clearTimeout(tileLongPress);
+    btn.onmouseleave = () => clearTimeout(tileLongPress);
+    btn.ontouchstart = (e) => {
+       if (e.target === avatarEl) return;
+       tileLongPress = setTimeout(() => {
+          const otherUid = getOtherUserIdFromConversation(conv) || getOtherUserIdFromConversation(chatId);
+          if (otherUid) openOtherProfile(otherUid);
+       }, 800);
+    };
+    btn.ontouchend = () => clearTimeout(tileLongPress);
 
     btn.addEventListener('click', () => {
       renderChatUsers();
@@ -3290,7 +3367,21 @@ async function openUserListModal(userId, type) {
   const isFollowing = myFollows.some(f => f.followingId === userId);
 
   if (!isMine && user.isPrivate && !isFollowing) {
-      alert("This account is private. Follow to see their followers and following.");
+      // Requirements: hide/blur (Instagram style) if not following a private account
+      const modalTitle = document.querySelector('#contactModal h3');
+      if (modalTitle) modalTitle.textContent = type === 'followers' ? 'Followers' : 'Following';
+      contactList.innerHTML = `
+        <div style="text-align:center; padding: 40px 20px; filter: blur(4px); pointer-events: none; user-select: none;">
+          <div class="contact-item"><div class="chat-avatar">U</div><span>User One</span></div>
+          <div class="contact-item"><div class="chat-avatar">U</div><span>User Two</span></div>
+          <div class="contact-item"><div class="chat-avatar">U</div><span>User Three</span></div>
+        </div>
+        <div style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); text-align:center; width:100%; z-index:10;">
+          <p style="font-weight:700; color:var(--text);">Follow to see ${type}</p>
+          <p style="font-size:0.8rem; color:var(--muted);">When you follow this account, you'll be able to see their ${type} list.</p>
+        </div>
+      `;
+      contactModal.hidden = false;
       return;
   }
 
@@ -3559,11 +3650,11 @@ async function sharePostToChat(postId, targetUserId) {
 function fetchAndSyncFollowRequests() {
   if (!activeSession || !followRequestsSection || !followRequestsList || typeof db === 'undefined') return;
 
-  onSnapshot(query(collection(db, "followRequests"), where("followingId", "==", activeSession.id)), (snapshot) => {
+  onSnapshot(query(collection(db, "followRequests"), where("toUserId", "==", activeSession.id)), (snapshot) => {
     incomingFollowRequests = [];
     snapshot.forEach((d) => {
       const rel = d.data();
-      const follower = authUsers.find(u => u.id === rel.followerId);
+      const follower = authUsers.find(u => u.id === rel.fromUserId);
       incomingFollowRequests.push({
         ...rel,
         followerName: follower ? (follower.name || (follower.usernames || []).find(x => x.id === follower.activeUsernameId)?.value) : 'Unknown',
@@ -3577,9 +3668,27 @@ function fetchAndSyncFollowRequests() {
 
 function renderFollowRequests() {
     const requests = incomingFollowRequests;
-    if (requests.length > 0) {
-      followRequestsSection.hidden = false;
-      followRequestsList.innerHTML = '';
+    const activityFollowRequests = document.getElementById('activityFollowRequests');
+    const activityFollowRequestsList = document.getElementById('activityFollowRequestsList');
+
+    // Update badge on Settings/Gear icon near edit profile button
+    const settingsBtn = document.querySelector('.settings-btn');
+    if (settingsBtn) {
+      const badge = settingsBtn.querySelector('.badge');
+      if (requests.length > 0) {
+        if (!badge) {
+          settingsBtn.insertAdjacentHTML('beforeend', `<span class="badge" style="position:absolute; top:-5px; right:-5px; background:#d14343; color:white; border-radius:50%; width:18px; height:18px; font-size:10px; display:flex; align-items:center; justify-content:center; border:2px solid var(--card); pointer-events:none;">${requests.length}</span>`);
+        } else {
+          badge.textContent = requests.length;
+          badge.hidden = false;
+        }
+      } else if (badge) {
+        badge.hidden = true;
+      }
+    }
+
+    const renderReq = (container) => {
+      container.innerHTML = '';
       requests.forEach(req => {
         const div = document.createElement('div');
         div.className = 'follow-request-item';
@@ -3593,12 +3702,30 @@ function renderFollowRequests() {
             <button class="decline-btn" style="padding: 4px 8px; font-size: 0.75rem; background: var(--muted);">Decline</button>
           </div>
         `;
-        div.querySelector('.accept-btn').onclick = () => acceptFollowRequest(req.id);
-        div.querySelector('.decline-btn').onclick = () => declineFollowRequest(req.id);
-        followRequestsList.appendChild(div);
+        div.querySelector('.accept-btn').onclick = (e) => {
+          e.stopPropagation();
+          acceptFollowRequest(req.id);
+        };
+        div.querySelector('.decline-btn').onclick = (e) => {
+          e.stopPropagation();
+          declineFollowRequest(req.id);
+        };
+        container.appendChild(div);
       });
+    };
+
+    if (requests.length > 0) {
+      if (followRequestsSection) {
+        followRequestsSection.hidden = false;
+        renderReq(followRequestsList);
+      }
+      if (activityFollowRequests) {
+        activityFollowRequests.hidden = false;
+        renderReq(activityFollowRequestsList);
+      }
     } else {
-      followRequestsSection.hidden = true;
+      if (followRequestsSection) followRequestsSection.hidden = true;
+      if (activityFollowRequests) activityFollowRequests.hidden = true;
     }
 }
 
