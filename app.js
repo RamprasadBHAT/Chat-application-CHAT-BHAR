@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, or, and, increment, runTransaction } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 function getDmChatId(uid1, uid2) {
@@ -397,14 +397,30 @@ async function fetchAndSyncMessages(chatIdArg = null) {
     messageUnsubscribe = null;
   }
 
-  // 2. The Message Listener (Look for where your app loads messages)
-  // Ensure your query is triggered immediately after chatId generation
-  // We use chatId as the primary filter for both DMs and Groups for better performance and simpler indices.
-  const q = query(
-    collection(db, "messages"),
-    where("chatId", "==", currentChatId),
-    orderBy("createdAt", "asc")
-  );
+  const toMillis = (value) => {
+    if (!value) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value?.toMillis === 'function') return value.toMillis();
+    if (value?.seconds) return value.seconds * 1000;
+    const parsed = new Date(value).getTime();
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  const mapAndSortVisibleMessages = (docs) => {
+    const snapshotMsgs = docs.map((msgDoc) => {
+      const data = msgDoc.data();
+      const dir = data.senderId === myUid ? 'outgoing' : 'incoming';
+      return { id: msgDoc.id, ...data, dir, docId: msgDoc.id };
+    });
+
+    const visible = snapshotMsgs.filter((m) => !m.deletedFor || !m.deletedFor.includes(myUid));
+    visible.sort((a, b) => {
+      const aTime = toMillis(a.createdAt || a.timestamp);
+      const bTime = toMillis(b.createdAt || b.timestamp);
+      return aTime - bTime;
+    });
+    return visible;
+  };
 
   // Fast Feedback: Render from local store while waiting for snapshot
   renderMessages(chatStore[currentChatId] || []);
@@ -412,24 +428,69 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   // 3. The Real-time sync
   if (useFirebase) {
-    messageUnsubscribe = onSnapshot(q, (snapshot) => {
-      const snapshotMsgs = snapshot.docs.map(doc => {
-        const data = doc.data();
-        const dir = data.senderId === myUid ? 'outgoing' : 'incoming';
-        return { id: doc.id, ...data, dir, docId: doc.id };
-      });
-      const visible = snapshotMsgs.filter(m => !m.deletedFor || !m.deletedFor.includes(myUid));
-      visible.sort((a, b) => {
-        const getMs = (v) => v?.seconds ? v.seconds * 1000 : (v ? new Date(v).getTime() : 0);
-        return getMs(a.createdAt) - getMs(b.createdAt);
-      });
-      chatStore[currentChatId] = visible;
-      saveJson(CHAT_STORE_KEY, chatStore);
-      if (activeChat === currentChatId) {
-        renderMessages(visible);
-        scrollToBottom();
-      }
-    }, (err) => console.error("Firestore Message Sync Error:", err));
+    const isDm = currentChatId.startsWith('dm:') && dmPeerUid;
+    const messagesRef = collection(db, 'messages');
+
+    if (isDm) {
+      const legacyChatId = `dm:${dmPeerUid}`;
+      const snapshotBuckets = {
+        byChatId: new Map(),
+        byParticipants: new Map()
+      };
+
+      const applyMergedDmMessages = () => {
+        const merged = new Map([...snapshotBuckets.byChatId, ...snapshotBuckets.byParticipants]);
+        const visible = mapAndSortVisibleMessages(Array.from(merged.values()).filter((docSnap) => {
+          const data = docSnap.data();
+          const sender = data.senderId;
+          const receiver = data.receiverId;
+          const pairMatch = (sender === myUid && receiver === dmPeerUid) || (sender === dmPeerUid && receiver === myUid);
+          const chatMatch = data.chatId === currentChatId || data.chatId === legacyChatId;
+          return pairMatch || chatMatch;
+        }));
+
+        chatStore[currentChatId] = visible;
+        saveJson(CHAT_STORE_KEY, chatStore);
+        if (activeChat === currentChatId) {
+          renderMessages(visible);
+          scrollToBottom();
+        }
+      };
+
+      const unsubByChatId = onSnapshot(
+        query(messagesRef, where('chatId', 'in', [currentChatId, legacyChatId])),
+        (snapshot) => {
+          snapshotBuckets.byChatId = new Map(snapshot.docs.map((d) => [d.id, d]));
+          applyMergedDmMessages();
+        },
+        (err) => console.error('Firestore DM Sync Error (chatId):', err)
+      );
+
+      const unsubByParticipants = onSnapshot(
+        query(messagesRef, where('senderId', 'in', [myUid, dmPeerUid])),
+        (snapshot) => {
+          snapshotBuckets.byParticipants = new Map(snapshot.docs.map((d) => [d.id, d]));
+          applyMergedDmMessages();
+        },
+        (err) => console.error('Firestore DM Sync Error (participants):', err)
+      );
+
+      messageUnsubscribe = () => {
+        unsubByChatId();
+        unsubByParticipants();
+      };
+    } else {
+      const messageQuery = query(messagesRef, where('chatId', '==', currentChatId));
+      messageUnsubscribe = onSnapshot(messageQuery, (snapshot) => {
+        const visible = mapAndSortVisibleMessages(snapshot.docs);
+        chatStore[currentChatId] = visible;
+        saveJson(CHAT_STORE_KEY, chatStore);
+        if (activeChat === currentChatId) {
+          renderMessages(visible);
+          scrollToBottom();
+        }
+      }, (err) => console.error('Firestore Message Sync Error:', err));
+    }
   } else {
     // In local mode, we rely on chatStore being updated by sendMessage/apiRequest
     const visible = (chatStore[currentChatId] || []).filter(m => !m.deletedFor || !m.deletedFor.includes(activeSession.id));
@@ -4287,4 +4348,3 @@ function renderFollowRequests() {
       if (activityFollowRequests) activityFollowRequests.hidden = true;
     }
 }
-
