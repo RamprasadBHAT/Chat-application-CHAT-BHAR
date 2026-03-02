@@ -189,16 +189,25 @@ let pendingFiles = [];
 let chatStore = loadJson(CHAT_STORE_KEY, {});
 let activeChat = null;
 let messageUnsubscribe = null;
+let conversationsUnsubscribe = null;
+let relationshipsUnsubscribe1 = null;
+let relationshipsUnsubscribe2 = null;
+let contactRequestsUnsubscribe = null;
+let followRequestsUnsubscribe = null;
+let postsUnsubscribe = null;
+let authUsersUnsubscribe = null;
+
 let chatMeta = loadJson('chatbhar.chatMeta', {});
 
 function getOtherUserIdFromConversation(convOrId) {
+  const myId = activeSession?.id || (useFirebase && auth?.currentUser?.uid);
   if (typeof convOrId === 'string') {
     if (!convOrId.startsWith('dm:')) return null;
     const ids = convOrId.replace('dm:', '').split('_');
-    return ids.find(id => id !== auth.currentUser?.uid);
+    return ids.find(id => id !== myId);
   }
   if (convOrId && convOrId.participants) {
-    return convOrId.participants.find(id => id !== auth.currentUser?.uid);
+    return convOrId.participants.find(id => id !== myId);
   }
   return null;
 }
@@ -213,7 +222,7 @@ function getUnifiedChatId(id) {
     uids = content.split('_');
   } else {
     // Legacy single UID format: dm:OTHER_UID
-    const myUid = auth.currentUser?.uid || activeSession?.id;
+    const myUid = activeSession?.id || (useFirebase && auth?.currentUser?.uid);
     if (!myUid) return id;
     uids = [myUid, content];
   }
@@ -255,10 +264,20 @@ const firebaseConfig = {
 };
 
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const storage = getStorage(app);
+let app, auth, db, storage;
+let useFirebase = false;
+
+if (firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('PLACEHOLDER')) {
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+    storage = getStorage(app);
+    useFirebase = true;
+  } catch (err) {
+    console.error("Firebase initialization failed:", err);
+  }
+}
 
 initApp();
 
@@ -267,33 +286,48 @@ async function initApp() {
 
   bindEvents();
 
-  onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      const userDoc = await getDocWithRetry(doc(db, "users", user.uid));
-      if (userDoc) {
-        const userData = userDoc.data();
-        const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
-        activeSession = { ...userData, username };
-        saveJson(AUTH_SESSION_KEY, activeSession);
+  if (useFirebase) {
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        const userDoc = await getDocWithRetry(doc(db, "users", user.uid));
+        if (userDoc) {
+          const userData = userDoc.data();
+          const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
+          activeSession = { ...userData, username };
+          saveJson(AUTH_SESSION_KEY, activeSession);
 
-        authGate.hidden = true;
-        appShell.hidden = false;
+          authGate.hidden = true;
+          appShell.hidden = false;
 
-        if (!activeSession.username) {
-          openOnboarding();
-        } else {
-          startRealTimeSync();
-          renderHome();
-          renderChannelManager();
+          if (!activeSession.username) {
+            openOnboarding();
+          } else {
+            startRealTimeSync();
+            renderHome();
+            renderChannelManager();
+          }
         }
+      } else {
+        activeSession = null;
+        localStorage.removeItem(AUTH_SESSION_KEY);
+        authGate.hidden = false;
+        appShell.hidden = true;
       }
-    } else {
-      activeSession = null;
-      localStorage.removeItem(AUTH_SESSION_KEY);
-      authGate.hidden = false;
-      appShell.hidden = true;
+    });
+  } else {
+    // Local mode auth check
+    if (activeSession && activeSession.id) {
+      authGate.hidden = true;
+      appShell.hidden = false;
+      if (!activeSession.username) {
+        openOnboarding();
+      } else {
+        startRealTimeSync();
+        renderHome();
+        renderChannelManager();
+      }
     }
-  });
+  }
 
   await bootstrapUsers();
   migrateOldUploads();
@@ -318,13 +352,14 @@ function startRealTimeSync() {
 }
 
 async function fetchAndSyncMessages(chatIdArg = null) {
-  if (!activeSession || !auth.currentUser || typeof db === 'undefined') return;
+  if (!activeSession) return;
+  if (useFirebase && (!auth || !auth.currentUser)) return;
 
   // 1. Target ID Selection and Selected User State
   let targetChatId = chatIdArg ? getUnifiedChatId(chatIdArg) : activeChat;
   if (!targetChatId) return;
 
-  const myUid = auth.currentUser.uid;
+  const myUid = activeSession.id;
 
   if (targetChatId.startsWith('dm:')) {
     const otherUid = getOtherUserIdFromConversation(targetChatId);
@@ -384,93 +419,127 @@ async function fetchAndSyncMessages(chatIdArg = null) {
   renderMessages(chatStore[currentChatId] || []);
   renderChatUsers();
 
-  // 3. The Real-time sync (OnSnapshot)
-  messageUnsubscribe = onSnapshot(q, (snapshot) => {
-    // Map snapshot to message objects with dir helper
-    const snapshotMsgs = snapshot.docs.map(doc => {
-      const data = doc.data();
-      const dir = data.senderId === myUid ? 'outgoing' : 'incoming';
-      return { id: doc.id, ...data, dir, docId: doc.id };
-    });
-
-    // Filter "Delete for Me"
-    const visible = snapshotMsgs.filter(m => !m.deletedFor || !m.deletedFor.includes(myUid));
-
-    // Sort Chronologically
-    visible.sort((a, b) => {
-      const getMs = (v) => v?.seconds ? v.seconds * 1000 : (v ? new Date(v).getTime() : 0);
-      const ta = getMs(a.createdAt);
-      const tb = getMs(b.createdAt);
-      return ta - tb;
-    });
-
-    // Update the local store (used by sidebar preview)
-    chatStore[currentChatId] = visible;
-    saveJson(CHAT_STORE_KEY, chatStore);
-
-    // This puts the messages into the big chat box
+  // 3. The Real-time sync
+  if (useFirebase) {
+    messageUnsubscribe = onSnapshot(q, (snapshot) => {
+      const snapshotMsgs = snapshot.docs.map(doc => {
+        const data = doc.data();
+        const dir = data.senderId === myUid ? 'outgoing' : 'incoming';
+        return { id: doc.id, ...data, dir, docId: doc.id };
+      });
+      const visible = snapshotMsgs.filter(m => !m.deletedFor || !m.deletedFor.includes(myUid));
+      visible.sort((a, b) => {
+        const getMs = (v) => v?.seconds ? v.seconds * 1000 : (v ? new Date(v).getTime() : 0);
+        return getMs(a.createdAt) - getMs(b.createdAt);
+      });
+      chatStore[currentChatId] = visible;
+      saveJson(CHAT_STORE_KEY, chatStore);
+      if (activeChat === currentChatId) {
+        renderMessages(visible);
+        scrollToBottom();
+      }
+    }, (err) => console.error("Firestore Message Sync Error:", err));
+  } else {
+    // In local mode, we rely on chatStore being updated by sendMessage/apiRequest
+    const visible = (chatStore[currentChatId] || []).filter(m => !m.deletedFor || !m.deletedFor.includes(activeSession.id));
     if (activeChat === currentChatId) {
       renderMessages(visible);
       scrollToBottom();
     }
-  }, (err) => console.error("Firestore Message Sync Error:", err));
+  }
 }
 
 function fetchAndSyncConversations() {
-  if (!activeSession || typeof db === 'undefined' || !auth.currentUser) return;
+  if (!activeSession) return;
+  if (useFirebase && (!auth || !auth.currentUser)) return;
 
-  onSnapshot(query(collection(db, "conversations"), where("participants", "array-contains", auth.currentUser.uid)), (snapshot) => {
-    myConversations = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
-
-    // Update chatMeta with unified conversation IDs
-    myConversations.forEach(conv => {
-        const unifiedId = getUnifiedChatId(conv.id);
-        if (!chatMeta[unifiedId]) {
-             chatMeta[unifiedId] = {
-                 id: unifiedId,
-                 name: conv.name || (conv.isGroup ? 'Group' : 'User'),
-                 participants: conv.participants,
-                 isGroup: conv.isGroup,
-                 online: false
-             };
-        }
+  if (useFirebase && typeof db !== 'undefined') {
+    if (conversationsUnsubscribe) conversationsUnsubscribe();
+    conversationsUnsubscribe = onSnapshot(query(collection(db, "conversations"), where("participants", "array-contains", (auth?.currentUser?.uid || activeSession.id))), (snapshot) => {
+      myConversations = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
+      processConversations();
     });
+  } else {
+    // Local mode
+    const syncLocal = () => {
+      myConversations = loadJson('chatbhar.conversations', []);
+      processConversations();
+    };
+    syncLocal();
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'chatbhar.conversations') syncLocal();
+    });
+  }
 
+  function processConversations() {
+    myConversations.forEach(conv => {
+      const unifiedId = getUnifiedChatId(conv.id);
+      if (!chatMeta[unifiedId]) {
+        let chatName = conv.name || (conv.isGroup ? 'Group' : 'User');
+        if (!conv.isGroup) {
+          const otherUid = getOtherUserIdFromConversation(conv);
+          const u = authUsers.find(x => x.id === otherUid);
+          if (u) chatName = u.username || u.name;
+        }
+        chatMeta[unifiedId] = {
+          id: unifiedId,
+          name: chatName,
+          participants: conv.participants,
+          isGroup: conv.isGroup,
+          online: false
+        };
+      }
+    });
     renderChatUsers();
-
     if (!activeChat && myConversations.length > 0) {
       const sorted = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
       fetchAndSyncMessages(sorted[0].id);
     }
-  });
+  }
 }
 
 function fetchAndSyncRelationships() {
-    if (!activeSession || typeof db === 'undefined') return;
+  if (!activeSession) return;
 
-    const updateCombined = () => {
-        myRelationships = [
-            ...myFollows.map(f => ({ ...f, status: 'accepted' })),
-            ...myFollowRequests.map(r => ({ ...r, status: 'pending' }))
-        ];
-        renderExploreUsers(exploreSearchInput.value);
+  const updateCombined = () => {
+    myRelationships = [
+      ...myFollows.map(f => ({ ...f, status: 'accepted' })),
+      ...myFollowRequests.map(r => ({ ...r, status: 'pending' }))
+    ];
+    renderExploreUsers(exploreSearchInput.value);
+  };
+
+  if (useFirebase && typeof db !== 'undefined') {
+    if (relationshipsUnsubscribe1) relationshipsUnsubscribe1();
+    relationshipsUnsubscribe1 = onSnapshot(query(collection(db, "follows"), where("followerId", "==", activeSession.id)), (snapshot) => {
+      myFollows = snapshot.docs.map(d => d.data());
+      updateCombined();
+    });
+
+    if (relationshipsUnsubscribe2) relationshipsUnsubscribe2();
+    relationshipsUnsubscribe2 = onSnapshot(query(collection(db, "followRequests"), where("fromUserId", "==", activeSession.id)), (snapshot) => {
+      myFollowRequests = snapshot.docs.map(d => d.data());
+      updateCombined();
+    });
+  } else {
+    // Local mode
+    const syncLocal = () => {
+      const allRels = loadJson('chatbhar.relationships', []);
+      myFollows = allRels.filter(r => r.followerId === activeSession.id && r.status === 'accepted');
+      myFollowRequests = allRels.filter(r => r.fromUserId === activeSession.id && r.status === 'pending');
+      updateCombined();
     };
-
-    onSnapshot(query(collection(db, "follows"), where("followerId", "==", activeSession.id)), (snapshot) => {
-        myFollows = snapshot.docs.map(d => d.data());
-        updateCombined();
+    syncLocal();
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'chatbhar.relationships') syncLocal();
     });
-
-    onSnapshot(query(collection(db, "followRequests"), where("fromUserId", "==", activeSession.id)), (snapshot) => {
-        myFollowRequests = snapshot.docs.map(d => d.data());
-        updateCombined();
-    });
+  }
 }
 
 function fetchAndSyncContactRequests() {
   if (!activeSession || typeof db === 'undefined') return;
-
-  onSnapshot(query(collection(db, "requests"), where("toUid", "==", activeSession.id), where("status", "==", "pending")), (snapshot) => {
+  if (contactRequestsUnsubscribe) contactRequestsUnsubscribe();
+  contactRequestsUnsubscribe = onSnapshot(query(collection(db, "requests"), where("toUid", "==", activeSession.id), where("status", "==", "pending")), (snapshot) => {
     snapshot.docChanges().forEach((change) => {
       if (change.type === "added") {
         const req = change.doc.data();
@@ -555,9 +624,225 @@ function hydrateState() {
 function loadJson(key, fallback) {
   const raw = localStorage.getItem(key);
   if (!raw) return structuredClone(fallback);
-  try { return JSON.parse(raw); } catch { return structuredClone(fallback); }
+  try {
+    const parsed = JSON.parse(raw);
+    if (key === AUTH_USERS_KEY && parsed && parsed.users) return parsed.users;
+    return parsed;
+  } catch { return structuredClone(fallback); }
 }
 function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
+
+async function apiRequest(path, options = {}) {
+  const requestOptions = {
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  };
+
+  try {
+    const response = await fetch(path, requestOptions);
+    if (!response.ok) {
+      if (response.status === 405 || response.status === 501) {
+        return await localApiRequest(path, options);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json') ? await response.json() : {};
+      throw new Error(payload.error || `Request failed (${response.status})`);
+    }
+    const contentType = response.headers.get('content-type') || '';
+    return contentType.includes('application/json') ? await response.json() : {};
+  } catch (error) {
+    console.warn(`API request to ${path} failed, falling back to local storage:`, error.message);
+    return await localApiRequest(path, options);
+  }
+}
+
+async function localApiRequest(path, options = {}) {
+  const method = options.method || 'GET';
+  const body = options.body ? JSON.parse(options.body) : {};
+  const users = loadJson(AUTH_USERS_KEY, []);
+  const localPosts = loadJson(UPLOAD_STORE_KEY, []);
+
+  if (path === '/api/auth/users' && method === 'GET') {
+    return { users: users.map(u => ({ ...u, password: '' })) };
+  }
+
+  if (path === '/api/auth/signup' && method === 'POST') {
+    const { email, password, name } = body;
+    if (users.some(u => u.email === email)) throw new Error('Email already exists');
+    const newUser = {
+      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+      name, email, password,
+      usernames: [], activeUsernameId: null,
+      stats: { posts: 0, followers: 0, following: 0 },
+      followerCount: 0, followingCount: 0,
+      isPrivate: false,
+      socialLinks: { twitter: '', linkedin: '', github: '' }
+    };
+    users.push(newUser);
+    saveJson(AUTH_USERS_KEY, users);
+    return { user: newUser };
+  }
+
+  if (path === '/api/auth/login' && method === 'POST') {
+    const { email, password } = body;
+    const user = users.find(u => u.email === email && u.password === password);
+    if (!user) throw new Error('Invalid email/password');
+    const username = (user.usernames || []).find(x => x.id === user.activeUsernameId)?.value || '';
+    return { session: { ...user, username, password: '' }, usernames: user.usernames || [] };
+  }
+
+  if (path === '/api/usernames/check' && method === 'POST') {
+    const { username } = body;
+    const exists = users.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === username.toLowerCase()));
+    if (exists) throw new Error('Username already taken');
+    return { available: true };
+  }
+
+  if (path === '/api/usernames' && method === 'POST') {
+    const { userId, username } = body;
+    const user = users.find(u => u.id === userId);
+    if (!user) throw new Error('User not found');
+    const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+    const newName = { id, value: username, createdAt: Date.now(), updatedAt: Date.now() };
+    user.usernames = user.usernames || [];
+    user.usernames.push(newName);
+    user.activeUsernameId = id;
+    saveJson(AUTH_USERS_KEY, users);
+    return { session: { ...user, username, password: '' } };
+  }
+
+  if (path === '/api/posts' && method === 'GET') {
+    return { posts: localPosts };
+  }
+
+  if (path === '/api/posts' && method === 'POST') {
+    const newPost = { ...body, id: body.id || (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)), createdAt: new Date().toISOString() };
+    localPosts.push(newPost);
+    saveJson(UPLOAD_STORE_KEY, localPosts);
+    return { post: newPost };
+  }
+
+  if (path === '/api/messages' && method === 'GET') {
+    return { messages: [] };
+  }
+
+  if (path === '/api/auth/profile' && method === 'PATCH') {
+    const { userId } = body;
+    const idx = users.findIndex(u => u.id === userId);
+    if (idx === -1) throw new Error('User not found');
+    users[idx] = { ...users[idx], ...body };
+    saveJson(AUTH_USERS_KEY, users);
+    return { user: { ...users[idx], password: '' } };
+  }
+
+  if (path.startsWith('/api/posts/') && method === 'PATCH') {
+    const id = path.split('/').pop();
+    const idx = localPosts.findIndex(p => p.id === id);
+    if (idx !== -1) {
+      localPosts[idx] = { ...localPosts[idx], ...body };
+      saveJson(UPLOAD_STORE_KEY, localPosts);
+      return { post: localPosts[idx] };
+    }
+  }
+
+  if (path.startsWith('/api/posts/') && method === 'DELETE') {
+    const id = path.split('/').pop();
+    const filtered = localPosts.filter(p => p.id !== id);
+    saveJson(UPLOAD_STORE_KEY, filtered);
+    return { ok: true };
+  }
+
+  // Messaging / Relationships fallbacks
+  if (path === '/api/messages' && method === 'POST') {
+    const chatStore = loadJson(CHAT_STORE_KEY, {});
+    const { chatId } = body;
+    if (!chatStore[chatId]) chatStore[chatId] = [];
+    const msg = { ...body, id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2), createdAt: Date.now() };
+    chatStore[chatId].push(msg);
+    saveJson(CHAT_STORE_KEY, chatStore);
+    return { message: msg };
+  }
+
+  if (path === '/api/relationships/follow' && method === 'POST') {
+    const { followingId } = body;
+    const myUid = activeSession.id;
+    const targetUser = users.find(u => u.id === followingId);
+    if (!targetUser) throw new Error('User not found');
+
+    const rels = loadJson('chatbhar.relationships', []);
+    const relId = `${myUid}_${followingId}`;
+    if (rels.some(r => r.id === relId)) return { ok: true };
+
+    if (targetUser.isPrivate) {
+      rels.push({ id: relId, fromUserId: myUid, toUserId: followingId, status: 'pending', createdAt: Date.now() });
+    } else {
+      rels.push({ id: relId, followerId: myUid, followingId, status: 'accepted', createdAt: Date.now() });
+      // Update counts in local users
+      const myIdx = users.findIndex(u => u.id === myUid);
+      const theirIdx = users.findIndex(u => u.id === followingId);
+      if (myIdx !== -1) users[myIdx].followingCount = (users[myIdx].followingCount || 0) + 1;
+      if (theirIdx !== -1) users[theirIdx].followerCount = (users[theirIdx].followerCount || 0) + 1;
+      saveJson(AUTH_USERS_KEY, users);
+    }
+    saveJson('chatbhar.relationships', rels);
+    return { ok: true };
+  }
+
+  if (path === '/api/relationships/unfollow' && method === 'POST') {
+    const { followingId } = body;
+    const myUid = activeSession.id;
+    let rels = loadJson('chatbhar.relationships', []);
+    const relId = `${myUid}_${followingId}`;
+    const rel = rels.find(r => r.id === relId);
+    if (rel && rel.status === 'accepted') {
+      const myIdx = users.findIndex(u => u.id === myUid);
+      const theirIdx = users.findIndex(u => u.id === followingId);
+      if (myIdx !== -1) users[myIdx].followingCount = Math.max(0, (users[myIdx].followingCount || 0) - 1);
+      if (theirIdx !== -1) users[theirIdx].followerCount = Math.max(0, (users[theirIdx].followerCount || 0) - 1);
+      saveJson(AUTH_USERS_KEY, users);
+    }
+    rels = rels.filter(r => r.id !== relId);
+    saveJson('chatbhar.relationships', rels);
+    return { ok: true };
+  }
+
+  if (path.startsWith('/api/relationships/accept/') && method === 'POST') {
+    const relId = path.split('/').pop();
+    const rels = loadJson('chatbhar.relationships', []);
+    const idx = rels.findIndex(r => r.id === relId);
+    if (idx !== -1) {
+      const rel = rels[idx];
+      rel.status = 'accepted';
+      rel.followerId = rel.fromUserId;
+      rel.followingId = rel.toUserId;
+      // Update counts
+      const fIdx = users.findIndex(u => u.id === rel.followerId);
+      const tIdx = users.findIndex(u => u.id === rel.followingId);
+      if (fIdx !== -1) users[fIdx].followingCount = (users[fIdx].followingCount || 0) + 1;
+      if (tIdx !== -1) users[tIdx].followerCount = (users[tIdx].followerCount || 0) + 1;
+      saveJson(AUTH_USERS_KEY, users);
+      saveJson('chatbhar.relationships', rels);
+    }
+    return { ok: true };
+  }
+
+  if (path === '/api/messages/reactions' && method === 'POST') {
+    const { chatId, messageId, emoji, userId } = body;
+    const chatStore = loadJson(CHAT_STORE_KEY, {});
+    const msgs = chatStore[chatId] || [];
+    const msg = msgs.find(m => m.id === messageId);
+    if (msg) {
+      msg.reactions = msg.reactions || [];
+      const rIdx = msg.reactions.findIndex(r => r.userId === userId);
+      if (rIdx !== -1) msg.reactions[rIdx].emoji = emoji;
+      else msg.reactions.push({ userId, emoji });
+      saveJson(CHAT_STORE_KEY, chatStore);
+    }
+    return { ok: true };
+  }
+
+  return { ok: true };
+}
 
 async function getDocWithRetry(docRef, maxRetries = 5, delay = 1000) {
   for (let i = 0; i < maxRetries; i++) {
@@ -571,16 +856,27 @@ async function getDocWithRetry(docRef, maxRetries = 5, delay = 1000) {
 
 
 async function syncAuthUsers() {
-  if (typeof db === 'undefined') return;
-  onSnapshot(collection(db, "users"), (snapshot) => {
-    const users = [];
-    snapshot.forEach((doc) => {
-      users.push(doc.data());
+  if (useFirebase && typeof db !== 'undefined') {
+    if (authUsersUnsubscribe) authUsersUnsubscribe();
+    authUsersUnsubscribe = onSnapshot(collection(db, "users"), (snapshot) => {
+      const users = [];
+      snapshot.forEach((doc) => {
+        users.push(doc.data());
+      });
+      authUsers = users;
+      saveJson(AUTH_USERS_KEY, authUsers);
+      renderExploreUsers();
     });
-    authUsers = users;
-    saveJson(AUTH_USERS_KEY, authUsers);
-    renderExploreUsers();
-  });
+  } else {
+    try {
+      const payload = await apiRequest('/api/auth/users');
+      authUsers = payload.users || [];
+      saveJson(AUTH_USERS_KEY, authUsers);
+      renderExploreUsers();
+    } catch (err) {
+      console.error("Sync users failed", err);
+    }
+  }
 }
 
 async function bootstrapUsers() {
@@ -757,10 +1053,22 @@ function bindEvents() {
   if (saveEditMsgBtn) {
     saveEditMsgBtn.onclick = async () => {
       const newText = document.getElementById('editMsgInput').value.trim();
-      if (newText && currentContextMsg && currentContextMsg.docId) {
+      if (newText && currentContextMsg) {
         try {
-          await updateDoc(doc(db, "messages", currentContextMsg.docId), { text: newText, edited: true });
+          if (useFirebase && currentContextMsg.docId) {
+            await updateDoc(doc(db, "messages", currentContextMsg.docId), { text: newText, edited: true });
+          } else {
+            const chatStore = loadJson(CHAT_STORE_KEY, {});
+            const msgs = chatStore[activeChat] || [];
+            const msg = msgs.find(m => m.id === currentContextMsg.id);
+            if (msg) {
+              msg.text = newText;
+              msg.edited = true;
+              saveJson(CHAT_STORE_KEY, chatStore);
+            }
+          }
           document.getElementById('editMsgModal').hidden = true;
+          renderMessages();
         } catch (err) {
           alert("Failed to edit message: " + err.message);
         }
@@ -927,7 +1235,16 @@ function bindEvents() {
       }
       timeout = setTimeout(async () => {
         try {
-          const exists = authUsers.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === val && u.id !== activeSession.id));
+          let exists = false;
+          if (useFirebase) {
+            exists = authUsers.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === val && u.id !== activeSession.id));
+          } else {
+            const res = await apiRequest('/api/usernames/check', {
+              method: 'POST',
+              body: JSON.stringify({ username: val })
+            });
+            exists = !res.available;
+          }
           if (exists) throw new Error('Username already taken');
 
           usernameAvailabilityHint.textContent = 'Username available';
@@ -972,30 +1289,38 @@ async function followUser(followingId) {
 
     const relId = `${activeSession.id}_${followingId}`;
 
-    if (followingUser.isPrivate) {
-      await setDoc(doc(db, "followRequests", relId), {
-        id: relId,
-        fromUserId: activeSession.id,
-        toUserId: followingId,
-        status: 'pending',
-        createdAt: Date.now()
-      });
-      alert('Follow request sent');
-    } else {
-      await runTransaction(db, async (transaction) => {
-        const myRef = doc(db, "users", activeSession.id);
-        const theirRef = doc(db, "users", followingId);
-        const followRef = doc(db, "follows", relId);
-
-        transaction.set(followRef, {
+    if (useFirebase) {
+      if (followingUser.isPrivate) {
+        await setDoc(doc(db, "followRequests", relId), {
           id: relId,
-          followerId: activeSession.id,
-          followingId,
+          fromUserId: activeSession.id,
+          toUserId: followingId,
+          status: 'pending',
           createdAt: Date.now()
         });
-        transaction.update(myRef, { "stats.following": increment(1), followingCount: increment(1) });
-        transaction.update(theirRef, { "stats.followers": increment(1), followerCount: increment(1) });
+        alert('Follow request sent');
+      } else {
+        await runTransaction(db, async (transaction) => {
+          const myRef = doc(db, "users", activeSession.id);
+          const theirRef = doc(db, "users", followingId);
+          const followRef = doc(db, "follows", relId);
+
+          transaction.set(followRef, {
+            id: relId,
+            followerId: activeSession.id,
+            followingId,
+            createdAt: Date.now()
+          });
+          transaction.update(myRef, { "stats.following": increment(1), followingCount: increment(1) });
+          transaction.update(theirRef, { "stats.followers": increment(1), followerCount: increment(1) });
+        });
+      }
+    } else {
+      await apiRequest('/api/relationships/follow', {
+        method: 'POST',
+        body: JSON.stringify({ followingId })
       });
+      if (followingUser.isPrivate) alert('Follow request sent');
     }
 
     await renderExploreUsers(exploreSearchInput.value);
@@ -1008,21 +1333,29 @@ async function unfollowUser(followingId) {
   if (!activeSession) return;
   try {
     const relId = `${activeSession.id}_${followingId}`;
-    const followDoc = await getDoc(doc(db, "follows", relId));
 
-    if (followDoc.exists()) {
-      await runTransaction(db, async (transaction) => {
-        const myRef = doc(db, "users", activeSession.id);
-        const theirRef = doc(db, "users", followingId);
-        const followRef = doc(db, "follows", relId);
+    if (useFirebase) {
+      const followDoc = await getDoc(doc(db, "follows", relId));
 
-        transaction.delete(followRef);
-        transaction.update(myRef, { "stats.following": increment(-1), followingCount: increment(-1) });
-        transaction.update(theirRef, { "stats.followers": increment(-1), followerCount: increment(-1) });
-      });
+      if (followDoc.exists()) {
+        await runTransaction(db, async (transaction) => {
+          const myRef = doc(db, "users", activeSession.id);
+          const theirRef = doc(db, "users", followingId);
+          const followRef = doc(db, "follows", relId);
+
+          transaction.delete(followRef);
+          transaction.update(myRef, { "stats.following": increment(-1), followingCount: increment(-1) });
+          transaction.update(theirRef, { "stats.followers": increment(-1), followerCount: increment(-1) });
+        });
+      } else {
+        // Maybe it was a pending request
+        await deleteDoc(doc(db, "followRequests", relId));
+      }
     } else {
-      // Maybe it was a pending request
-      await deleteDoc(doc(db, "followRequests", relId));
+      await apiRequest('/api/relationships/unfollow', {
+        method: 'POST',
+        body: JSON.stringify({ followingId })
+      });
     }
 
     await renderExploreUsers(exploreSearchInput.value);
@@ -1074,21 +1407,31 @@ async function sendContactRequest() {
 }
 
 async function isMutualFollow(userId1, userId2) {
-    try {
-        const q1 = query(collection(db, "follows"), where("followerId", "==", userId1), where("followingId", "==", userId2));
-        const q2 = query(collection(db, "follows"), where("followerId", "==", userId2), where("followingId", "==", userId1));
-        const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
-        return !snap1.empty && !snap2.empty;
-    } catch (err) {
-        console.error("Error checking mutual follow:", err);
-        return false;
+  try {
+    if (useFirebase) {
+      const q1 = query(collection(db, "follows"), where("followerId", "==", userId1), where("followingId", "==", userId2));
+      const q2 = query(collection(db, "follows"), where("followerId", "==", userId2), where("followingId", "==", userId1));
+      const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+      return !snap1.empty && !snap2.empty;
+    } else {
+      const rels = loadJson('chatbhar.relationships', []);
+      const f1 = rels.some(r => r.followerId === userId1 && r.followingId === userId2 && r.status === 'accepted');
+      const f2 = rels.some(r => r.followerId === userId2 && r.followingId === userId1 && r.status === 'accepted');
+      return f1 && f2;
     }
+  } catch (err) {
+    console.error("Error checking mutual follow:", err);
+    return false;
+  }
 }
 
 async function onExploreMessageClick(userId, username) {
-  if (!auth.currentUser) return;
+  if (!activeSession) return;
+  if (useFirebase && (!auth || !auth.currentUser)) return;
 
-  const mutual = await isMutualFollow(auth.currentUser.uid, userId);
+  const myUid = activeSession.id;
+
+  const mutual = await isMutualFollow(myUid, userId);
   if (!mutual) {
       alert("You can only message users if you follow each other.");
       return;
@@ -1099,35 +1442,48 @@ async function onExploreMessageClick(userId, username) {
   if (!selectedUser.uid) selectedUser.uid = selectedUser.id;
 
   // Generate exact chatId
-  const currentChatId = getDmChatId(auth.currentUser.uid, selectedUser.uid);
+  const currentChatId = getDmChatId(myUid, selectedUser.uid);
 
   if (!chatMeta[currentChatId]) {
     chatMeta[currentChatId] = {
       id: currentChatId,
       name: username,
-      participants: [auth.currentUser.uid, selectedUser.uid],
+      participants: [myUid, selectedUser.uid],
       isGroup: false,
       online: true
     };
     saveJson('chatbhar.chatMeta', chatMeta);
   }
 
-  // Ensure conversation doc exists
+  // Ensure conversation exists
   try {
-    const convRef = doc(db, "conversations", currentChatId);
-    const convSnap = await getDoc(convRef);
-    if (!convSnap.exists()) {
-      await setDoc(convRef, {
-        id: currentChatId,
-        participants: [auth.currentUser.uid, selectedUser.uid],
-        isGroup: false,
-        name: "", // Will use user names for DMs
-        lastMessage: "Start of conversation",
-        updatedAt: Date.now()
-      });
+    if (useFirebase) {
+      const convRef = doc(db, "conversations", currentChatId);
+      const convSnap = await getDoc(convRef);
+      if (!convSnap.exists()) {
+        await setDoc(convRef, {
+          id: currentChatId,
+          participants: [myUid, selectedUser.uid],
+          isGroup: false,
+          name: "", // Will use user names for DMs
+          lastMessage: "Start of conversation",
+          updatedAt: Date.now()
+        });
+      }
+    } else {
+      const convs = loadJson('chatbhar.conversations', []);
+      if (!convs.some(c => c.id === currentChatId)) {
+        convs.push({
+          id: currentChatId,
+          participants: [myUid, selectedUser.uid],
+          isGroup: false,
+          name: "", lastMessage: "Start of conversation", updatedAt: Date.now()
+        });
+        saveJson('chatbhar.conversations', convs);
+      }
     }
   } catch (err) {
-    console.error("Failed to create/check conversation doc:", err);
+    console.error("Failed to create/check conversation:", err);
   }
 
   const navBtn = document.querySelector('.nav-btn[data-tab="chat"]');
@@ -1161,12 +1517,18 @@ async function renderOtherProfile(userId) {
   if (activeSession) {
     try {
       const relId = `${activeSession.id}_${userId}`;
-      const followDoc = await getDoc(doc(db, "follows", relId));
-      if (followDoc.exists()) {
-        relStatus = 'accepted';
+      if (useFirebase && db) {
+        const followDoc = await getDoc(doc(db, "follows", relId));
+        if (followDoc.exists()) {
+          relStatus = 'accepted';
+        } else {
+          const reqDoc = await getDoc(doc(db, "followRequests", relId));
+          if (reqDoc.exists()) relStatus = 'pending';
+        }
       } else {
-        const reqDoc = await getDoc(doc(db, "followRequests", relId));
-        if (reqDoc.exists()) relStatus = 'pending';
+        const rels = loadJson('chatbhar.relationships', []);
+        const rel = rels.find(r => r.id === relId);
+        if (rel) relStatus = rel.status;
       }
     } catch (err) {
       console.error(err);
@@ -1314,29 +1676,33 @@ async function renderOtherProfile(userId) {
 
 async function acceptFollowRequest(relationshipId) {
   try {
-    await runTransaction(db, async (transaction) => {
-      const reqRef = doc(db, "followRequests", relationshipId);
-      const reqSnap = await transaction.get(reqRef);
-      if (!reqSnap.exists()) throw new Error("Request not found");
+    if (useFirebase) {
+      await runTransaction(db, async (transaction) => {
+        const reqRef = doc(db, "followRequests", relationshipId);
+        const reqSnap = await transaction.get(reqRef);
+        if (!reqSnap.exists()) throw new Error("Request not found");
 
-      const relData = reqSnap.data();
-      const followerId = relData.fromUserId;
-      const followingId = relData.toUserId;
+        const relData = reqSnap.data();
+        const followerId = relData.fromUserId;
+        const followingId = relData.toUserId;
 
-      const followerRef = doc(db, "users", followerId);
-      const followingRef = doc(db, "users", followingId);
-      const followRef = doc(db, "follows", relationshipId);
+        const followerRef = doc(db, "users", followerId);
+        const followingRef = doc(db, "users", followingId);
+        const followRef = doc(db, "follows", relationshipId);
 
-      transaction.set(followRef, {
-        id: relationshipId,
-        followerId: followerId,
-        followingId: followingId,
-        createdAt: Date.now()
+        transaction.set(followRef, {
+          id: relationshipId,
+          followerId: followerId,
+          followingId: followingId,
+          createdAt: Date.now()
+        });
+        transaction.delete(reqRef);
+        transaction.update(followerRef, { "stats.following": increment(1), followingCount: increment(1) });
+        transaction.update(followingRef, { "stats.followers": increment(1), followerCount: increment(1) });
       });
-      transaction.delete(reqRef);
-      transaction.update(followerRef, { "stats.following": increment(1), followingCount: increment(1) });
-      transaction.update(followingRef, { "stats.followers": increment(1), followerCount: increment(1) });
-    });
+    } else {
+      await apiRequest(`/api/relationships/accept/${relationshipId}`, { method: 'POST' });
+    }
 
     await renderExploreUsers(exploreSearchInput.value);
     renderChannelManager();
@@ -1349,7 +1715,11 @@ async function acceptFollowRequest(relationshipId) {
 
 async function declineFollowRequest(relationshipId) {
   try {
-    await deleteDoc(doc(db, "followRequests", relationshipId));
+    if (useFirebase) {
+      await deleteDoc(doc(db, "followRequests", relationshipId));
+    } else {
+      await apiRequest(`/api/relationships/decline/${relationshipId}`, { method: 'POST' });
+    }
     // Re-sync follow requests to update UI/badges
     fetchAndSyncFollowRequests();
   } catch (err) {
@@ -1406,7 +1776,14 @@ async function onSaveProfile(e) {
       activeSession.username = username;
     }
 
-    await updateDoc(doc(db, "users", activeSession.id), updates);
+    if (useFirebase) {
+      await updateDoc(doc(db, "users", activeSession.id), updates);
+    } else {
+      await apiRequest('/api/auth/profile', {
+        method: 'PATCH',
+        body: JSON.stringify({ userId: activeSession.id, ...updates })
+      });
+    }
 
     activeSession = { ...activeSession, ...updates };
     delete activeSession.pendingProfilePic;
@@ -1457,30 +1834,38 @@ async function onSignup(event) {
     btn.disabled = true;
     setAuthMessage('Creating account...', true);
 
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const user = userCredential.user;
+    if (useFirebase) {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
 
-    const userData = {
-      id: user.uid,
-      name,
-      email,
-      usernames: [],
-      usernameChangeLogs: [],
-      activeUsernameId: null,
-      profilePic: '',
-      bio: '',
-      profession: '',
-      location: '',
-      socialLinks: { twitter: '', linkedin: '', github: '' },
-      stats: { posts: 0, followers: 0, following: 0 },
-      followerCount: 0,
-      followingCount: 0,
-      isPrivate: false
-    };
+      const userData = {
+        id: user.uid,
+        name,
+        email,
+        usernames: [],
+        usernameChangeLogs: [],
+        activeUsernameId: null,
+        profilePic: '',
+        bio: '',
+        profession: '',
+        location: '',
+        socialLinks: { twitter: '', linkedin: '', github: '' },
+        stats: { posts: 0, followers: 0, following: 0 },
+        followerCount: 0,
+        followingCount: 0,
+        isPrivate: false
+      };
 
-    await setDoc(doc(db, "users", user.uid), userData);
+      await setDoc(doc(db, "users", user.uid), userData);
+      activeSession = { ...userData, username: '' };
+    } else {
+      const res = await apiRequest('/api/auth/signup', {
+        method: 'POST',
+        body: JSON.stringify({ name, email, password })
+      });
+      activeSession = { ...res.user, username: '' };
+    }
 
-    activeSession = { ...userData, username: '' };
     saveJson(AUTH_SESSION_KEY, activeSession);
     signupForm.reset();
     await bootstrapUsers(); // Sync users immediately
@@ -1501,16 +1886,24 @@ async function onLogin(event) {
     btn.disabled = true;
     setAuthMessage('Logging in...', true);
 
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const user = userCredential.user;
+    if (useFirebase) {
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
 
-    const userDoc = await getDocWithRetry(doc(db, "users", user.uid));
-    if (!userDoc) throw new Error("User data not found in Firestore.");
+      const userDoc = await getDocWithRetry(doc(db, "users", user.uid));
+      if (!userDoc) throw new Error("User data not found in Firestore.");
 
-    const userData = userDoc.data();
-    const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
+      const userData = userDoc.data();
+      const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
+      activeSession = { ...userData, username };
+    } else {
+      const res = await apiRequest('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password })
+      });
+      activeSession = res.session;
+    }
 
-    activeSession = { ...userData, username };
     saveJson(AUTH_SESSION_KEY, activeSession);
     syncState();
     setAuthMessage('', false);
@@ -1534,11 +1927,16 @@ async function onCheckUsername() {
   const val = usernameInput.value.trim().toLowerCase();
   if (!val) return;
   try {
-    const q = query(collection(db, "users"), where("usernames", "array-contains-any", [{ value: val }]));
-    // Wait, usernames is an array of objects. array-contains doesn't work for partial object.
-    // I'll fetch all users or use a separate collection for usernames if this was a real app.
-    // For now, I'll search through authUsers which is synced.
-    const exists = authUsers.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === val));
+    let exists = false;
+    if (useFirebase) {
+      exists = authUsers.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === val));
+    } else {
+      const res = await apiRequest('/api/usernames/check', {
+        method: 'POST',
+        body: JSON.stringify({ username: val })
+      });
+      exists = !res.available;
+    }
 
     if (exists) throw new Error('Username already taken');
     usernameHint.textContent = 'Username available';
@@ -1557,23 +1955,32 @@ async function onCreateUsername(e) {
     const exists = authUsers.some(u => (u.usernames || []).some(x => x.value.toLowerCase() === username.toLowerCase()));
     if (exists) throw new Error('Username already taken');
 
-    const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
-    const newName = { id, value: username, createdAt: Date.now(), updatedAt: Date.now() };
+    if (useFirebase) {
+      const id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+      const newName = { id, value: username, createdAt: Date.now(), updatedAt: Date.now() };
 
-    const userRef = doc(db, "users", activeSession.id);
-    const usernames = activeSession.usernames || [];
-    usernames.push(newName);
+      const userRef = doc(db, "users", activeSession.id);
+      const usernames = activeSession.usernames || [];
+      usernames.push(newName);
 
-    await updateDoc(userRef, {
-      usernames: usernames,
-      activeUsernameId: id
-    });
+      await updateDoc(userRef, {
+        usernames: usernames,
+        activeUsernameId: id
+      });
 
-    activeSession.usernames = usernames;
-    activeSession.activeUsernameId = id;
-    activeSession.username = username;
+      activeSession.usernames = usernames;
+      activeSession.activeUsernameId = id;
+      activeSession.username = username;
+    } else {
+      const res = await apiRequest('/api/usernames', {
+        method: 'POST',
+        body: JSON.stringify({ userId: activeSession.id, username })
+      });
+      activeSession = res.session;
+    }
+
     saveJson(AUTH_SESSION_KEY, activeSession);
-
+    startRealTimeSync();
     usernameForm.hidden = true;
     openTab('home');
   } catch (e) {
@@ -1673,40 +2080,52 @@ async function loadSession() {
 async function onDeleteAccount() {
   const password = deleteConfirmPassword.value;
   if (!password) return alert('Please confirm your password.');
-  if (!activeSession || !auth.currentUser) return;
+  if (!activeSession) return;
+  if (useFirebase && !auth.currentUser) return;
 
   try {
-    const credential = EmailAuthProvider.credential(activeSession.email, password);
-    await reauthenticateWithCredential(auth.currentUser, credential);
+    if (useFirebase) {
+      const credential = EmailAuthProvider.credential(activeSession.email, password);
+      await reauthenticateWithCredential(auth.currentUser, credential);
 
-    const userId = activeSession.id;
+      const userId = activeSession.id;
 
-    // First: Delete the user's document from the Firestore users collection
-    await deleteDoc(doc(db, "users", userId));
+      // First: Delete the user's document from the Firestore users collection
+      await deleteDoc(doc(db, "users", userId));
 
-    // Second: Delete the user's files/posts from Firebase Storage & Firestore
-    const q = query(collection(db, "posts"), where("userId", "==", userId));
-    const snap = await getDocs(q);
-    for (const d of snap.docs) {
-      const postData = d.data();
-      // Delete files from storage if they are firebase storage URLs
-      if (postData.files) {
-        for (const file of postData.files) {
-          if (file.dataUrl && file.dataUrl.includes('firebasestorage.googleapis.com')) {
-            try {
-              const fileRef = ref(storage, file.dataUrl);
-              await deleteObject(fileRef);
-            } catch (storageErr) {
-              console.warn('Could not delete storage file:', file.dataUrl, storageErr);
+      // Second: Delete the user's files/posts from Firebase Storage & Firestore
+      const q = query(collection(db, "posts"), where("userId", "==", userId));
+      const snap = await getDocs(q);
+      for (const d of snap.docs) {
+        const postData = d.data();
+        // Delete files from storage if they are firebase storage URLs
+        if (postData.files) {
+          for (const file of postData.files) {
+            if (file.dataUrl && file.dataUrl.includes('firebasestorage.googleapis.com')) {
+              try {
+                const fileRef = ref(storage, file.dataUrl);
+                await deleteObject(fileRef);
+              } catch (storageErr) {
+                console.warn('Could not delete storage file:', file.dataUrl, storageErr);
+              }
             }
           }
         }
+        await deleteDoc(doc(db, "posts", d.id));
       }
-      await deleteDoc(doc(db, "posts", d.id));
-    }
 
-    // Third: Delete the account from Firebase Authentication
-    await deleteUser(auth.currentUser);
+      // Third: Delete the account from Firebase Authentication
+      await deleteUser(auth.currentUser);
+    } else {
+      await apiRequest('/api/auth/delete-account', {
+        method: 'POST',
+        body: JSON.stringify({ email: activeSession.email, password })
+      });
+      // Cleanup local posts
+      const localPosts = loadJson(UPLOAD_STORE_KEY, []);
+      const filtered = localPosts.filter(p => p.userId !== activeSession.id);
+      saveJson(UPLOAD_STORE_KEY, filtered);
+    }
 
     deleteAccountModal.hidden = true;
     onLogout();
@@ -1716,6 +2135,15 @@ async function onDeleteAccount() {
 }
 
 function onLogout() {
+  if (messageUnsubscribe) messageUnsubscribe();
+  if (conversationsUnsubscribe) conversationsUnsubscribe();
+  if (relationshipsUnsubscribe1) relationshipsUnsubscribe1();
+  if (relationshipsUnsubscribe2) relationshipsUnsubscribe2();
+  if (contactRequestsUnsubscribe) contactRequestsUnsubscribe();
+  if (followRequestsUnsubscribe) followRequestsUnsubscribe();
+  if (postsUnsubscribe) postsUnsubscribe();
+  if (authUsersUnsubscribe) authUsersUnsubscribe();
+
   signOut(auth).then(() => {
     localStorage.removeItem(AUTH_SESSION_KEY);
     activeSession = null;
@@ -1937,7 +2365,8 @@ async function onUploadSubmit(event) {
           files: [prepared[idx]],
           edits: [edits[idx] || defaultEdit(prepared[idx].name)]
         };
-        await addDoc(collection(db, "posts"), postDoc);
+        if (useFirebase) await addDoc(collection(db, "posts"), postDoc);
+        else await apiRequest('/api/posts', { method: 'POST', body: JSON.stringify(postDoc) });
       }
     } else {
       const postDoc = {
@@ -1948,7 +2377,8 @@ async function onUploadSubmit(event) {
         files: prepared,
         edits
       };
-      await addDoc(collection(db, "posts"), postDoc);
+      if (useFirebase) await addDoc(collection(db, "posts"), postDoc);
+      else await apiRequest('/api/posts', { method: 'POST', body: JSON.stringify(postDoc) });
     }
 
     await fetchAndSyncPosts();
@@ -1969,21 +2399,37 @@ async function onUploadSubmit(event) {
 }
 
 async function fetchAndSyncPosts() {
-  if (typeof db === 'undefined') return;
-  onSnapshot(query(collection(db, "posts"), orderBy("createdAt", "desc")), (snapshot) => {
-    const newPosts = [];
-    snapshot.forEach((doc) => {
-      newPosts.push({ ...doc.data(), docId: doc.id });
-    });
+  if (useFirebase && typeof db !== 'undefined') {
+    if (postsUnsubscribe) postsUnsubscribe();
+    postsUnsubscribe = onSnapshot(query(collection(db, "posts"), orderBy("createdAt", "desc")), (snapshot) => {
+      const newPosts = [];
+      snapshot.forEach((doc) => {
+        newPosts.push({ ...doc.data(), docId: doc.id });
+      });
 
-    if (JSON.stringify(newPosts) !== JSON.stringify(uploads)) {
-      uploads = newPosts;
-      saveJson(UPLOAD_STORE_KEY, uploads);
-      renderHome();
-      renderUploads();
-      renderChannelManager();
+      if (JSON.stringify(newPosts) !== JSON.stringify(uploads)) {
+        uploads = newPosts;
+        saveJson(UPLOAD_STORE_KEY, uploads);
+        renderHome();
+        renderUploads();
+        renderChannelManager();
+      }
+    });
+  } else {
+    try {
+      const payload = await apiRequest('/api/posts');
+      const newPosts = payload.posts || [];
+      if (JSON.stringify(newPosts) !== JSON.stringify(uploads)) {
+        uploads = newPosts;
+        saveJson(UPLOAD_STORE_KEY, uploads);
+        renderHome();
+        renderUploads();
+        renderChannelManager();
+      }
+    } catch (err) {
+      console.error("Sync posts failed", err);
     }
-  });
+  }
 }
 
 function updateProgress(fraction) {
@@ -2056,7 +2502,7 @@ async function renderExploreUsers(searchQuery = '') {
 
   const rows = users
     .filter((u) => {
-      if (auth.currentUser && u.id === auth.currentUser.uid) return false;
+      if (activeSession && u.id === activeSession.id) return false;
       if (!normalizedQuery) return true;
       // Requirement: filter exclusively by the username field
       return (u.username || '').toLowerCase().includes(normalizedQuery);
@@ -2335,9 +2781,16 @@ async function likePost(postId) {
   const likedBy = liked ? interactions.likedBy.filter((id) => id !== userId) : [...(interactions.likedBy || []), userId];
 
   try {
-    await updateDoc(doc(db, "posts", post.docId), {
-      interactions: { ...interactions, likedBy, likes: likedBy.length }
-    });
+    if (useFirebase) {
+      await updateDoc(doc(db, "posts", post.docId), {
+        interactions: { ...interactions, likedBy, likes: likedBy.length }
+      });
+    } else {
+      await apiRequest(`/api/posts/${postId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ interactions: { ...interactions, likedBy, likes: likedBy.length } })
+      });
+    }
     persistAndRerender(postId);
   } catch (err) {
     console.error('Failed to like post', err);
@@ -2354,9 +2807,16 @@ async function addComment(postId, text) {
   const newComment = { user: activeHandle(), text: content, ts: Date.now() };
 
   try {
-    await updateDoc(doc(db, "posts", post.docId), {
-      interactions: { ...interactions, comments: [...(interactions.comments || []), newComment] }
-    });
+    if (useFirebase) {
+      await updateDoc(doc(db, "posts", post.docId), {
+        interactions: { ...interactions, comments: [...(interactions.comments || []), newComment] }
+      });
+    } else {
+      await apiRequest(`/api/posts/${postId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ interactions: { ...interactions, comments: [...(interactions.comments || []), newComment] } })
+      });
+    }
     persistAndRerender(postId);
   } catch (err) {
     console.error('Failed to add comment', err);
@@ -2618,7 +3078,14 @@ async function updateUpload(id, patch) {
   try {
     const post = uploads.find(u => u.id === id);
     if (!post) return;
-    await updateDoc(doc(db, "posts", post.docId), patch);
+    if (useFirebase) {
+      await updateDoc(doc(db, "posts", post.docId), patch);
+    } else {
+      await apiRequest(`/api/posts/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch)
+      });
+    }
     persistAndRerender(id);
   } catch (err) {
     console.error('Failed to update post', err);
@@ -2771,7 +3238,7 @@ function renderMessages(msgsArg = null) {
   }
 
   const msgs = msgsArg || chatStore[activeChat] || [];
-  const myUid = auth.currentUser?.uid;
+  const myUid = activeSession?.id;
 
   const meta = chatMeta[activeChat] || { name: activeChat, online: false };
   activeChatTitle.textContent = meta.name;
@@ -2871,34 +3338,15 @@ function openImageFromMessage(idx, msgsSource = null) {
 }
 
 async function sendMessage(prepared = null) {
-  if (!activeSession || !activeChat || !auth.currentUser) return;
+  if (!activeSession || !activeChat) return;
+  if (useFirebase && (!auth || !auth.currentUser)) return;
+
+  const myUid = activeSession.id;
 
   // Ensure EXACT same chatId format as generator
   let unifiedChatId = activeChat;
   if (selectedUser) {
-    unifiedChatId = getDmChatId(auth.currentUser.uid, selectedUser.uid);
-  }
-
-  // Create conversation doc if it doesn't exist
-  const convRef = doc(db, "conversations", unifiedChatId);
-  const convSnap = await getDoc(convRef);
-  if (!convSnap.exists()) {
-    const isGroup = unifiedChatId.startsWith('group:');
-    let participants = [];
-    if (!isGroup) {
-      const uids = unifiedChatId.replace('dm:', '').split('_');
-      participants = uids;
-    } else {
-      participants = [activeSession.id];
-    }
-    await setDoc(convRef, {
-      id: unifiedChatId,
-      participants,
-      isGroup,
-      name: isGroup ? unifiedChatId.replace('group:', '').split('-')[0] : "",
-      lastMessage: "Conversation initialized",
-      updatedAt: Date.now()
-    });
+    unifiedChatId = getDmChatId(myUid, selectedUser.uid);
   }
 
   const payload = prepared || {
@@ -2912,27 +3360,89 @@ async function sendMessage(prepared = null) {
   if (!payload.text && !(payload.files || []).length) return;
 
   try {
-    const msg = {
-      chatId: unifiedChatId,
-      senderId: auth.currentUser.uid,
-      receiverId: selectedUser ? selectedUser.uid : null,
-      senderName: activeHandle(),
-      text: payload.text || '',
-      files: payload.files || [],
-      replyToId: payload.replyToId || null,
-      viewOnce: payload.viewOnce || false,
-      createdAt: now,
-      participants: selectedUser ? [auth.currentUser.uid, selectedUser.uid] : (chatMeta[unifiedChatId]?.participants || []),
-      id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
-    };
+    if (useFirebase) {
+      // Create conversation doc if it doesn't exist
+      const convRef = doc(db, "conversations", unifiedChatId);
+      const convSnap = await getDoc(convRef);
+      if (!convSnap.exists()) {
+        const isGroup = unifiedChatId.startsWith('group:');
+        let participants = [];
+        if (!isGroup) {
+          const uids = unifiedChatId.replace('dm:', '').split('_');
+          participants = uids;
+        } else {
+          participants = [activeSession.id];
+        }
+        await setDoc(convRef, {
+          id: unifiedChatId,
+          participants,
+          isGroup,
+          name: isGroup ? unifiedChatId.replace('group:', '').split('-')[0] : "",
+          lastMessage: "Conversation initialized",
+          updatedAt: Date.now()
+        });
+      }
 
-    await addDoc(collection(db, "messages"), msg);
+      const msg = {
+        chatId: unifiedChatId,
+        senderId: myUid,
+        receiverId: selectedUser ? selectedUser.uid : null,
+        senderName: activeHandle(),
+        text: payload.text || '',
+        files: payload.files || [],
+        replyToId: payload.replyToId || null,
+        viewOnce: payload.viewOnce || false,
+        createdAt: now,
+        participants: selectedUser ? [myUid, selectedUser.uid] : (chatMeta[unifiedChatId]?.participants || []),
+        id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
+      };
 
-    // Update conversation record
-    await updateDoc(convRef, {
-      lastMessage: payload.text || (payload.files?.length ? '📎 Attachment' : ''),
-      updatedAt: now
-    });
+      await addDoc(collection(db, "messages"), msg);
+
+      // Update conversation record
+      await updateDoc(convRef, {
+        lastMessage: payload.text || (payload.files?.length ? '📎 Attachment' : ''),
+        updatedAt: now
+      });
+    } else {
+      const msg = {
+        chatId: unifiedChatId,
+        senderId: myUid,
+        receiverId: selectedUser ? selectedUser.uid : null,
+        senderName: activeHandle(),
+        text: payload.text || '',
+        files: payload.files || [],
+        replyToId: payload.replyToId || null,
+        viewOnce: payload.viewOnce || false,
+        createdAt: now,
+        participants: selectedUser ? [myUid, selectedUser.uid] : (chatMeta[unifiedChatId]?.participants || [])
+      };
+      await apiRequest('/api/messages', {
+        method: 'POST',
+        body: JSON.stringify(msg)
+      });
+      // Update local conversations
+      const convs = loadJson('chatbhar.conversations', []);
+      let conv = convs.find(c => c.id === unifiedChatId);
+      if (!conv) {
+        conv = {
+          id: unifiedChatId,
+          participants: selectedUser ? [myUid, selectedUser.uid] : [myUid],
+          isGroup: unifiedChatId.startsWith('group:'),
+          name: "", lastMessage: payload.text, updatedAt: now
+        };
+        convs.push(conv);
+      } else {
+        conv.lastMessage = payload.text;
+        conv.updatedAt = now;
+      }
+      saveJson('chatbhar.conversations', convs);
+
+      // Update chatStore manually for local mode
+      if (!chatStore[unifiedChatId]) chatStore[unifiedChatId] = [];
+      chatStore[unifiedChatId].push({ ...msg, dir: 'outgoing' });
+      saveJson(CHAT_STORE_KEY, chatStore);
+    }
 
   } catch (err) {
     console.error('Send message failed', err);
@@ -3127,20 +3637,36 @@ function bindMessagingUI() {
     msgContextMenu.querySelectorAll('.emoji-bar button').forEach(btn => {
       btn.onclick = async () => {
         const emoji = btn.dataset.emoji;
-        if (currentContextMsg && activeSession && currentContextMsg.docId) {
+        if (currentContextMsg && activeSession) {
           try {
-            const msgRef = doc(db, "messages", currentContextMsg.docId);
-            const msgDoc = await getDoc(msgRef);
-            if (msgDoc.exists()) {
-              const msgData = msgDoc.data();
-              const reactions = msgData.reactions || [];
-              const idx = reactions.findIndex(r => r.userId === activeSession.id);
-              if (idx !== -1) {
-                reactions[idx].emoji = emoji;
-              } else {
-                reactions.push({ userId: activeSession.id, emoji });
+            if (useFirebase && currentContextMsg.docId) {
+              const msgRef = doc(db, "messages", currentContextMsg.docId);
+              const msgDoc = await getDoc(msgRef);
+              if (msgDoc.exists()) {
+                const msgData = msgDoc.data();
+                const reactions = msgData.reactions || [];
+                const idx = reactions.findIndex(r => r.userId === activeSession.id);
+                if (idx !== -1) reactions[idx].emoji = emoji;
+                else reactions.push({ userId: activeSession.id, emoji });
+                await updateDoc(msgRef, { reactions });
               }
-              await updateDoc(msgRef, { reactions });
+            } else {
+              await apiRequest('/api/messages/reactions', {
+                method: 'POST',
+                body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji, userId: activeSession.id })
+              });
+              // Local update
+              const chatStore = loadJson(CHAT_STORE_KEY, {});
+              const msgs = chatStore[activeChat] || [];
+              const msg = msgs.find(m => m.id === currentContextMsg.id);
+              if (msg) {
+                msg.reactions = msg.reactions || [];
+                const idx = msg.reactions.findIndex(r => r.userId === activeSession.id);
+                if (idx !== -1) msg.reactions[idx].emoji = emoji;
+                else msg.reactions.push({ userId: activeSession.id, emoji });
+                saveJson(CHAT_STORE_KEY, chatStore);
+              }
+              renderMessages();
             }
           } catch (err) {
             console.error('Reaction failed', err);
@@ -3241,21 +3767,44 @@ async function deleteMessage(type) {
 
   if (type === 'everyone') {
     try {
-      if (currentContextMsg.docId) {
+      if (useFirebase && currentContextMsg.docId) {
         await updateDoc(doc(db, "messages", currentContextMsg.docId), { deleted: true, text: '', files: [] });
+      } else {
+        // Local mode delete for everyone
+        const chatStore = loadJson(CHAT_STORE_KEY, {});
+        const msgs = chatStore[activeChat] || [];
+        const msg = msgs.find(m => m.id === currentContextMsg.id);
+        if (msg) {
+          msg.deleted = true;
+          msg.text = '';
+          msg.files = [];
+          saveJson(CHAT_STORE_KEY, chatStore);
+        }
       }
     } catch (err) {
       alert('Delete failed: ' + err.message);
       return;
     }
   } else {
-    // Delete for me - persistent via Firestore
+    // Delete for me
     try {
-      if (currentContextMsg.docId) {
+      if (useFirebase && currentContextMsg.docId) {
         const deletedFor = currentContextMsg.deletedFor || [];
         if (!deletedFor.includes(activeSession.id)) {
           deletedFor.push(activeSession.id);
           await updateDoc(doc(db, "messages", currentContextMsg.docId), { deletedFor });
+        }
+      } else {
+        // Local mode delete for me
+        const chatStore = loadJson(CHAT_STORE_KEY, {});
+        const msgs = chatStore[activeChat] || [];
+        const msg = msgs.find(m => m.id === currentContextMsg.id);
+        if (msg) {
+          msg.deletedFor = msg.deletedFor || [];
+          if (!msg.deletedFor.includes(activeSession.id)) {
+            msg.deletedFor.push(activeSession.id);
+            saveJson(CHAT_STORE_KEY, chatStore);
+          }
         }
       }
     } catch (err) {
@@ -3366,7 +3915,10 @@ async function openUserListModal(userId, type) {
   const isMine = activeSession && userId === activeSession.id;
   const isFollowing = myFollows.some(f => f.followingId === userId);
 
-  if (!isMine && user.isPrivate && !isFollowing) {
+  // In local mode, myFollows might not be up-to-date yet
+  const effectiveFollowing = useFirebase ? isFollowing : loadJson('chatbhar.relationships', []).some(r => r.followerId === activeSession.id && r.followingId === userId && r.status === 'accepted');
+
+  if (!isMine && user.isPrivate && !effectiveFollowing) {
       // Requirements: hide/blur (Instagram style) if not following a private account
       const modalTitle = document.querySelector('#contactModal h3');
       if (modalTitle) modalTitle.textContent = type === 'followers' ? 'Followers' : 'Following';
@@ -3393,9 +3945,17 @@ async function openUserListModal(userId, type) {
   contactModal.hidden = false;
 
   try {
-    const q = query(collection(db, "follows"), where(type === 'followers' ? "followingId" : "followerId", "==", userId));
-    const snap = await getDocs(q);
-    const uids = snap.docs.map(d => d.data()[type === 'followers' ? 'followerId' : 'followingId']);
+    let uids = [];
+    if (useFirebase) {
+      const q = query(collection(db, "follows"), where(type === 'followers' ? "followingId" : "followerId", "==", userId));
+      const snap = await getDocs(q);
+      uids = snap.docs.map(d => d.data()[type === 'followers' ? 'followerId' : 'followingId']);
+    } else {
+      const rels = loadJson('chatbhar.relationships', []);
+      uids = rels
+        .filter(r => r[type === 'followers' ? 'followingId' : 'followerId'] === userId && r.status === 'accepted')
+        .map(r => r[type === 'followers' ? 'followerId' : 'followingId']);
+    }
 
     // For mutual check, we only want to show if we are mutual follows if the req was for mutual check
     // but the task says ensure mutual follows to message.
@@ -3456,14 +4016,22 @@ async function createGroupChat() {
   const participants = [activeSession.id, ...members];
 
   try {
-    await setDoc(doc(db, "conversations", id), {
-      id,
-      name,
-      participants,
-      isGroup: true,
-      lastMessage: "Group created",
-      updatedAt: Date.now()
-    });
+    if (useFirebase && db) {
+      await setDoc(doc(db, "conversations", id), {
+        id,
+        name,
+        participants,
+        isGroup: true,
+        lastMessage: "Group created",
+        updatedAt: Date.now()
+      });
+    } else {
+      const convs = loadJson('chatbhar.conversations', []);
+      convs.push({
+        id, name, participants, isGroup: true, lastMessage: "Group created", updatedAt: Date.now()
+      });
+      saveJson('chatbhar.conversations', convs);
+    }
   } catch (err) {
     console.error("Failed to create group conversation:", err);
   }
@@ -3648,9 +4216,9 @@ async function sharePostToChat(postId, targetUserId) {
 }
 
 function fetchAndSyncFollowRequests() {
-  if (!activeSession || !followRequestsSection || !followRequestsList || typeof db === 'undefined') return;
-
-  onSnapshot(query(collection(db, "followRequests"), where("toUserId", "==", activeSession.id)), (snapshot) => {
+  if (!activeSession || typeof db === 'undefined') return;
+  if (followRequestsUnsubscribe) followRequestsUnsubscribe();
+  followRequestsUnsubscribe = onSnapshot(query(collection(db, "followRequests"), where("toUserId", "==", activeSession.id)), (snapshot) => {
     incomingFollowRequests = [];
     snapshot.forEach((d) => {
       const rel = d.data();
@@ -3677,7 +4245,7 @@ function renderFollowRequests() {
       const badge = settingsBtn.querySelector('.badge');
       if (requests.length > 0) {
         if (!badge) {
-          settingsBtn.insertAdjacentHTML('beforeend', `<span class="badge" style="position:absolute; top:-5px; right:-5px; background:#d14343; color:white; border-radius:50%; width:18px; height:18px; font-size:10px; display:flex; align-items:center; justify-content:center; border:2px solid var(--card); pointer-events:none;">${requests.length}</span>`);
+          settingsBtn.insertAdjacentHTML('beforeend', `<span class="badge">${requests.length}</span>`);
         } else {
           badge.textContent = requests.length;
           badge.hidden = false;
