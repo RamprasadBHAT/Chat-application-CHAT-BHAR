@@ -164,7 +164,6 @@ const requestCenterModal = document.getElementById('requestCenterModal');
 const closeRequestCenterModal = document.getElementById('closeRequestCenterModal');
 const requestCenterList = document.getElementById('requestCenterList');
 const requestCenterBadge = document.getElementById('requestCenterBadge');
-const requestCenterDeleteBtn = document.getElementById('requestCenterDeleteBtn');
 
 const contactRequestModal = document.getElementById('contactRequestModal');
 const closeContactRequestModal = document.getElementById('closeContactRequestModal');
@@ -704,12 +703,6 @@ function bindEvents() {
   if (closeRequestCenterModal) {
     closeRequestCenterModal.onclick = () => requestCenterModal.hidden = true;
   }
-  if (requestCenterDeleteBtn) {
-    requestCenterDeleteBtn.onclick = () => {
-      requestCenterModal.hidden = true;
-      openDeleteAccountModal();
-    };
-  }
   if (closeDeleteModal) closeDeleteModal.addEventListener('click', () => deleteAccountModal.hidden = true);
   if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', () => deleteAccountModal.hidden = true);
   if (deactivateInstead) {
@@ -967,25 +960,6 @@ function renderProfileAvatar(el, user) {
     const name = user?.name || user?.username || 'U';
     el.textContent = (name[0] || 'U').toUpperCase();
   }
-}
-
-function getOtherUserIdFromConversation(convOrChatId) {
-  const myUid = auth.currentUser?.uid || activeSession?.id;
-  if (!myUid || !convOrChatId) return null;
-
-  const conv = typeof convOrChatId === 'object' ? convOrChatId : null;
-  const chatId = typeof convOrChatId === 'string' ? convOrChatId : (conv?.id || '');
-
-  if (conv?.participants && Array.isArray(conv.participants)) {
-    const peer = conv.participants.find((id) => id && id !== myUid);
-    if (peer) return peer;
-  }
-
-  const normalized = getUnifiedChatId(chatId || '');
-  if (!normalized.startsWith('dm:')) return null;
-  const raw = normalized.replace('dm:', '');
-  const ids = raw.includes('_') ? raw.split('_') : [raw];
-  return ids.find((id) => id && id !== myUid) || null;
 }
 
 async function runFollowCountersTransaction(followerId, followingId, direction = 1) {
