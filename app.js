@@ -363,7 +363,8 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   let dmPeerUid = null;
   if (targetChatId.startsWith('dm:')) {
-    const otherUid = getOtherUserIdFromConversation(targetChatId);
+    const content = targetChatId.replace('dm:', '');
+    const otherUid = content.includes('_') ? content.split('_').find(id => id !== myUid) : content;
     const finalOtherUid = otherUid || myUid;
     dmPeerUid = finalOtherUid;
 
@@ -912,19 +913,6 @@ async function syncAuthUsers() {
 
 async function bootstrapUsers() {
   await syncAuthUsers();
-}
-
-function openDeleteAccountModal() {
-  deleteAccountModal.hidden = false;
-  deleteConfirmPassword.value = '';
-  deleteTick.checked = false;
-  confirmDeleteBtn.disabled = true;
-
-  if (deleteTick) {
-    deleteTick.onchange = () => {
-      confirmDeleteBtn.disabled = !deleteTick.checked;
-    };
-  }
 }
 
 function bindEvents() {
@@ -3170,7 +3158,8 @@ function renderChatUsers() {
     let chatName = conv.name || "Chat";
 
     if (!isGroup) {
-      const otherUid = getOtherUserIdFromConversation(conv) || getOtherUserIdFromConversation(chatId);
+      const uids = chatId.replace('dm:', '').split('_');
+      const otherUid = uids.find(id => id !== activeSession.id) || uids[0];
       otherUser = authUsers.find(u => u.id === otherUid);
       chatName = otherUser ? (otherUser.username || otherUser.name) : "User";
     }
@@ -3882,11 +3871,12 @@ function ensureChatMeta() {
       const isGroup = conv.isGroup;
 
       if (!isGroup) {
+        const uids = chatId.replace('dm:', '').split('_');
         const myUid = auth.currentUser?.uid || activeSession?.id;
-        const otherUid = getOtherUserIdFromConversation(conv) || getOtherUserIdFromConversation(chatId);
+        const otherUid = uids.find(id => id !== myUid) || uids[0];
         const otherUser = authUsers.find(u => u.id === otherUid);
         chatName = otherUser ? (otherUser.username || otherUser.name) : "User";
-        participants = otherUid ? [myUid, otherUid] : (conv.participants || [myUid]);
+        participants = [myUid, otherUid];
       }
 
       chatMeta[chatId] = {
