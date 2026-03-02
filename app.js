@@ -361,9 +361,11 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   const myUid = activeSession.id;
 
+  let dmPeerUid = null;
   if (targetChatId.startsWith('dm:')) {
     const otherUid = getOtherUserIdFromConversation(targetChatId);
     const finalOtherUid = otherUid || myUid;
+    dmPeerUid = finalOtherUid;
 
     // Fix: Ensure 'Selected User' state is being updated correctly
     const u = authUsers.find(x => x.id === finalOtherUid) || { id: finalOtherUid, name: 'User' };
@@ -4285,5 +4287,4 @@ function renderFollowRequests() {
       if (activityFollowRequests) activityFollowRequests.hidden = true;
     }
 }
-
 
