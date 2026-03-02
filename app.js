@@ -428,69 +428,28 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   // 3. The Real-time sync
   if (useFirebase) {
-    const isDm = currentChatId.startsWith('dm:') && dmPeerUid;
+    const isDm = currentChatId.startsWith('dm:') && selectedUser?.uid;
     const messagesRef = collection(db, 'messages');
 
-    if (isDm) {
-      const legacyChatId = `dm:${dmPeerUid}`;
-      const snapshotBuckets = {
-        byChatId: new Map(),
-        byParticipants: new Map()
-      };
+    const messageQuery = isDm
+      ? query(
+          messagesRef,
+          or(
+            and(where('senderId', '==', myUid), where('receiverId', '==', selectedUser.uid)),
+            and(where('senderId', '==', selectedUser.uid), where('receiverId', '==', myUid))
+          )
+        )
+      : query(messagesRef, where('chatId', '==', currentChatId));
 
-      const applyMergedDmMessages = () => {
-        const merged = new Map([...snapshotBuckets.byChatId, ...snapshotBuckets.byParticipants]);
-        const visible = mapAndSortVisibleMessages(Array.from(merged.values()).filter((docSnap) => {
-          const data = docSnap.data();
-          const sender = data.senderId;
-          const receiver = data.receiverId;
-          const pairMatch = (sender === myUid && receiver === dmPeerUid) || (sender === dmPeerUid && receiver === myUid);
-          const chatMatch = data.chatId === currentChatId || data.chatId === legacyChatId;
-          return pairMatch || chatMatch;
-        }));
-
-        chatStore[currentChatId] = visible;
-        saveJson(CHAT_STORE_KEY, chatStore);
-        if (activeChat === currentChatId) {
-          renderMessages(visible);
-          scrollToBottom();
-        }
-      };
-
-      const unsubByChatId = onSnapshot(
-        query(messagesRef, where('chatId', 'in', [currentChatId, legacyChatId])),
-        (snapshot) => {
-          snapshotBuckets.byChatId = new Map(snapshot.docs.map((d) => [d.id, d]));
-          applyMergedDmMessages();
-        },
-        (err) => console.error('Firestore DM Sync Error (chatId):', err)
-      );
-
-      const unsubByParticipants = onSnapshot(
-        query(messagesRef, where('senderId', 'in', [myUid, dmPeerUid])),
-        (snapshot) => {
-          snapshotBuckets.byParticipants = new Map(snapshot.docs.map((d) => [d.id, d]));
-          applyMergedDmMessages();
-        },
-        (err) => console.error('Firestore DM Sync Error (participants):', err)
-      );
-
-      messageUnsubscribe = () => {
-        unsubByChatId();
-        unsubByParticipants();
-      };
-    } else {
-      const messageQuery = query(messagesRef, where('chatId', '==', currentChatId));
-      messageUnsubscribe = onSnapshot(messageQuery, (snapshot) => {
-        const visible = mapAndSortVisibleMessages(snapshot.docs);
-        chatStore[currentChatId] = visible;
-        saveJson(CHAT_STORE_KEY, chatStore);
-        if (activeChat === currentChatId) {
-          renderMessages(visible);
-          scrollToBottom();
-        }
-      }, (err) => console.error('Firestore Message Sync Error:', err));
-    }
+    messageUnsubscribe = onSnapshot(messageQuery, (snapshot) => {
+      const visible = mapAndSortVisibleMessages(snapshot.docs);
+      chatStore[currentChatId] = visible;
+      saveJson(CHAT_STORE_KEY, chatStore);
+      if (activeChat === currentChatId) {
+        renderMessages(visible);
+        scrollToBottom();
+      }
+    }, (err) => console.error('Firestore Message Sync Error:', err));
   } else {
     // In local mode, we rely on chatStore being updated by sendMessage/apiRequest
     const visible = (chatStore[currentChatId] || []).filter(m => !m.deletedFor || !m.deletedFor.includes(activeSession.id));
