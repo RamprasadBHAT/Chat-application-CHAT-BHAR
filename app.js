@@ -1518,9 +1518,10 @@ async function openOtherProfile(userId) {
     openTab('channels');
     return;
   }
+  openTab('channels');
   otherProfileUserId = userId;
   await renderOtherProfile(userId);
-  openTab('channels');
+  //openTab('channels');
   document.getElementById('otherProfileHeader').hidden = false;
   document.getElementById('backFromOtherProfile').onclick = () => {
     openTab('explore');
