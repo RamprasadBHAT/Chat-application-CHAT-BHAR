@@ -756,3 +756,14 @@ button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
 .outgoing .reply-ref { background: rgba(255,255,255,0.2); border-left-color: #fff; }
 .outgoing .reply-ref strong { color: #fff; }
 .outgoing .reply-ref p { color: rgba(255,255,255,0.9); }
+
+
+
+
+
+
+
+#typingIndicator {
+    transition: opacity 0.4s ease-in-out;
+}
+
