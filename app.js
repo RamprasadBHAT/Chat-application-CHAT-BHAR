@@ -4354,7 +4354,6 @@ function renderFollowRequests() {
 
 
 
-
 /* --- INDEPENDENT TYPING LOGIC (SAFE TO ADD AT END) --- */
 (function() {
     // 1. Identify your elements
