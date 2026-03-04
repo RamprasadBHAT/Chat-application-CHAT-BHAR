@@ -4329,3 +4329,72 @@ function renderFollowRequests() {
       if (activityFollowRequests) activityFollowRequests.hidden = true;
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* --- INDEPENDENT TYPING LOGIC (SAFE TO ADD AT END) --- */
+(function() {
+    // 1. Identify your elements
+    const messageInput = document.querySelector('#messageInput'); 
+    const typingIndicator = document.querySelector('#typingIndicator');
+    
+    // Check if elements exist to prevent errors
+    if (!messageInput || !typingIndicator) return;
+
+    let typingTimer;
+    const stopTypingDelay = 2000; // 2 seconds
+
+    // 2. SENDING: When you type, tell 
+
+Firestore
+    messageInput.addEventListener('input', () => {
+        // We use {merge: true} so we don't delete other data in the document
+        db.collection('typingStatus').doc('current_chat_id').set({
+            ['user_name_or_id']: true
+        }, { merge: true });
+
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => {
+            db.collection('typingStatus').doc('current_chat_id').set({
+                ['user_name_or_id']: false
+            }, { merge: true });
+        }, stopTypingDelay);
+    });
+
+    // 3. RECEIVING: Listen for the other person
+    db.collection('typingStatus').doc('current_chat_id')
+        .onSnapshot((doc) => {
+            const data = doc.data();
+            // Replace 'friend_name_or_id' with the other user's ID
+            if (data && data['friend_name_or_id'] === true) {
+                typingIndicator.innerText = "is typing...";
+                typingIndicator.style.display = "block";
+            } else {
+                typingIndicator.style.display = "none";
+            }
+        });
+})();
+
