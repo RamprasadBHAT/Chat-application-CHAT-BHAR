@@ -624,10 +624,8 @@ function fetchAndSyncConversations() {
         };
       } else if (conv.typingBy) {
         chatMeta[unifiedId].typingUsers = conv.typingBy;
-          
-        };
-      
-      }
+         }
+        
     });
     renderChatUsers();
     updateTypingIndicators();
