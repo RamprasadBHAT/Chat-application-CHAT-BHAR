@@ -3887,7 +3887,7 @@ function bindMessagingUI() {
               await apiRequest('/api/messages/reactions', {
                 method: 'POST',
       // mar 5    body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji, userId: activeSession.id })
-            //  });
+             });
               // Local update
             //  const chatStore = loadJson(CHAT_STORE_KEY, {});
             //  const msgs = chatStore[activeChat] || [];
