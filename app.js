@@ -3844,9 +3844,11 @@ function bindMessagingUI() {
       const deltaX = e.changedTouches[0].clientX - touchStartX;
       swipeBubble.style.transform = '';
       if (deltaX > 50) {
-        const bubbleList = Array.from(messagesContainer.querySelectorAll('.bubble'));
-        const msgIdx = bubbleList.indexOf(swipeBubble);
-        const msg = chatStore[activeChat][msgIdx];
+        //const bubbleList = Array.from(messagesContainer.querySelectorAll('.bubble'));
+        //const msgIdx = bubbleList.indexOf(swipeBubble);
+        // const msg = chatStore[activeChat][msgIdx];
+        const targetId = swipeBubble.dataset.id;
+        const msg = (chatStore[activeChat] || []).find((m) => m.id === targetId);
         if (msg) prepareReply(msg);
       }
       swipeBubble = null;
@@ -4033,10 +4035,12 @@ function showContextMenu(e, bubble) {
   const msgContextMenu = document.getElementById('msgContextMenu');
   if (!msgContextMenu) return;
 
-  const bubbleList = Array.from(messagesContainer.querySelectorAll('.bubble'));
-  const msgIdx = bubbleList.indexOf(bubble);
+//  const bubbleList = Array.from(messagesContainer.querySelectorAll('.bubble'));
+//  const msgIdx = bubbleList.indexOf(bubble);
+  const messageId = bubble?.dataset?.id;
+  if (!messageId) return;
   const currentMsgs = chatStore[activeChat] || [];
-  currentContextMsg = currentMsgs[msgIdx];
+ // currentContextMsg = currentMsgs[msgIdx];
   if (!currentContextMsg) return;
 
   if (currentContextMsg.deleted) return;
