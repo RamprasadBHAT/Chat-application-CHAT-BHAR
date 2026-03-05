@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp } from 'firebase/app'; 
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction, or, and } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -354,6 +354,91 @@ function startRealTimeSync() {
     fetchAndSyncContactRequests();
     fetchAndSyncRelationships();
 }
+//added new on 5 march 
+function getTypingUserNames(chatId) {
+  const typingBy = chatMeta[chatId]?.typingUsers || {};
+  return Object.entries(typingBy)
+    .filter(([uid, isTyping]) => uid !== activeSession?.id && Boolean(isTyping))
+    .map(([uid]) => {
+      const u = authUsers.find((x) => x.id === uid);
+      return u?.username || u?.name || 'User';
+    });
+}
+
+function getChatOnlineState(chatId) {
+  if (!chatId || !chatId.startsWith('dm:')) return false;
+  const ids = chatId.replace('dm:', '').split('_');
+  const otherUid = ids.find((id) => id !== activeSession?.id);
+  if (!otherUid) return false;
+  const otherUser = authUsers.find((u) => u.id === otherUid);
+  return Boolean(otherUser?.online);
+}
+
+function updateTypingIndicators() {
+  if (!activeChat) {
+    if (typingIndicator) typingIndicator.textContent = '';
+    if (composerTypingIndicator) composerTypingIndicator.textContent = '';
+    return;
+  }
+
+  const names = getTypingUserNames(activeChat);
+  const typingText = names.length ? `${names.join(', ')} typing...` : '';
+  const fallback = getChatOnlineState(activeChat) ? 'online' : 'offline';
+
+  if (typingIndicator) typingIndicator.textContent = typingText || fallback;
+  if (composerTypingIndicator) composerTypingIndicator.textContent = typingText;
+}
+
+async function setTypingState(isTyping) {
+  if (!activeSession || !activeChat) return;
+  if (typingState === isTyping) return;
+  typingState = isTyping;
+
+  const chatId = getUnifiedChatId(activeChat);
+  chatMeta[chatId] = chatMeta[chatId] || { id: chatId, name: chatId, participants: [], isGroup: false, online: false };
+  chatMeta[chatId].typingUsers = chatMeta[chatId].typingUsers || {};
+  chatMeta[chatId].typingUsers[activeSession.id] = isTyping;
+  saveJson('chatbhar.chatMeta', chatMeta);
+  updateTypingIndicators();
+  renderChatUsers();
+
+  if (useFirebase && db) {
+    try {
+      const convRef = doc(db, 'conversations', chatId);
+      await setDoc(convRef, { typingBy: { [activeSession.id]: isTyping } }, { merge: true });
+    } catch (err) {
+      console.warn('Failed to update typing state', err.message);
+    }
+  }
+}
+
+async function setPresenceOnline(isOnline) {
+  if (!activeSession?.id) return;
+
+  if (useFirebase && db) {
+    try {
+      await setDoc(doc(db, 'users', activeSession.id), { online: isOnline, lastSeen: Date.now() }, { merge: true });
+    } catch (err) {
+      console.warn('Failed to update presence', err.message);
+    }
+  } else {
+    const users = loadJson(AUTH_USERS_KEY, []);
+    const idx = users.findIndex((u) => u.id === activeSession.id);
+    if (idx !== -1) {
+      users[idx].online = isOnline;
+      users[idx].lastSeen = Date.now();
+      saveJson(AUTH_USERS_KEY, users);
+      authUsers = users;
+    }
+  }
+
+  activeSession.online = isOnline;
+  saveJson(AUTH_SESSION_KEY, activeSession);
+}
+
+
+
+//end new added 5th mar
 
 function getTypingUserNames(chatId) {
   const typingBy = chatMeta[chatId]?.typingUsers || {};
@@ -440,9 +525,12 @@ async function fetchAndSyncMessages(chatIdArg = null) {
   if (!activeSession) return;
   if (useFirebase && (!auth || !auth.currentUser)) return;
 
-  if (typingState && activeChat && chatIdArg && getUnifiedChatId(chatIdArg) !== getUnifiedChatId(activeChat)) {
+  //new mar 5
+
+   if (typingState && activeChat && chatIdArg && getUnifiedChatId(chatIdArg) !== getUnifiedChatId(activeChat)) {
     setTypingState(false);
   }
+
 
   // 1. Target ID Selection and Selected User State
   let targetChatId = chatIdArg ? getUnifiedChatId(chatIdArg) : activeChat;
@@ -589,7 +677,7 @@ function fetchAndSyncConversations() {
     syncLocal();
     window.addEventListener('storage', (e) => {
       if (e.key === 'chatbhar.conversations') syncLocal();
-      if (e.key === 'chatbhar.chatMeta') {
+       if (e.key === 'chatbhar.chatMeta') {
         chatMeta = loadJson('chatbhar.chatMeta', {});
         renderChatUsers();
         updateTypingIndicators();
@@ -617,7 +705,8 @@ function fetchAndSyncConversations() {
         };
       } else if (conv.typingBy) {
         chatMeta[unifiedId].typingUsers = conv.typingBy;
-      }
+         }
+        
     });
     renderChatUsers();
     updateTypingIndicators();
@@ -964,6 +1053,7 @@ async function localApiRequest(path, options = {}) {
     if (msg) {
       msg.reactions = msg.reactions || [];
       const rIdx = msg.reactions.findIndex(r => r.userId === userId);
+      //if (rIdx !== -1) msg.reactions[rIdx].emoji = emoji;
       if (!emoji) {
         if (rIdx !== -1) msg.reactions.splice(rIdx, 1);
       } else if (rIdx !== -1) msg.reactions[rIdx].emoji = emoji;
@@ -1089,11 +1179,12 @@ function bindEvents() {
       setAuthMessage('', false);
     });
   }
-
-  window.addEventListener('beforeunload', () => {
+  //mar 5 
+   window.addEventListener('beforeunload', () => {
     setTypingState(false);
     setPresenceOnline(false);
   });
+  
   if (showSignupFormBtn) {
     showSignupFormBtn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -1532,8 +1623,9 @@ async function sendContactRequest() {
 
 async function isMutualFollow(userId1, userId2) {
   try {
-    if (useFirebase) {
-      // Use deterministic follow doc IDs first to avoid composite-index query failures.
+    if (useFirebase) { 
+
+       // Use deterministic follow doc IDs first to avoid composite-index query failures.
       const relId1 = `${userId1}_${userId2}`;
       const relId2 = `${userId2}_${userId1}`;
       const [doc1, doc2] = await Promise.all([
@@ -1544,6 +1636,7 @@ async function isMutualFollow(userId1, userId2) {
       if (doc1.exists() && doc2.exists()) return true;
 
       // Backward compatibility fallback if older data was stored with non-standard IDs.
+      
       const q1 = query(collection(db, "follows"), where("followerId", "==", userId1), where("followingId", "==", userId2));
       const q2 = query(collection(db, "follows"), where("followerId", "==", userId2), where("followingId", "==", userId1));
       const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
@@ -1637,6 +1730,7 @@ async function openOtherProfile(userId) {
   openTab('channels');
   otherProfileUserId = userId;
   await renderOtherProfile(userId);
+  //openTab('channels');
   document.getElementById('otherProfileHeader').hidden = false;
   document.getElementById('backFromOtherProfile').onclick = () => {
     openTab('explore');
@@ -2205,7 +2299,7 @@ async function loadSession() {
 
   authGate.hidden = true;
   appShell.hidden = false;
-  setPresenceOnline(true);
+  setPresenceOnline(true);  //mar 5
   renderHome();
   await renderExploreUsers();
   renderUploads();
@@ -2280,12 +2374,14 @@ function onLogout() {
   if (postsUnsubscribe) postsUnsubscribe();
   if (authUsersUnsubscribe) authUsersUnsubscribe();
 
+  //mar 5
   setTypingState(false);
   setPresenceOnline(false);
 
   const finishLogout = () => {
     localStorage.removeItem(AUTH_SESSION_KEY);
     activeSession = null;
+    // loadSession(); // onAuthStateChanged will handle this });
     authGate.hidden = false;
     appShell.hidden = true;
     signupForm.hidden = false;
@@ -3306,11 +3402,13 @@ function renderChatUsers() {
 
     // We don't have real-time presence for all users here yet, so default to offline/white
     const status = (otherUser && otherUser.online) ? '🟢' : '⚪';
-    const typingNames = getTypingUserNames(chatId);
+   // const preview = latestMsg.text || (latestMsg.files?.length ? '📎 Attachment' : 'No messages yet');
+   //mar5
+      const typingNames = getTypingUserNames(chatId);
     const preview = typingNames.length
       ? `${typingNames.join(', ')} typing...`
       : (latestMsg.text || (latestMsg.files?.length ? '📎 Attachment' : 'No messages yet'));
-
+    
     let avatarHtml = '';
     if (otherUser?.profilePic) {
       avatarHtml = `<img src="${otherUser.profilePic}" class="chat-avatar" />`;
@@ -3410,8 +3508,9 @@ function renderMessages(msgsArg = null) {
 
   const meta = chatMeta[activeChat] || { name: activeChat, online: false };
   activeChatTitle.textContent = meta.name;
-  updateTypingIndicators();
-
+//  if (typingIndicator && !typingIndicator.textContent) typingIndicator.textContent = meta.online ? 'online' : 'offline';
+    updateTypingIndicators();  // mar 5
+   
   messagesContainer.innerHTML = '';
   msgs.forEach((msg, idx) => {
     const bubble = document.createElement('div');
@@ -3419,6 +3518,14 @@ function renderMessages(msgsArg = null) {
     const isImageOnly = !msg.text && !msg.replyToId && files.length > 0 && files.every(f => (f.type || '').startsWith('image/'));
     const dir = msg.dir || (msg.senderId === myUid ? 'outgoing' : 'incoming');
     bubble.className = `bubble ${dir} ${isImageOnly ? 'image-only' : ''}`;
+
+    /*if (msg.deleted) {
+      bubble.innerHTML = '<i style="opacity: 0.7;">This message was deleted</i>';
+      bubble.classList.add('deleted-placeholder');
+      bubble.dataset.id = msg.id;
+      messagesContainer.appendChild(bubble);
+      return;
+    } */
 
     if (msg.deleted) return;
 
@@ -3636,6 +3743,14 @@ function renderAttachmentPreview() {
 }
 
 function deleteCurrentChat() {
+/*  openConfirm(`Delete chat '${activeChat}'?`, () => {
+    delete chatStore[activeChat];
+    if (!Object.keys(chatStore).length) chatStore = { General: [] };
+    activeChat = Object.keys(chatStore)[0];
+    saveJson(CHAT_STORE_KEY, chatStore);
+    renderChatUsers();
+    renderMessages(); */
+
   if (!activeChat) return;
 
   const currentChatId = getUnifiedChatId(activeChat);
@@ -3703,6 +3818,7 @@ function deleteCurrentChat() {
     } catch (err) {
       alert('Failed to clear chat: ' + err.message);
     }
+
   });
 }
 
@@ -3839,6 +3955,9 @@ function bindMessagingUI() {
       const deltaX = e.changedTouches[0].clientX - touchStartX;
       swipeBubble.style.transform = '';
       if (deltaX > 50) {
+        //const bubbleList = Array.from(messagesContainer.querySelectorAll('.bubble'));
+        //const msgIdx = bubbleList.indexOf(swipeBubble);
+        // const msg = chatStore[activeChat][msgIdx];
         const targetId = swipeBubble.dataset.id;
         const msg = (chatStore[activeChat] || []).find((m) => m.id === targetId);
         if (msg) prepareReply(msg);
@@ -3861,8 +3980,10 @@ function bindMessagingUI() {
       btn.onclick = async () => {
         const emoji = btn.dataset.emoji;
         if (currentContextMsg && activeSession) {
+          // changed
           const existingReaction = (currentContextMsg.reactions || []).find(r => r.userId === activeSession.id);
           const nextEmoji = existingReaction?.emoji === emoji ? null : emoji;
+          
           try {
             if (useFirebase && currentContextMsg.docId) {
               const msgRef = doc(db, "messages", currentContextMsg.docId);
@@ -3871,26 +3992,23 @@ function bindMessagingUI() {
                 const msgData = msgDoc.data();
                 const reactions = msgData.reactions || [];
                 const idx = reactions.findIndex(r => r.userId === activeSession.id);
-                if (!nextEmoji) {
-                  if (idx !== -1) reactions.splice(idx, 1);
-                } else if (idx !== -1) {
-                  reactions[idx].emoji = nextEmoji;
-                } else {
-                  reactions.push({ userId: activeSession.id, emoji: nextEmoji });
-                }
+               // if (idx !== -1) reactions[idx].emoji = emoji;
+               // else reactions.push({ userId: activeSession.id, emoji });
                 await updateDoc(msgRef, { reactions });
               }
             } else {
               await apiRequest('/api/messages/reactions', {
                 method: 'POST',
-                body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji: nextEmoji, userId: activeSession.id })
-              });
-              const localStore = loadJson(CHAT_STORE_KEY, {});
-              const msgs = localStore[activeChat] || [];
+      // mar 5    body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji, userId: activeSession.id })
+             });
+              // Local update
+            //  const chatStore = loadJson(CHAT_STORE_KEY, {});
+            //  const msgs = chatStore[activeChat] || [];
               const msg = msgs.find(m => m.id === currentContextMsg.id);
               if (msg) {
                 msg.reactions = msg.reactions || [];
                 const idx = msg.reactions.findIndex(r => r.userId === activeSession.id);
+
                 if (!nextEmoji) {
                   if (idx !== -1) msg.reactions.splice(idx, 1);
                 } else if (idx !== -1) {
@@ -3900,6 +4018,19 @@ function bindMessagingUI() {
                 }
                 saveJson(CHAT_STORE_KEY, localStore);
                 chatStore = localStore;
+                
+                //if (idx !== -1) msg.reactions[idx].emoji = emoji;
+                //else msg.reactions.push({ userId: activeSession.id, emoji });
+                 if (!nextEmoji) {
+                  if (idx !== -1) reactions.splice(idx, 1);
+                } else if (idx !== -1) {
+                  reactions[idx].emoji = nextEmoji;
+                } else {
+                  reactions.push({ userId: activeSession.id, emoji: nextEmoji });
+                }
+
+                //
+                //saveJson(CHAT_STORE_KEY, chatStore);
               }
               renderMessages();
             }
@@ -3910,6 +4041,9 @@ function bindMessagingUI() {
         msgContextMenu.hidden = true;
       };
     });
+
+
+    // new clearchat cd
 
     const removeReactionBtn = document.getElementById('removeReactionBtn');
     if (removeReactionBtn) {
@@ -3946,6 +4080,11 @@ function bindMessagingUI() {
       };
     }
 
+  //
+
+
+    
+
     const deleteMeBtn = document.getElementById('deleteMeBtn');
     if (deleteMeBtn) deleteMeBtn.onclick = () => deleteMessage('me');
 
@@ -3975,7 +4114,7 @@ function bindMessagingUI() {
       maybeOpenImagePreview();
     });
   }
-
+// mar 5
   if (messageInput) {
     messageInput.addEventListener('input', () => {
       const hasText = Boolean(messageInput.value.trim());
@@ -3989,6 +4128,7 @@ function bindMessagingUI() {
     messageInput.addEventListener('blur', () => setTypingState(false));
   }
 
+  
   if (closeImagePreview) closeImagePreview.addEventListener('click', closeImagePreviewModal);
   if (imagePreviewCancel) imagePreviewCancel.addEventListener('click', closeImagePreviewModal);
   if (imagePreviewSend) imagePreviewSend.addEventListener('click', () => {
@@ -4006,11 +4146,12 @@ function showContextMenu(e, bubble) {
   const msgContextMenu = document.getElementById('msgContextMenu');
   if (!msgContextMenu) return;
 
+//  const bubbleList = Array.from(messagesContainer.querySelectorAll('.bubble'));
+//  const msgIdx = bubbleList.indexOf(bubble);
   const messageId = bubble?.dataset?.id;
   if (!messageId) return;
-
   const currentMsgs = chatStore[activeChat] || [];
-  currentContextMsg = currentMsgs.find((m) => m.id === messageId);
+ // currentContextMsg = currentMsgs[msgIdx];
   if (!currentContextMsg) return;
 
   if (currentContextMsg.deleted) return;
@@ -4021,6 +4162,7 @@ function showContextMenu(e, bubble) {
   const y = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
 
   const menuWidth = 200;
+  // const menuHeight = 150;
   const menuHeight = 220;
 
   let left = x;
@@ -4045,12 +4187,13 @@ function showContextMenu(e, bubble) {
   if (contextEditBtn) {
     contextEditBtn.hidden = !isOutgoing || ageInMinutes > 15 || !!currentContextMsg.files?.length;
   }
-
+//
   const removeReactionBtn = document.getElementById('removeReactionBtn');
   if (removeReactionBtn) {
     const hasMyReaction = !!(currentContextMsg.reactions || []).find(r => r.userId === activeSession?.id);
     removeReactionBtn.hidden = !hasMyReaction;
   }
+  
 }
 
 async function deleteMessage(type) {
@@ -4076,6 +4219,8 @@ async function deleteMessage(type) {
       alert('Delete failed: ' + err.message);
       return;
     }
+
+    
   } else {
     // Delete for me
     try {
@@ -4588,3 +4733,5 @@ function renderFollowRequests() {
       if (activityFollowRequests) activityFollowRequests.hidden = true;
     }
 }
+
+
