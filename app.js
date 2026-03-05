@@ -139,6 +139,7 @@ const confirmOk = document.getElementById('confirmOk');
 const selectContactBtn = document.getElementById('selectContactBtn');
 const createGroupBtn = document.getElementById('createGroupBtn');
 const typingIndicator = document.getElementById('typingIndicator');
+const composerTypingIndicator = document.getElementById('composerTypingIndicator');
 const viewOnceToggle = document.getElementById('viewOnceToggle');
 
 const imagePreviewModal = document.getElementById('imagePreviewModal');
@@ -233,6 +234,7 @@ function getUnifiedChatId(id) {
 
 let previewPendingMessage = null;
 let typingTimeout = null;
+let typingState = false;
 let ws = null;
 let uploads = loadJson(UPLOAD_STORE_KEY, []);
 let activeSession = null;
@@ -302,6 +304,7 @@ async function initApp() {
           if (!activeSession.username) {
             openOnboarding();
           } else {
+            setPresenceOnline(true);
             startRealTimeSync();
             renderHome();
             renderChannelManager();
@@ -322,6 +325,7 @@ async function initApp() {
       if (!activeSession.username) {
         openOnboarding();
       } else {
+        setPresenceOnline(true);
         startRealTimeSync();
         renderHome();
         renderChannelManager();
@@ -350,10 +354,102 @@ function startRealTimeSync() {
     fetchAndSyncContactRequests();
     fetchAndSyncRelationships();
 }
+//added new on 5 march 
+function getTypingUserNames(chatId) {
+  const typingBy = chatMeta[chatId]?.typingUsers || {};
+  return Object.entries(typingBy)
+    .filter(([uid, isTyping]) => uid !== activeSession?.id && Boolean(isTyping))
+    .map(([uid]) => {
+      const u = authUsers.find((x) => x.id === uid);
+      return u?.username || u?.name || 'User';
+    });
+}
+
+function getChatOnlineState(chatId) {
+  if (!chatId || !chatId.startsWith('dm:')) return false;
+  const ids = chatId.replace('dm:', '').split('_');
+  const otherUid = ids.find((id) => id !== activeSession?.id);
+  if (!otherUid) return false;
+  const otherUser = authUsers.find((u) => u.id === otherUid);
+  return Boolean(otherUser?.online);
+}
+
+function updateTypingIndicators() {
+  if (!activeChat) {
+    if (typingIndicator) typingIndicator.textContent = '';
+    if (composerTypingIndicator) composerTypingIndicator.textContent = '';
+    return;
+  }
+
+  const names = getTypingUserNames(activeChat);
+  const typingText = names.length ? `${names.join(', ')} typing...` : '';
+  const fallback = getChatOnlineState(activeChat) ? 'online' : 'offline';
+
+  if (typingIndicator) typingIndicator.textContent = typingText || fallback;
+  if (composerTypingIndicator) composerTypingIndicator.textContent = typingText;
+}
+
+async function setTypingState(isTyping) {
+  if (!activeSession || !activeChat) return;
+  if (typingState === isTyping) return;
+  typingState = isTyping;
+
+  const chatId = getUnifiedChatId(activeChat);
+  chatMeta[chatId] = chatMeta[chatId] || { id: chatId, name: chatId, participants: [], isGroup: false, online: false };
+  chatMeta[chatId].typingUsers = chatMeta[chatId].typingUsers || {};
+  chatMeta[chatId].typingUsers[activeSession.id] = isTyping;
+  saveJson('chatbhar.chatMeta', chatMeta);
+  updateTypingIndicators();
+  renderChatUsers();
+
+  if (useFirebase && db) {
+    try {
+      const convRef = doc(db, 'conversations', chatId);
+      await setDoc(convRef, { typingBy: { [activeSession.id]: isTyping } }, { merge: true });
+    } catch (err) {
+      console.warn('Failed to update typing state', err.message);
+    }
+  }
+}
+
+async function setPresenceOnline(isOnline) {
+  if (!activeSession?.id) return;
+
+  if (useFirebase && db) {
+    try {
+      await setDoc(doc(db, 'users', activeSession.id), { online: isOnline, lastSeen: Date.now() }, { merge: true });
+    } catch (err) {
+      console.warn('Failed to update presence', err.message);
+    }
+  } else {
+    const users = loadJson(AUTH_USERS_KEY, []);
+    const idx = users.findIndex((u) => u.id === activeSession.id);
+    if (idx !== -1) {
+      users[idx].online = isOnline;
+      users[idx].lastSeen = Date.now();
+      saveJson(AUTH_USERS_KEY, users);
+      authUsers = users;
+    }
+  }
+
+  activeSession.online = isOnline;
+  saveJson(AUTH_SESSION_KEY, activeSession);
+}
+
+
+
+//end new added 5th mar
 
 async function fetchAndSyncMessages(chatIdArg = null) {
   if (!activeSession) return;
   if (useFirebase && (!auth || !auth.currentUser)) return;
+
+  //new mar 5
+
+   if (typingState && activeChat && chatIdArg && getUnifiedChatId(chatIdArg) !== getUnifiedChatId(activeChat)) {
+    setTypingState(false);
+  }
+
 
   // 1. Target ID Selection and Selected User State
   let targetChatId = chatIdArg ? getUnifiedChatId(chatIdArg) : activeChat;
@@ -500,6 +596,11 @@ function fetchAndSyncConversations() {
     syncLocal();
     window.addEventListener('storage', (e) => {
       if (e.key === 'chatbhar.conversations') syncLocal();
+       if (e.key === 'chatbhar.chatMeta') {
+        chatMeta = loadJson('chatbhar.chatMeta', {});
+        renderChatUsers();
+        updateTypingIndicators();
+      }
     });
   }
 
@@ -518,11 +619,18 @@ function fetchAndSyncConversations() {
           name: chatName,
           participants: conv.participants,
           isGroup: conv.isGroup,
-          online: false
+          online: false,
+          typingUsers: conv.typingBy || {}
         };
+      } else if (conv.typingBy) {
+        chatMeta[unifiedId].typingUsers = conv.typingBy;
+          
+        };
+      
       }
     });
     renderChatUsers();
+    updateTypingIndicators();
     if (!activeChat && myConversations.length > 0) {
       const sorted = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
       fetchAndSyncMessages(sorted[0].id);
@@ -992,6 +1100,12 @@ function bindEvents() {
       setAuthMessage('', false);
     });
   }
+  //mar 5 
+   window.addEventListener('beforeunload', () => {
+    setTypingState(false);
+    setPresenceOnline(false);
+  });
+  
   if (showSignupFormBtn) {
     showSignupFormBtn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -2093,6 +2207,7 @@ async function loadSession() {
 
   authGate.hidden = true;
   appShell.hidden = false;
+  setPresenceOnline(true);  //mar 5
   renderHome();
   await renderExploreUsers();
   renderUploads();
@@ -2166,6 +2281,10 @@ function onLogout() {
   if (followRequestsUnsubscribe) followRequestsUnsubscribe();
   if (postsUnsubscribe) postsUnsubscribe();
   if (authUsersUnsubscribe) authUsersUnsubscribe();
+
+  //mar 5
+  setTypingState(false);
+  setPresenceOnline(false);
 
   signOut(auth).then(() => {
     localStorage.removeItem(AUTH_SESSION_KEY);
@@ -3174,8 +3293,13 @@ function renderChatUsers() {
 
     // We don't have real-time presence for all users here yet, so default to offline/white
     const status = (otherUser && otherUser.online) ? '🟢' : '⚪';
-    const preview = latestMsg.text || (latestMsg.files?.length ? '📎 Attachment' : 'No messages yet');
-
+   // const preview = latestMsg.text || (latestMsg.files?.length ? '📎 Attachment' : 'No messages yet');
+   //mar5
+      const typingNames = getTypingUserNames(chatId);
+    const preview = typingNames.length
+      ? `${typingNames.join(', ')} typing...`
+      : (latestMsg.text || (latestMsg.files?.length ? '📎 Attachment' : 'No messages yet'));
+    
     let avatarHtml = '';
     if (otherUser?.profilePic) {
       avatarHtml = `<img src="${otherUser.profilePic}" class="chat-avatar" />`;
@@ -3275,8 +3399,9 @@ function renderMessages(msgsArg = null) {
 
   const meta = chatMeta[activeChat] || { name: activeChat, online: false };
   activeChatTitle.textContent = meta.name;
-  if (typingIndicator && !typingIndicator.textContent) typingIndicator.textContent = meta.online ? 'online' : 'offline';
-
+//  if (typingIndicator && !typingIndicator.textContent) typingIndicator.textContent = meta.online ? 'online' : 'offline';
+    updateTypingIndicators();  // mar 5
+   
   messagesContainer.innerHTML = '';
   msgs.forEach((msg, idx) => {
     const bubble = document.createElement('div');
@@ -3485,6 +3610,7 @@ async function sendMessage(prepared = null) {
     alert('Failed to send message: ' + err.message);
   }
   messageInput.value = '';
+  setTypingState(false);
   fileInput.value = '';
   pendingFiles = [];
   replyToMsg = null;
@@ -3755,15 +3881,15 @@ function bindMessagingUI() {
                 const msgData = msgDoc.data();
                 const reactions = msgData.reactions || [];
                 const idx = reactions.findIndex(r => r.userId === activeSession.id);
-                if (idx !== -1) reactions[idx].emoji = emoji;
-                else reactions.push({ userId: activeSession.id, emoji });
+               // if (idx !== -1) reactions[idx].emoji = emoji;
+               // else reactions.push({ userId: activeSession.id, emoji });
                 await updateDoc(msgRef, { reactions });
               }
             } else {
               await apiRequest('/api/messages/reactions', {
                 method: 'POST',
-                body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji, userId: activeSession.id })
-              });
+      // mar 5    body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji, userId: activeSession.id })
+            //  });
               // Local update
             //  const chatStore = loadJson(CHAT_STORE_KEY, {});
             //  const msgs = chatStore[activeChat] || [];
@@ -3877,7 +4003,21 @@ function bindMessagingUI() {
       maybeOpenImagePreview();
     });
   }
+// mar 5
+  if (messageInput) {
+    messageInput.addEventListener('input', () => {
+      const hasText = Boolean(messageInput.value.trim());
+      setTypingState(hasText);
+      if (typingTimeout) clearTimeout(typingTimeout);
+      if (hasText) {
+        typingTimeout = setTimeout(() => setTypingState(false), 1200);
+      }
+    });
 
+    messageInput.addEventListener('blur', () => setTypingState(false));
+  }
+
+  
   if (closeImagePreview) closeImagePreview.addEventListener('click', closeImagePreviewModal);
   if (imagePreviewCancel) imagePreviewCancel.addEventListener('click', closeImagePreviewModal);
   if (imagePreviewSend) imagePreviewSend.addEventListener('click', () => {
@@ -4481,70 +4621,4 @@ function renderFollowRequests() {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/* --- INDEPENDENT TYPING LOGIC (SAFE TO ADD AT END) --- */
-(function() {
-    // 1. Identify your elements
-    const messageInput = document.querySelector('#messageInput'); 
-    const typingIndicator = document.querySelector('#typingIndicator');
-    
-    // Check if elements exist to prevent errors
-    if (!messageInput || !typingIndicator) return;
-
-    let typingTimer;
-    const stopTypingDelay = 2000; // 2 seconds
-
-    // 2. SENDING: When you type, tell 
-
-Firestore
-    messageInput.addEventListener('input', () => {
-        // We use {merge: true} so we don't delete other data in the document
-        db.collection('typingStatus').doc('current_chat_id').set({
-            ['user_name_or_id']: true
-        }, { merge: true });
-
-        clearTimeout(typingTimer);
-        typingTimer = setTimeout(() => {
-            db.collection('typingStatus').doc('current_chat_id').set({
-                ['user_name_or_id']: false
-            }, { merge: true });
-        }, stopTypingDelay);
-    });
-
-    // 3. RECEIVING: Listen for the other person
-    db.collection('typingStatus').doc('current_chat_id')
-        .onSnapshot((doc) => {
-            const data = doc.data();
-            // Replace 'friend_name_or_id' with the other user's ID
-            if (data && data['friend_name_or_id'] === true) {
-                typingIndicator.innerText = "is typing...";
-                typingIndicator.style.display = "block";
-            } else {
-                typingIndicator.style.display = "none";
-            }
-        });
-})();
 
