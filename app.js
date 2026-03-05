@@ -1542,7 +1542,20 @@ async function sendContactRequest() {
 
 async function isMutualFollow(userId1, userId2) {
   try {
-    if (useFirebase) {
+    if (useFirebase) { 
+
+       // Use deterministic follow doc IDs first to avoid composite-index query failures.
+      const relId1 = `${userId1}_${userId2}`;
+      const relId2 = `${userId2}_${userId1}`;
+      const [doc1, doc2] = await Promise.all([
+        getDoc(doc(db, "follows", relId1)),
+        getDoc(doc(db, "follows", relId2))
+      ]);
+
+      if (doc1.exists() && doc2.exists()) return true;
+
+      // Backward compatibility fallback if older data was stored with non-standard IDs.
+      
       const q1 = query(collection(db, "follows"), where("followerId", "==", userId1), where("followingId", "==", userId2));
       const q2 = query(collection(db, "follows"), where("followerId", "==", userId2), where("followingId", "==", userId1));
       const [snap1, snap2] = await Promise.all([getDocs(q1), getDocs(q2)]);
@@ -2284,11 +2297,28 @@ function onLogout() {
   setTypingState(false);
   setPresenceOnline(false);
 
-  signOut(auth).then(() => {
+  const finishLogout = () => {
     localStorage.removeItem(AUTH_SESSION_KEY);
     activeSession = null;
-    // loadSession(); // onAuthStateChanged will handle this
-  });
+    // loadSession(); // onAuthStateChanged will handle this });
+    authGate.hidden = false;
+    appShell.hidden = true;
+    signupForm.hidden = false;
+    loginForm.hidden = true;
+    usernameForm.hidden = true;
+  };
+
+  if (useFirebase && auth) {
+    signOut(auth)
+      .then(finishLogout)
+      .catch((err) => {
+        console.error('Logout failed, forcing local cleanup:', err);
+        finishLogout();
+      });
+    return;
+  }
+
+  finishLogout();
 }
 
 function toggleTheme() {
