@@ -440,6 +440,87 @@ async function setPresenceOnline(isOnline) {
 
 //end new added 5th mar
 
+function getTypingUserNames(chatId) {
+  const typingBy = chatMeta[chatId]?.typingUsers || {};
+  return Object.entries(typingBy)
+    .filter(([uid, isTyping]) => uid !== activeSession?.id && Boolean(isTyping))
+    .map(([uid]) => {
+      const u = authUsers.find((x) => x.id === uid);
+      return u?.username || u?.name || 'User';
+    });
+}
+
+function getChatOnlineState(chatId) {
+  if (!chatId || !chatId.startsWith('dm:')) return false;
+  const ids = chatId.replace('dm:', '').split('_');
+  const otherUid = ids.find((id) => id !== activeSession?.id);
+  if (!otherUid) return false;
+  const otherUser = authUsers.find((u) => u.id === otherUid);
+  return Boolean(otherUser?.online);
+}
+
+function updateTypingIndicators() {
+  if (!activeChat) {
+    if (typingIndicator) typingIndicator.textContent = '';
+    if (composerTypingIndicator) composerTypingIndicator.textContent = '';
+    return;
+  }
+
+  const names = getTypingUserNames(activeChat);
+  const typingText = names.length ? `${names.join(', ')} typing...` : '';
+  const fallback = getChatOnlineState(activeChat) ? 'online' : 'offline';
+
+  if (typingIndicator) typingIndicator.textContent = typingText || fallback;
+  if (composerTypingIndicator) composerTypingIndicator.textContent = typingText;
+}
+
+async function setTypingState(isTyping) {
+  if (!activeSession || !activeChat) return;
+  if (typingState === isTyping) return;
+  typingState = isTyping;
+
+  const chatId = getUnifiedChatId(activeChat);
+  chatMeta[chatId] = chatMeta[chatId] || { id: chatId, name: chatId, participants: [], isGroup: false, online: false };
+  chatMeta[chatId].typingUsers = chatMeta[chatId].typingUsers || {};
+  chatMeta[chatId].typingUsers[activeSession.id] = isTyping;
+  saveJson('chatbhar.chatMeta', chatMeta);
+  updateTypingIndicators();
+  renderChatUsers();
+
+  if (useFirebase && db) {
+    try {
+      const convRef = doc(db, 'conversations', chatId);
+      await setDoc(convRef, { typingBy: { [activeSession.id]: isTyping } }, { merge: true });
+    } catch (err) {
+      console.warn('Failed to update typing state', err.message);
+    }
+  }
+}
+
+async function setPresenceOnline(isOnline) {
+  if (!activeSession?.id) return;
+
+  if (useFirebase && db) {
+    try {
+      await setDoc(doc(db, 'users', activeSession.id), { online: isOnline, lastSeen: Date.now() }, { merge: true });
+    } catch (err) {
+      console.warn('Failed to update presence', err.message);
+    }
+  } else {
+    const users = loadJson(AUTH_USERS_KEY, []);
+    const idx = users.findIndex((u) => u.id === activeSession.id);
+    if (idx !== -1) {
+      users[idx].online = isOnline;
+      users[idx].lastSeen = Date.now();
+      saveJson(AUTH_USERS_KEY, users);
+      authUsers = users;
+    }
+  }
+
+  activeSession.online = isOnline;
+  saveJson(AUTH_SESSION_KEY, activeSession);
+}
+
 async function fetchAndSyncMessages(chatIdArg = null) {
   if (!activeSession) return;
   if (useFirebase && (!auth || !auth.currentUser)) return;
