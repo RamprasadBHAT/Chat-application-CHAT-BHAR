@@ -4031,11 +4031,23 @@ function bindMessagingUI() {
               
               if (msg) {
                 msg.reactions = msg.reactions || [];
-                  const idx = msg.reactions.findIndex(r => r.userId === activeSession.id);
+                  const localReactionIdx = msg.reactions.findIndex((r) => r.userId === activeSession.id);
+
                 if (!nextEmoji) {
-                  if (idx !== -1) msg.reactions.splice(idx, 1);
+               /*   if (idx !== -1) msg.reactions.splice(idx, 1);
                 } else if (idx !== -1) {
-                  msg.reactions[idx].emoji = nextEmoji;
+                  msg.reactions[idx].emoji = nextEmoji;*/
+                  
+                 //mar 7 2026 changed 
+                  if (localReactionIdx !== -1) msg.reactions.splice(localReactionIdx, 1);
+                } else if (localReactionIdx !== -1) {
+                  msg.reactions[localReactionIdx].emoji = nextEmoji;
+                  
+                } else {
+                  msg.reactions.push({ userId: activeSession.id, emoji: nextEmoji });
+                }
+
+                  
                 } else {
                   msg.reactions.push({ userId: activeSession.id, emoji: nextEmoji });
                 }
