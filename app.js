@@ -355,7 +355,7 @@ function startRealTimeSync() {
     fetchAndSyncRelationships();
 }
 //added new on 5 march 
-function getTypingUserNames(chatId) {
+/*function getTypingUserNames(chatId) {
   const typingBy = chatMeta[chatId]?.typingUsers || {};
   return Object.entries(typingBy)
     .filter(([uid, isTyping]) => uid !== activeSession?.id && Boolean(isTyping))
@@ -436,7 +436,7 @@ async function setPresenceOnline(isOnline) {
   saveJson(AUTH_SESSION_KEY, activeSession);
 }
 
-
+*/
 
 //end new added 5th mar
 
