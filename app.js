@@ -4031,8 +4031,7 @@ function bindMessagingUI() {
               
               if (msg) {
                 msg.reactions = msg.reactions || [];
-                  const idx = msg.reactions.findIndex((r) => r.userId === activeSession.id);
-
+                  const idx = msg.reactions.findIndex(r => r.userId === activeSession.id);
                 if (!nextEmoji) {
                   if (idx !== -1) msg.reactions.splice(idx, 1);
                 } else if (idx !== -1) {
