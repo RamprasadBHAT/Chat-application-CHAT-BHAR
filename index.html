@@ -256,7 +256,7 @@
                       <button id="backupNowBtn">Export backup</button>
                       <button id="importBackupBtn">Import backup</button>
                       <button id="shareBackupBtn">Save to phone</button>
-                      <button id="deleteChatBtn" class="danger">Delete current chat</button>
+                      <button id="deleteChatBtn" class="utility-btn">Clear chat</button>
                     </div>
                   </div>
                 </div>
@@ -270,6 +270,7 @@
                 </div>
                 <div id="attachmentPreview" class="attachment-preview" hidden></div>
                 <input id="backupInput" type="file" accept="application/json" hidden />
+                <small id="composerTypingIndicator" class="typing-indicator" style="display:block; margin: 0 4px 6px 4px;"></small>
                 <form id="chatForm" class="composer">
                   <label class="attach-btn" for="fileInput">📎</label>
                   <input id="fileInput" type="file" multiple />
@@ -538,6 +539,7 @@
     <div id="msgContextMenu" class="msg-context-menu" hidden>
       <div class="menu-actions glass stacked">
         <button id="contextEditBtn">Edit</button>
+        <button id="removeReactionBtn" hidden>Remove Reaction</button>
         <button id="deleteMeBtn">Delete for Me</button>
         <button id="deleteEveryoneBtn" hidden>Delete for Everyone</button>
       </div>
