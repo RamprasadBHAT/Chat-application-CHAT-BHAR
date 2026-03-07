@@ -4152,6 +4152,8 @@ function showContextMenu(e, bubble) {
   if (!messageId) return;
   const currentMsgs = chatStore[activeChat] || [];
  // currentContextMsg = currentMsgs[msgIdx];
+
+   currentContextMsg = currentMsgs.find((m) => String(m.id) === String(messageId));
   if (!currentContextMsg) return;
 
   if (currentContextMsg.deleted) return;
