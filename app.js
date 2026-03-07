@@ -3994,6 +3994,19 @@ function bindMessagingUI() {
                 const idx = reactions.findIndex(r => r.userId === activeSession.id);
                // if (idx !== -1) reactions[idx].emoji = emoji;
                // else reactions.push({ userId: activeSession.id, emoji });
+
+               // changes made on 7 mar 2026
+                 const idx = reactions.findIndex((r) => r.userId === activeSession.id);
+
+                if (!nextEmoji) {
+                  if (idx !== -1) reactions.splice(idx, 1);
+                } else if (idx !== -1) {
+                  reactions[idx].emoji = nextEmoji;
+                } else {
+                  reactions.push({ userId: activeSession.id, emoji: nextEmoji });
+                }
+
+                
                 await updateDoc(msgRef, { reactions });
               }
             } else {
@@ -4004,10 +4017,21 @@ function bindMessagingUI() {
               // Local update
             //  const chatStore = loadJson(CHAT_STORE_KEY, {});
             //  const msgs = chatStore[activeChat] || [];
-              const msg = msgs.find(m => m.id === currentContextMsg.id);
+             // const msg = msgs.find(m => m.id === currentContextMsg.id);
+
+              // updated on mar 7 2026
+               body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji: nextEmoji, userId: activeSession.id })
+              });
+
+              const localStore = loadJson(CHAT_STORE_KEY, {});
+              const msgs = localStore[activeChat] || [];
+              const msg = msgs.find((m) => String(m.id) === String(currentContextMsg.id));
+
+            
+              
               if (msg) {
                 msg.reactions = msg.reactions || [];
-                const idx = msg.reactions.findIndex(r => r.userId === activeSession.id);
+                  const idx = msg.reactions.findIndex((r) => r.userId === activeSession.id);
 
                 if (!nextEmoji) {
                   if (idx !== -1) msg.reactions.splice(idx, 1);
@@ -4021,7 +4045,7 @@ function bindMessagingUI() {
                 
                 //if (idx !== -1) msg.reactions[idx].emoji = emoji;
                 //else msg.reactions.push({ userId: activeSession.id, emoji });
-                 if (!nextEmoji) {
+            /*     if (!nextEmoji) {
                   if (idx !== -1) reactions.splice(idx, 1);
                 } else if (idx !== -1) {
                   reactions[idx].emoji = nextEmoji;
@@ -4030,7 +4054,7 @@ function bindMessagingUI() {
                 }
 
                 //
-                //saveJson(CHAT_STORE_KEY, chatStore);
+                //saveJson(CHAT_STORE_KEY, chatStore); */
               }
               renderMessages();
             }
