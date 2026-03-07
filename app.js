@@ -3976,17 +3976,16 @@ function bindMessagingUI() {
       if (!msgContextMenu.contains(e.target)) msgContextMenu.hidden = true;
     });
 
-    msgContextMenu.querySelectorAll('.emoji-bar button').forEach(btn => {
+    msgContextMenu.querySelectorAll('.emoji-bar button').forEach((btn) => {
       btn.onclick = async () => {
         const emoji = btn.dataset.emoji;
         if (currentContextMsg && activeSession) {
-          // changed
-          const existingReaction = (currentContextMsg.reactions || []).find(r => r.userId === activeSession.id);
+          const existingReaction = (currentContextMsg.reactions || []).find((r) => r.userId === activeSession.id);
           const nextEmoji = existingReaction?.emoji === emoji ? null : emoji;
-          
+
           try {
             if (useFirebase && currentContextMsg.docId) {
-              const msgRef = doc(db, "messages", currentContextMsg.docId);
+              const msgRef = doc(db, 'messages', currentContextMsg.docId);
               const msgDoc = await getDoc(msgRef);
               if (msgDoc.exists()) {
                 const msgData = msgDoc.data();
@@ -4051,6 +4050,7 @@ function bindMessagingUI() {
                 } else {
                   msg.reactions.push({ userId: activeSession.id, emoji: nextEmoji });
                 }
+
                 saveJson(CHAT_STORE_KEY, localStore);
                 chatStore = localStore;
                 
