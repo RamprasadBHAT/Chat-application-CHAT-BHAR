@@ -381,7 +381,7 @@ function updateTypingIndicators() {
     return;
   }
 
-  const names = getTypingUserNames(activeChat);
+ // const names = getTypingUserNames(activeChat);
   const typingText = names.length ? `${names.join(', ')} typing...` : '';
   const fallback = getChatOnlineState(activeChat) ? 'online' : 'offline';
 
