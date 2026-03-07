@@ -3991,11 +3991,6 @@ function bindMessagingUI() {
                 const msgData = msgDoc.data();
                 const reactions = msgData.reactions || [];
                 const idx = reactions.findIndex(r => r.userId === activeSession.id);
-               // if (idx !== -1) reactions[idx].emoji = emoji;
-               // else reactions.push({ userId: activeSession.id, emoji });
-
-               // changes made on 7 mar 2026
-                 const idx = reactions.findIndex((r) => r.userId === activeSession.id);
 
                 if (!nextEmoji) {
                   if (idx !== -1) reactions.splice(idx, 1);
@@ -4011,61 +4006,27 @@ function bindMessagingUI() {
             } else {
               await apiRequest('/api/messages/reactions', {
                 method: 'POST',
-      // mar 5    body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji, userId: activeSession.id })
-             });
-              // Local update
-            //  const chatStore = loadJson(CHAT_STORE_KEY, {});
-            //  const msgs = chatStore[activeChat] || [];
-             // const msg = msgs.find(m => m.id === currentContextMsg.id);
-
-              // updated on mar 7 2026
-               body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji: nextEmoji, userId: activeSession.id })
+                body: JSON.stringify({ chatId: activeChat, messageId: currentContextMsg.id, emoji: nextEmoji, userId: activeSession.id })
               });
 
               const localStore = loadJson(CHAT_STORE_KEY, {});
               const msgs = localStore[activeChat] || [];
               const msg = msgs.find((m) => String(m.id) === String(currentContextMsg.id));
 
-            
-              
               if (msg) {
                 msg.reactions = msg.reactions || [];
-                  const localReactionIdx = msg.reactions.findIndex((r) => r.userId === activeSession.id);
+                const localReactionIdx = msg.reactions.findIndex((r) => r.userId === activeSession.id);
 
                 if (!nextEmoji) {
-               /*   if (idx !== -1) msg.reactions.splice(idx, 1);
-                } else if (idx !== -1) {
-                  msg.reactions[idx].emoji = nextEmoji;*/
-                  
-                 //mar 7 2026 changed 
                   if (localReactionIdx !== -1) msg.reactions.splice(localReactionIdx, 1);
                 } else if (localReactionIdx !== -1) {
                   msg.reactions[localReactionIdx].emoji = nextEmoji;
-                  
-                } else {
-                  msg.reactions.push({ userId: activeSession.id, emoji: nextEmoji });
-                }
-
-                  
                 } else {
                   msg.reactions.push({ userId: activeSession.id, emoji: nextEmoji });
                 }
 
                 saveJson(CHAT_STORE_KEY, localStore);
                 chatStore = localStore;
-                
-                //if (idx !== -1) msg.reactions[idx].emoji = emoji;
-                //else msg.reactions.push({ userId: activeSession.id, emoji });
-            /*     if (!nextEmoji) {
-                  if (idx !== -1) reactions.splice(idx, 1);
-                } else if (idx !== -1) {
-                  reactions[idx].emoji = nextEmoji;
-                } else {
-                  reactions.push({ userId: activeSession.id, emoji: nextEmoji });
-                }
-
-                //
-                //saveJson(CHAT_STORE_KEY, chatStore); */
               }
               renderMessages();
             }
@@ -4770,5 +4731,4 @@ function renderFollowRequests() {
       if (activityFollowRequests) activityFollowRequests.hidden = true;
     }
 }
-
 
