@@ -276,9 +276,15 @@
                   <label class="attach-btn" for="fileInput">📎</label>
                   <input id="fileInput" type="file" multiple />
                   <input id="messageInput" type="text" placeholder="Type a message" />
+                  <button id="micHoldBtn" class="mic-btn" type="button" title="Hold to record voice message">🎙</button>
                   <label class="view-once-toggle" title="View once image"><input id="viewOnceToggle" type="checkbox" /> 1x</label>
                   <button type="submit">Send</button>
                 </form>
+                <div id="recordingIndicator" class="recording-indicator" hidden>
+                  <span class="recording-dot" aria-hidden="true"></span>
+                  <strong>Recording...</strong>
+                  <span id="recordingTime">00:00</span>
+                </div>
               </section>
             </div>
           </section>
