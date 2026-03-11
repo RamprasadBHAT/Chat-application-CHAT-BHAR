@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app'; 
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction, or, and } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction, or, and, arrayUnion } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 function getDmChatId(uid1, uid2) {
@@ -97,6 +97,9 @@ const messagesContainer = document.getElementById('messages');
 const chatForm = document.getElementById('chatForm');
 const messageInput = document.getElementById('messageInput');
 const fileInput = document.getElementById('fileInput');
+const micHoldBtn = document.getElementById('micHoldBtn');
+const recordingIndicator = document.getElementById('recordingIndicator');
+const recordingTime = document.getElementById('recordingTime');
 const attachmentPreview = document.getElementById('attachmentPreview');
 const backupNowBtn = document.getElementById('backupNowBtn');
 const shareBackupBtn = document.getElementById('shareBackupBtn');
@@ -254,6 +257,11 @@ let myFollows = [];
 let myFollowRequests = [];
 let incomingFollowRequests = [];
 let myConversations = [];
+let mediaRecorder = null;
+let recordingChunks = [];
+let recordingStream = null;
+let recordingStartedAt = 0;
+let recordingTimerInterval = null;
 
 const firebaseConfig = {
   apiKey: "FIREBASE_API_KEY_PLACEHOLDER",
@@ -348,6 +356,7 @@ async function initApp() {
 }
 
 function startRealTimeSync() {
+    initPresenceSocket();
     fetchAndSyncPosts();
     fetchAndSyncMessages();
     fetchAndSyncConversations();
@@ -624,11 +633,33 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
     const onSnapshotSuccess = (snapshot) => {
       const visible = mapAndSortVisibleMessages(snapshot.docs);
+      const deliveredPending = [];
+
+      visible.forEach((msg) => {
+        if (msg.senderId !== myUid && msg.docId && !(msg.deliveredTo || []).includes(myUid)) {
+          deliveredPending.push(msg.docId);
+        }
+      });
+
       chatStore[currentChatId] = visible;
       saveJson(CHAT_STORE_KEY, chatStore);
       if (activeChat === currentChatId) {
         renderMessages(visible);
         scrollToBottom();
+        markVisibleMessagesAsRead();
+      }
+
+      if (deliveredPending.length && useFirebase) {
+        deliveredPending.forEach(async (docId) => {
+          try {
+            await updateDoc(doc(db, 'messages', docId), {
+              deliveredTo: arrayUnion(myUid),
+              status: 'delivered'
+            });
+          } catch (err) {
+            console.warn('Failed to mark message as delivered', err.message);
+          }
+        });
       }
     };
 
@@ -817,6 +848,118 @@ async function declineContactRequest() {
 function syncState() {
   if (activeSession) {
     saveJson(AUTH_SESSION_KEY, activeSession);
+  }
+}
+
+function updateRecordingIndicator(show, elapsedMs = 0) {
+  if (!recordingIndicator || !recordingTime) return;
+  recordingIndicator.hidden = !show;
+  if (!show) {
+    recordingTime.textContent = '00:00';
+    return;
+  }
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const mins = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+  const secs = String(totalSeconds % 60).padStart(2, '0');
+  recordingTime.textContent = `${mins}:${secs}`;
+}
+
+async function startVoiceRecording() {
+  if (!navigator.mediaDevices?.getUserMedia || !activeSession) return;
+  try {
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordingChunks = [];
+    mediaRecorder = new MediaRecorder(recordingStream);
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) recordingChunks.push(event.data);
+    };
+    mediaRecorder.start();
+    recordingStartedAt = Date.now();
+    updateRecordingIndicator(true, 0);
+    recordingTimerInterval = setInterval(() => {
+      updateRecordingIndicator(true, Date.now() - recordingStartedAt);
+    }, 250);
+  } catch (err) {
+    console.warn('Microphone permission denied or unavailable', err.message);
+    alert('Unable to record voice message. Please allow microphone access.');
+  }
+}
+
+async function stopVoiceRecordingAndSend() {
+  if (!mediaRecorder) return;
+
+  await new Promise((resolve) => {
+    mediaRecorder.onstop = resolve;
+    mediaRecorder.stop();
+  });
+
+  if (recordingTimerInterval) clearInterval(recordingTimerInterval);
+  updateRecordingIndicator(false);
+
+  if (recordingStream) {
+    recordingStream.getTracks().forEach((track) => track.stop());
+    recordingStream = null;
+  }
+
+  const audioBlob = new Blob(recordingChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+  mediaRecorder = null;
+  recordingChunks = [];
+
+  if (!audioBlob.size) return;
+
+  const extension = audioBlob.type.includes('ogg') ? 'ogg' : 'webm';
+  const voiceFile = new File([audioBlob], `voice-${Date.now()}.${extension}`, { type: audioBlob.type || 'audio/webm' });
+
+  let preparedAudio;
+  if (useFirebase) {
+    preparedAudio = await uploadToBackend(voiceFile);
+  } else {
+    preparedAudio = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        name: voiceFile.name,
+        type: voiceFile.type,
+        size: voiceFile.size,
+        dataUrl: String(reader.result || '')
+      });
+      reader.readAsDataURL(voiceFile);
+    });
+  }
+
+  await sendMessage({
+    text: '',
+    files: [preparedAudio],
+    viewOnce: false,
+    replyToId: null
+  });
+}
+
+function initPresenceSocket() {
+  if (!activeSession?.id || typeof window === 'undefined') return;
+  try {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/presence`;
+    ws = new WebSocket(wsUrl);
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'presence', userId: activeSession.id, online: true }));
+    };
+    ws.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (payload.type !== 'presence' || !payload.userId) return;
+        const idx = authUsers.findIndex((u) => u.id === payload.userId);
+        if (idx !== -1) {
+          authUsers[idx].online = Boolean(payload.online);
+          saveJson(AUTH_USERS_KEY, authUsers);
+          renderChatUsers();
+          renderMessages();
+        }
+      } catch (err) {
+        console.warn('Presence socket parse failed', err.message);
+      }
+    };
+  } catch (err) {
+    console.warn('Presence websocket unavailable', err.message);
   }
 }
 
@@ -1365,6 +1508,30 @@ function bindEvents() {
     e.preventDefault();
     await sendMessage();
   });
+  if (messagesContainer) {
+    messagesContainer.addEventListener('scroll', () => {
+      markVisibleMessagesAsRead();
+    });
+  }
+
+  if (micHoldBtn) {
+    const startHold = async (e) => {
+      e.preventDefault();
+      if (mediaRecorder) return;
+      await startVoiceRecording();
+    };
+    const endHold = async (e) => {
+      e.preventDefault();
+      if (!mediaRecorder) return;
+      await stopVoiceRecordingAndSend();
+    };
+    micHoldBtn.addEventListener('mousedown', startHold);
+    micHoldBtn.addEventListener('touchstart', startHold, { passive: false });
+    micHoldBtn.addEventListener('mouseup', endHold);
+    micHoldBtn.addEventListener('mouseleave', endHold);
+    micHoldBtn.addEventListener('touchend', endHold);
+    micHoldBtn.addEventListener('touchcancel', endHold);
+  }
 
   backupNowBtn.addEventListener('click', () => {
     exportBackupFile();
@@ -3400,8 +3567,9 @@ function renderChatUsers() {
     const btn = document.createElement('button');
     btn.className = `chat-user ${getUnifiedChatId(chatId) === getUnifiedChatId(activeChat) ? 'active' : ''}`;
 
-    // We don't have real-time presence for all users here yet, so default to offline/white
-    const status = (otherUser && otherUser.online) ? '🟢' : '⚪';
+    const isOnline = Boolean(otherUser && otherUser.online);
+    const statusClass = isOnline ? 'online' : 'offline';
+    const statusLabel = isOnline ? 'Online' : 'Offline';
    // const preview = latestMsg.text || (latestMsg.files?.length ? '📎 Attachment' : 'No messages yet');
    //mar5
       const typingNames = getTypingUserNames(chatId);
@@ -3417,10 +3585,13 @@ function renderChatUsers() {
     }
 
     btn.innerHTML = `
-      ${avatarHtml}
+      <div class="presence-wrap">
+        ${avatarHtml}
+        <span class="presence-dot ${statusClass}"></span>
+      </div>
       <div style="flex:1; text-align:left; overflow:hidden">
         <div style="display:flex; justify-content:space-between">
-          <span>${status} ${escapeHtml(chatName)}</span>
+          <span>${escapeHtml(chatName)} - ${statusLabel}</span>
         </div>
         <small style="display:block; white-space:nowrap; text-overflow:ellipsis; overflow:hidden">${escapeHtml(preview)}</small>
       </div>
@@ -3495,6 +3666,64 @@ function scrollToBottom() {
   }
 }
 
+function formatMessageTime(value) {
+  const stamp = typeof value === 'number' ? value : new Date(value || Date.now()).getTime();
+  return new Date(stamp || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function getStatusClass(status) {
+  if (status === 'read') return 'read';
+  if (status === 'delivered') return 'delivered';
+  return 'sent';
+}
+
+function getStatusIcon(status) {
+  if (status === 'read') return '✓✓';
+  if (status === 'delivered') return '✓✓';
+  return '✓';
+}
+
+function computeOutgoingStatus(msg) {
+  const myUid = activeSession?.id;
+  if (!myUid || msg.senderId !== myUid) return msg.status || 'sent';
+
+  const participants = Array.isArray(msg.participants) ? msg.participants : [];
+  const others = participants.filter((id) => id !== myUid);
+  if (!others.length) return msg.status || 'sent';
+
+  const deliveredTo = msg.deliveredTo || [];
+  const readBy = msg.readBy || [];
+  const deliveredAll = others.every((id) => deliveredTo.includes(id));
+  const readAll = others.every((id) => readBy.includes(id));
+
+  if (readAll) return 'read';
+  if (deliveredAll) return 'delivered';
+  return 'sent';
+}
+
+async function markVisibleMessagesAsRead() {
+  if (!useFirebase || !db || !activeChat || !activeSession?.id || !messagesContainer) return;
+  const bubbles = Array.from(messagesContainer.querySelectorAll('.bubble.incoming[data-doc-id]'));
+  const containerRect = messagesContainer.getBoundingClientRect();
+  for (const bubble of bubbles) {
+    const rect = bubble.getBoundingClientRect();
+    const fullyVisible = rect.top >= containerRect.top && rect.bottom <= containerRect.bottom;
+    if (!fullyVisible) continue;
+    const docId = bubble.dataset.docId;
+    if (!docId) continue;
+    const msg = (chatStore[activeChat] || []).find((m) => m.docId === docId);
+    if (!msg || (msg.readBy || []).includes(activeSession.id)) continue;
+    try {
+      await updateDoc(doc(db, 'messages', docId), {
+        readBy: arrayUnion(activeSession.id),
+        status: 'read'
+      });
+    } catch (err) {
+      console.warn('Failed to mark message as read', err.message);
+    }
+  }
+}
+
 function renderMessages(msgsArg = null) {
   if (!messagesContainer) return;
   if (!activeChat) {
@@ -3507,7 +3736,9 @@ function renderMessages(msgsArg = null) {
   const myUid = activeSession?.id;
 
   const meta = chatMeta[activeChat] || { name: activeChat, online: false };
-  activeChatTitle.textContent = meta.name;
+  const onlineNow = getChatOnlineState(activeChat);
+  const activeTitle = `${onlineNow ? '● ' : ''}${meta.name} - ${onlineNow ? 'Online' : 'Offline'}`;
+  activeChatTitle.textContent = activeTitle;
 //  if (typingIndicator && !typingIndicator.textContent) typingIndicator.textContent = meta.online ? 'online' : 'offline';
     updateTypingIndicators();  // mar 5
    
@@ -3543,6 +3774,8 @@ function renderMessages(msgsArg = null) {
       if (isImage) {
         const ratio = f.width && f.height && f.width > f.height ? 'landscape' : '';
         fileHtml += `<div class="chat-image ${ratio}" data-open-img="${idx}"><img src="${f.dataUrl}" alt="img" loading="lazy" />${msg.viewOnce ? '<div class="view-once-badge">1x view once</div>' : ''}${hideName ? '' : `<small>${escapeHtml(f.name)}</small>`}</div>`;
+      } else if ((f.type || '').startsWith('audio/')) {
+        fileHtml += `<div class="chat-audio"><audio controls src="${f.dataUrl}"></audio></div>`;
       } else {
         const showName = ext === 'pdf' || !isImage;
         fileHtml += `<div>${fileIcon(f.type)} ${showName ? `<a href="${f.dataUrl}" download="${escapeAttr(f.name)}">${escapeHtml(f.name)}</a>` : ''}</div>`;
@@ -3570,8 +3803,13 @@ function renderMessages(msgsArg = null) {
     }
 
     const editedHtml = msg.edited ? '<small style="opacity:0.6; margin-left:4px">(edited)</small>' : '';
-    bubble.innerHTML = `${replyHtml}${escapeHtml(msg.text || '')}${editedHtml}${fileHtml}${reactionHtml}`;
+    const effectiveStatus = dir === 'outgoing' ? computeOutgoingStatus(msg) : (msg.status || 'sent');
+    const timestampHtml = `<small class="bubble-time">${formatMessageTime(msg.createdAt || msg.timestamp)}</small>`;
+    const statusHtml = dir === 'outgoing' ? `<small class="bubble-status ${getStatusClass(effectiveStatus)}">${getStatusIcon(effectiveStatus)}</small>` : '';
+    bubble.innerHTML = `${replyHtml}${escapeHtml(msg.text || '')}${editedHtml}${fileHtml}${reactionHtml}<div class="bubble-meta">${timestampHtml}${statusHtml}</div>`;
     bubble.dataset.id = msg.id;
+    if (msg.docId) bubble.dataset.docId = msg.docId;
+    if (msg.senderId) bubble.dataset.senderId = msg.senderId;
 
     bubble.onclick = (e) => showContextMenu(e, bubble);
     bubble.oncontextmenu = (e) => showContextMenu(e, bubble);
@@ -3663,6 +3901,9 @@ async function sendMessage(prepared = null) {
         replyToId: payload.replyToId || null,
         viewOnce: payload.viewOnce || false,
         createdAt: now,
+        status: 'sent',
+        deliveredTo: [myUid],
+        readBy: [myUid],
         participants: selectedUser ? [myUid, selectedUser.uid] : (chatMeta[unifiedChatId]?.participants || []),
         id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)
       };
@@ -3685,6 +3926,9 @@ async function sendMessage(prepared = null) {
         replyToId: payload.replyToId || null,
         viewOnce: payload.viewOnce || false,
         createdAt: now,
+        status: 'sent',
+        deliveredTo: [myUid],
+        readBy: [myUid],
         participants: selectedUser ? [myUid, selectedUser.uid] : (chatMeta[unifiedChatId]?.participants || [])
       };
       await apiRequest('/api/messages', {
@@ -4731,4 +4975,3 @@ function renderFollowRequests() {
       if (activityFollowRequests) activityFollowRequests.hidden = true;
     }
 }
-
