@@ -346,24 +346,93 @@
     </div>
 
     <div id="creativeSuiteModal" class="modal" hidden>
-      <div class="modal-card glass">
+      <div class="modal-card glass creative-suite-card">
         <div class="modal-top">
           <h3>Creative Suite</h3>
           <button id="closeCreativeSuite" class="icon-btn">✕</button>
         </div>
-        <div class="suite-grid">
-          <aside id="suiteAssetList" class="suite-asset-list"></aside>
-          <section>
+        <div class="suite-dashboard">
+          <section class="suite-preview-pane">
             <div id="suitePreview" class="suite-preview"></div>
-            <div class="suite-controls">
-              <label>Trim Start (s)<input id="trimStartInput" type="number" min="0" step="0.1" /></label>
-              <label>Trim End (s)<input id="trimEndInput" type="number" min="0" step="0.1" /></label>
-              <label>Overlay Text<input id="overlayTextInput" type="text" placeholder="Add text" /></label>
-              <label>Text Color<input id="overlayColorInput" type="color" value="#ffffff" /></label>
+            <button class="suite-play-overlay" type="button" aria-label="Toggle play">⏯</button>
+            <div class="suite-time-stamp">00:02:09 / 00:05:42</div>
+            <aside id="suiteAssetList" class="suite-asset-list"></aside>
+          </section>
+
+          <section class="suite-controls-pane">
+            <div class="suite-toolbar" role="group" aria-label="Editing controls">
+              <article class="suite-module suite-module-trim">
+                <h4>✂ Trim</h4>
+                <div class="trim-visual-track" aria-hidden="true">
+                  <span class="trim-handle trim-left"></span>
+                  <span class="trim-selected-window"></span>
+                  <span class="trim-playhead"></span>
+                  <span class="trim-handle trim-right"></span>
+                  <span class="trim-ticks"></span>
+                </div>
+                <div class="trim-labels trim-labels-bottom">
+                  <label>Trim Start</label>
+                  <label>Trim End</label>
+                </div>
+                <div class="trim-values-row">
+                  <input id="trimStartInput" type="number" min="0" step="0.1" value="0" />
+                  <input id="trimEndInput" type="number" min="0" step="0.1" value="0" />
+                </div>
+                <div class="trim-labels">
+                  <label><span id="trimStartValue">0.0s</span></label>
+                  <label><span id="trimEndValue">0.0s</span></label>
+                </div>
+              </article>
+
+              <article class="suite-module">
+                <div class="module-head">
+                  <h4>Cover</h4>
+                  <button type="button" class="link-btn" id="changeCoverBtn">Change Cover</button>
+                </div>
+                <div class="thumb-row" id="coverThumbRow">
+                  <button type="button" class="thumb-card active" data-cover-index="0" aria-label="Cover frame 1"></button>
+                  <button type="button" class="thumb-card" data-cover-index="1" aria-label="Cover frame 2"></button>
+                  <button type="button" class="thumb-card" data-cover-index="2" aria-label="Cover frame 3"></button>
+                  <button type="button" class="thumb-card" data-cover-index="3" aria-label="Cover frame 4"></button>
+                </div>
+              </article>
+
+              <article class="suite-module">
+                <h4>Overlay Text</h4>
+                <label class="glass-input">＋
+                  <input id="overlayTextInput" type="text" placeholder="Add text" />
+                </label>
+                <div class="overlay-color-row">
+                  <span>Text Color</span>
+                  <input id="overlayColorInput" type="color" value="#ffffff" />
+                </div>
+              </article>
+
+              <article class="suite-module">
+                <h4>Audio &amp; Music</h4>
+                <label class="music-search">🔍
+                  <input id="addMusicInput" type="text" placeholder="Search and add music" />
+                </label>
+                <div class="volume-row">
+                  <input id="audioVolumeInput" type="range" min="0" max="100" value="70" />
+                  <span id="audioVolumeValue">70%</span>
+                </div>
+              </article>
+
+              <article class="suite-module">
+                <h4>Filters</h4>
+                <div class="thumb-row" id="filterThumbRow">
+                  <button type="button" class="thumb-card filter" data-filter="none" aria-label="No filter"></button>
+                  <button type="button" class="thumb-card filter active" data-filter="cinematic" aria-label="Cinematic filter"></button>
+                  <button type="button" class="thumb-card filter" data-filter="vivid" aria-label="Vivid filter"></button>
+                  <button type="button" class="thumb-card filter" data-filter="mono" aria-label="Mono filter"></button>
+                </div>
+              </article>
             </div>
           </section>
         </div>
-        <div class="upload-btn-row">
+        <div class="upload-btn-row suite-actions">
+          <button id="scheduleCreativeSuite" type="button" class="secondary-btn">Schedule</button>
           <button id="saveCreativeSuite" type="button">Save edits</button>
         </div>
       </div>

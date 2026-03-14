@@ -123,8 +123,17 @@ const suiteAssetList = document.getElementById('suiteAssetList');
 const suitePreview = document.getElementById('suitePreview');
 const trimStartInput = document.getElementById('trimStartInput');
 const trimEndInput = document.getElementById('trimEndInput');
+const trimStartValue = document.getElementById('trimStartValue');
+const trimEndValue = document.getElementById('trimEndValue');
 const overlayTextInput = document.getElementById('overlayTextInput');
 const overlayColorInput = document.getElementById('overlayColorInput');
+const audioVolumeInput = document.getElementById('audioVolumeInput');
+const audioVolumeValue = document.getElementById('audioVolumeValue');
+const addMusicInput = document.getElementById('addMusicInput');
+const coverThumbRow = document.getElementById('coverThumbRow');
+const filterThumbRow = document.getElementById('filterThumbRow');
+const scheduleCreativeSuite = document.getElementById('scheduleCreativeSuite');
+const suitePlayOverlay = document.querySelector('.suite-play-overlay');
 const saveCreativeSuite = document.getElementById('saveCreativeSuite');
 
 const postViewer = document.getElementById('postViewer');
@@ -1472,12 +1481,52 @@ function bindEvents() {
     syncSuiteFields();
     creativeSuiteModal.hidden = true;
   });
-  [trimStartInput, trimEndInput, overlayTextInput, overlayColorInput].forEach((input) => {
+  if (scheduleCreativeSuite) {
+    scheduleCreativeSuite.addEventListener('click', () => {
+      syncSuiteFields();
+      alert('Scheduling queued. You can finalize from Create Upload.');
+    });
+  }
+  if (coverThumbRow) {
+    coverThumbRow.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-cover-index]');
+      if (!btn) return;
+      const edit = selectedUploadEdits[activeSuiteIndex];
+      if (!edit) return;
+      edit.coverIndex = Number(btn.dataset.coverIndex || 0);
+      coverThumbRow.querySelectorAll('[data-cover-index]').forEach((item) => item.classList.toggle('active', item === btn));
+    });
+  }
+  if (filterThumbRow) {
+    filterThumbRow.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-filter]');
+      if (!btn) return;
+      const edit = selectedUploadEdits[activeSuiteIndex];
+      if (!edit) return;
+      edit.filterType = btn.dataset.filter || 'none';
+      filterThumbRow.querySelectorAll('[data-filter]').forEach((item) => item.classList.toggle('active', item === btn));
+      renderSuitePreview();
+    });
+  }
+  [trimStartInput, trimEndInput, overlayTextInput, overlayColorInput, audioVolumeInput, addMusicInput].filter(Boolean).forEach((input) => {
     input.addEventListener('input', () => {
       syncSuiteFields();
       renderSuitePreview();
     });
   });
+  if (suitePlayOverlay) {
+    suitePlayOverlay.addEventListener('click', () => {
+      const video = suitePreview.querySelector('video');
+      if (!video) return;
+      if (video.paused) {
+        video.play();
+        suitePlayOverlay.textContent = '⏸';
+      } else {
+        video.pause();
+        suitePlayOverlay.textContent = '▶';
+      }
+    });
+  }
 
   closePostViewer.addEventListener('click', () => (postViewer.hidden = true));
 
@@ -2594,6 +2643,10 @@ function setSelectedUploadFiles(files) {
     name: f.name,
     trimStart: 0,
     trimEnd: 0,
+    volume: 70,
+    musicQuery: '',
+    coverIndex: 0,
+    filterType: 'cinematic',
     overlayText: '',
     overlayColor: '#ffffff',
     overlayX: 10,
@@ -2658,8 +2711,15 @@ function loadSuiteFields() {
   if (!edit) return;
   trimStartInput.value = edit.trimStart;
   trimEndInput.value = edit.trimEnd;
+  if (trimStartValue) trimStartValue.textContent = `${Number(edit.trimStart || 0).toFixed(1)}s`;
+  if (trimEndValue) trimEndValue.textContent = `${Number(edit.trimEnd || 0).toFixed(1)}s`;
   overlayTextInput.value = edit.overlayText;
   overlayColorInput.value = edit.overlayColor;
+  if (audioVolumeInput) audioVolumeInput.value = edit.volume ?? 70;
+  if (audioVolumeValue) audioVolumeValue.textContent = `${edit.volume ?? 70}%`;
+  if (addMusicInput) addMusicInput.value = edit.musicQuery || '';
+  if (coverThumbRow) coverThumbRow.querySelectorAll('[data-cover-index]').forEach((item) => item.classList.toggle('active', Number(item.dataset.coverIndex) === Number(edit.coverIndex || 0)));
+  if (filterThumbRow) filterThumbRow.querySelectorAll('[data-filter]').forEach((item) => item.classList.toggle('active', item.dataset.filter === (edit.filterType || 'cinematic')));
 }
 
 function syncSuiteFields() {
@@ -2667,6 +2727,15 @@ function syncSuiteFields() {
   if (!edit) return;
   edit.trimStart = Number(trimStartInput.value || 0);
   edit.trimEnd = Number(trimEndInput.value || 0);
+  if (edit.trimEnd && edit.trimEnd < edit.trimStart) {
+    edit.trimEnd = edit.trimStart;
+    trimEndInput.value = edit.trimEnd;
+  }
+  if (trimStartValue) trimStartValue.textContent = `${edit.trimStart.toFixed(1)}s`;
+  if (trimEndValue) trimEndValue.textContent = `${edit.trimEnd.toFixed(1)}s`;
+  edit.volume = Number(audioVolumeInput?.value || 70);
+  if (audioVolumeValue) audioVolumeValue.textContent = `${edit.volume}%`;
+  edit.musicQuery = addMusicInput?.value || '';
   edit.overlayText = overlayTextInput.value;
   edit.overlayColor = overlayColorInput.value;
 }
@@ -2684,6 +2753,17 @@ function renderSuitePreview() {
   suitePreview.innerHTML = file.type.startsWith('image/')
     ? `<div class="${ratioClass}"><img src="${src}" alt="suite" /></div>`
     : `<div class="${ratioClass}"><video src="${src}" controls muted></video></div>`;
+
+  const mediaNode = suitePreview.querySelector('img, video');
+  const filterMap = {
+    none: 'none',
+    cinematic: 'contrast(1.1) saturate(1.08) hue-rotate(-8deg)',
+    vivid: 'saturate(1.35) contrast(1.06)',
+    mono: 'grayscale(1)'
+  };
+  if (mediaNode) mediaNode.style.filter = filterMap[edit.filterType || 'cinematic'] || 'none';
+
+  if (suitePlayOverlay) suitePlayOverlay.textContent = '⏯';
 
   if (edit.overlayText) {
     const overlay = document.createElement('div');
