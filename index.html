@@ -362,25 +362,14 @@
           <section class="suite-controls-pane">
             <div class="suite-toolbar" role="group" aria-label="Editing controls">
               <article class="suite-module suite-module-trim">
-                <h4>✂ Trim</h4>
-                <div class="trim-visual-track" aria-hidden="true">
-                  <span class="trim-handle trim-left"></span>
-                  <span class="trim-selected-window"></span>
-                  <span class="trim-playhead"></span>
-                  <span class="trim-handle trim-right"></span>
-                  <span class="trim-ticks"></span>
-                </div>
-                <div class="trim-labels trim-labels-bottom">
-                  <label>Trim Start</label>
-                  <label>Trim End</label>
-                </div>
-                <div class="trim-values-row">
-                  <input id="trimStartInput" type="number" min="0" step="0.1" value="0" />
-                  <input id="trimEndInput" type="number" min="0" step="0.1" value="0" />
-                </div>
+                <h4>Trim</h4>
                 <div class="trim-labels">
-                  <label><span id="trimStartValue">0.0s</span></label>
-                  <label><span id="trimEndValue">0.0s</span></label>
+                  <label>Trim Start <span id="trimStartValue">0.0s</span></label>
+                  <label>Trim End <span id="trimEndValue">0.0s</span></label>
+                </div>
+                <div class="trim-slider-row">
+                  <input id="trimStartInput" type="range" min="0" max="60" step="0.1" />
+                  <input id="trimEndInput" type="range" min="0" max="60" step="0.1" />
                 </div>
               </article>
 
