@@ -362,14 +362,25 @@
           <section class="suite-controls-pane">
             <div class="suite-toolbar" role="group" aria-label="Editing controls">
               <article class="suite-module suite-module-trim">
-                <h4>Trim</h4>
-                <div class="trim-labels">
-                  <label>Trim Start <span id="trimStartValue">0.0s</span></label>
-                  <label>Trim End <span id="trimEndValue">0.0s</span></label>
+                <h4>✂ Trim</h4>
+                <div class="trim-visual-track" aria-hidden="true">
+                  <span class="trim-handle trim-left"></span>
+                  <span class="trim-selected-window"></span>
+                  <span class="trim-playhead"></span>
+                  <span class="trim-handle trim-right"></span>
+                  <span class="trim-ticks"></span>
                 </div>
-                <div class="trim-slider-row">
-                  <input id="trimStartInput" type="range" min="0" max="60" step="0.1" />
-                  <input id="trimEndInput" type="range" min="0" max="60" step="0.1" />
+                <div class="trim-labels trim-labels-bottom">
+                  <label>Trim Start</label>
+                  <label>Trim End</label>
+                </div>
+                <div class="trim-values-row">
+                  <input id="trimStartInput" type="number" min="0" step="0.1" value="0" />
+                  <input id="trimEndInput" type="number" min="0" step="0.1" value="0" />
+                </div>
+                <div class="trim-labels">
+                  <label><span id="trimStartValue">0.0s</span></label>
+                  <label><span id="trimEndValue">0.0s</span></label>
                 </div>
               </article>
 
@@ -377,6 +388,7 @@
                 <div class="module-head">
                   <h4>Cover</h4>
                   <button type="button" class="link-btn" id="changeCoverBtn">Change Cover</button>
+                  <input id="coverUploadInput" type="file" accept="image/*" hidden />
                 </div>
                 <div class="thumb-row" id="coverThumbRow">
                   <button type="button" class="thumb-card active" data-cover-index="0" aria-label="Cover frame 1"></button>
@@ -384,6 +396,7 @@
                   <button type="button" class="thumb-card" data-cover-index="2" aria-label="Cover frame 3"></button>
                   <button type="button" class="thumb-card" data-cover-index="3" aria-label="Cover frame 4"></button>
                 </div>
+                <small id="coverUploadName" class="device-file-name">Using video frames</small>
               </article>
 
               <article class="suite-module">
@@ -399,9 +412,14 @@
 
               <article class="suite-module">
                 <h4>Audio &amp; Music</h4>
-                <label class="music-search">🔍
-                  <input id="addMusicInput" type="text" placeholder="Search and add music" />
-                </label>
+                <div class="music-input-row">
+                  <label class="music-search">🔍
+                    <input id="addMusicInput" type="text" placeholder="Search and add music" />
+                  </label>
+                  <button type="button" id="addMusicDeviceBtn" class="add-device-btn" title="Add music from device" aria-label="Add music from device">＋</button>
+                  <input id="musicUploadInput" type="file" accept="audio/*" hidden />
+                </div>
+                <small id="musicUploadName" class="device-file-name">No local music selected</small>
                 <div class="volume-row">
                   <input id="audioVolumeInput" type="range" min="0" max="100" value="70" />
                   <span id="audioVolumeValue">70%</span>

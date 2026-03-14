@@ -130,7 +130,13 @@ const overlayColorInput = document.getElementById('overlayColorInput');
 const audioVolumeInput = document.getElementById('audioVolumeInput');
 const audioVolumeValue = document.getElementById('audioVolumeValue');
 const addMusicInput = document.getElementById('addMusicInput');
+const addMusicDeviceBtn = document.getElementById('addMusicDeviceBtn');
+const musicUploadInput = document.getElementById('musicUploadInput');
+const musicUploadName = document.getElementById('musicUploadName');
 const coverThumbRow = document.getElementById('coverThumbRow');
+const changeCoverBtn = document.getElementById('changeCoverBtn');
+const coverUploadInput = document.getElementById('coverUploadInput');
+const coverUploadName = document.getElementById('coverUploadName');
 const filterThumbRow = document.getElementById('filterThumbRow');
 const scheduleCreativeSuite = document.getElementById('scheduleCreativeSuite');
 const suitePlayOverlay = document.querySelector('.suite-play-overlay');
@@ -1497,6 +1503,22 @@ function bindEvents() {
       coverThumbRow.querySelectorAll('[data-cover-index]').forEach((item) => item.classList.toggle('active', item === btn));
     });
   }
+  if (changeCoverBtn && coverUploadInput) {
+    changeCoverBtn.addEventListener('click', () => coverUploadInput.click());
+    coverUploadInput.addEventListener('change', () => {
+      const file = coverUploadInput.files?.[0];
+      const edit = selectedUploadEdits[activeSuiteIndex];
+      if (!file || !edit) return;
+      edit.coverCustomName = file.name;
+      edit.coverCustomUrl = URL.createObjectURL(file);
+      if (coverUploadName) coverUploadName.textContent = `Cover: ${file.name}`;
+      if (coverThumbRow) {
+        const firstThumb = coverThumbRow.querySelector('[data-cover-index="0"]');
+        if (firstThumb) firstThumb.style.backgroundImage = `url(${edit.coverCustomUrl})`;
+      }
+      renderSuitePreview();
+    });
+  }
   if (filterThumbRow) {
     filterThumbRow.addEventListener('click', (event) => {
       const btn = event.target.closest('[data-filter]');
@@ -1508,6 +1530,20 @@ function bindEvents() {
       renderSuitePreview();
     });
   }
+  if (addMusicDeviceBtn && musicUploadInput) {
+    addMusicDeviceBtn.addEventListener('click', () => musicUploadInput.click());
+    musicUploadInput.addEventListener('change', () => {
+      const file = musicUploadInput.files?.[0];
+      const edit = selectedUploadEdits[activeSuiteIndex];
+      if (!file || !edit) return;
+      edit.musicFileName = file.name;
+      edit.musicLocalUrl = URL.createObjectURL(file);
+      edit.musicQuery = file.name;
+      if (addMusicInput) addMusicInput.value = file.name;
+      if (musicUploadName) musicUploadName.textContent = `Music: ${file.name}`;
+    });
+  }
+
   [trimStartInput, trimEndInput, overlayTextInput, overlayColorInput, audioVolumeInput, addMusicInput].filter(Boolean).forEach((input) => {
     input.addEventListener('input', () => {
       syncSuiteFields();
@@ -2645,7 +2681,11 @@ function setSelectedUploadFiles(files) {
     trimEnd: 0,
     volume: 70,
     musicQuery: '',
+    musicFileName: '',
+    musicLocalUrl: '',
     coverIndex: 0,
+    coverCustomName: '',
+    coverCustomUrl: '',
     filterType: 'cinematic',
     overlayText: '',
     overlayColor: '#ffffff',
@@ -2718,7 +2758,13 @@ function loadSuiteFields() {
   if (audioVolumeInput) audioVolumeInput.value = edit.volume ?? 70;
   if (audioVolumeValue) audioVolumeValue.textContent = `${edit.volume ?? 70}%`;
   if (addMusicInput) addMusicInput.value = edit.musicQuery || '';
-  if (coverThumbRow) coverThumbRow.querySelectorAll('[data-cover-index]').forEach((item) => item.classList.toggle('active', Number(item.dataset.coverIndex) === Number(edit.coverIndex || 0)));
+  if (musicUploadName) musicUploadName.textContent = edit.musicFileName ? `Music: ${edit.musicFileName}` : 'No local music selected';
+  if (coverUploadName) coverUploadName.textContent = edit.coverCustomName ? `Cover: ${edit.coverCustomName}` : 'Using video frames';
+  if (coverThumbRow) {
+    coverThumbRow.querySelectorAll('[data-cover-index]').forEach((item) => item.classList.toggle('active', Number(item.dataset.coverIndex) === Number(edit.coverIndex || 0)));
+    const firstThumb = coverThumbRow.querySelector('[data-cover-index="0"]');
+    if (firstThumb) firstThumb.style.backgroundImage = edit.coverCustomUrl ? `url(${edit.coverCustomUrl})` : '';
+  }
   if (filterThumbRow) filterThumbRow.querySelectorAll('[data-filter]').forEach((item) => item.classList.toggle('active', item.dataset.filter === (edit.filterType || 'cinematic')));
 }
 
@@ -2736,6 +2782,11 @@ function syncSuiteFields() {
   edit.volume = Number(audioVolumeInput?.value || 70);
   if (audioVolumeValue) audioVolumeValue.textContent = `${edit.volume}%`;
   edit.musicQuery = addMusicInput?.value || '';
+  if (edit.musicFileName && edit.musicQuery !== edit.musicFileName) {
+    edit.musicFileName = '';
+    edit.musicLocalUrl = '';
+    if (musicUploadName) musicUploadName.textContent = 'No local music selected';
+  }
   edit.overlayText = overlayTextInput.value;
   edit.overlayColor = overlayColorInput.value;
 }
