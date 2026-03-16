@@ -361,13 +361,14 @@
 
           <section class="suite-controls-pane">
             <div class="suite-toolbar" role="group" aria-label="Editing controls">
-              <article class="suite-module suite-module-trim">
+              <article class="suite-module suite-module-trim" id="suiteTrimModule">
                 <h4>✂ Trim</h4>
-                <div class="trim-visual-track" aria-hidden="true">
-                  <span class="trim-handle trim-left"></span>
+                <div class="trim-instruction">Tap on a track to trim. Pinch to zoom.</div>
+                <div id="timelineTrimTrack" class="trim-visual-track" aria-label="Video trim timeline">
                   <span class="trim-selected-window"></span>
                   <span class="trim-playhead"></span>
-                  <span class="trim-handle trim-right"></span>
+                  <button type="button" class="trim-handle trim-left" aria-label="Trim start"></button>
+                  <button type="button" class="trim-handle trim-right" aria-label="Trim end"></button>
                   <span class="trim-ticks"></span>
                 </div>
                 <div class="trim-labels trim-labels-bottom">
@@ -382,6 +383,15 @@
                   <label><span id="trimStartValue">0.0s</span></label>
                   <label><span id="trimEndValue">0.0s</span></label>
                 </div>
+                <div id="audioTimelineLane" class="audio-timeline-lane" aria-label="Audio timeline lane">
+                  <button id="addAudioLaneBtn" type="button" class="add-audio-lane-btn"><span class="lane-plus">＋</span><span>Add audio</span></button>
+                  <div id="audioClipTrack" class="audio-clip-track" hidden>
+                    <span class="audio-selected-window"></span>
+                    <button type="button" class="trim-handle audio-left" aria-label="Audio start"></button>
+                    <button type="button" class="trim-handle audio-right" aria-label="Audio end"></button>
+                  </div>
+                </div>
+                <audio id="suiteAudioPlayer" controls hidden></audio>
               </article>
 
               <article class="suite-module">
@@ -442,6 +452,11 @@
           <button id="scheduleCreativeSuite" type="button" class="secondary-btn">Schedule</button>
           <button id="saveCreativeSuite" type="button">Save edits</button>
         </div>
+        <nav class="suite-bottom-nav" aria-label="Editor actions">
+          <button type="button" class="suite-nav-item active">Edit</button>
+          <button type="button" class="suite-nav-item">Add clips</button>
+          <button type="button" class="suite-nav-item">Audio</button>
+        </nav>
       </div>
     </div>
 
