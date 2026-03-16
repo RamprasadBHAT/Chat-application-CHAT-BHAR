@@ -141,6 +141,11 @@ const filterThumbRow = document.getElementById('filterThumbRow');
 const scheduleCreativeSuite = document.getElementById('scheduleCreativeSuite');
 const suitePlayOverlay = document.querySelector('.suite-play-overlay');
 const saveCreativeSuite = document.getElementById('saveCreativeSuite');
+const timelineTrimTrack = document.getElementById('timelineTrimTrack');
+const audioTimelineLane = document.getElementById('audioTimelineLane');
+const audioClipTrack = document.getElementById('audioClipTrack');
+const addAudioLaneBtn = document.getElementById('addAudioLaneBtn');
+const suiteAudioPlayer = document.getElementById('suiteAudioPlayer');
 
 const postViewer = document.getElementById('postViewer');
 const closePostViewer = document.getElementById('closePostViewer');
@@ -204,6 +209,10 @@ let activeProfileTab = 'posts';
 let selectedUploadRawFiles = [];
 let selectedUploadEdits = [];
 let activeSuiteIndex = 0;
+let activeTrimTarget = null;
+let timelineZoom = 1;
+let pinchDistance = 0;
+const MIN_TRIM_DURATION = 0.5;
 let pendingFiles = [];
 let chatStore = loadJson(CHAT_STORE_KEY, {});
 let activeChat = null;
@@ -1532,7 +1541,7 @@ function bindEvents() {
   }
   if (addMusicDeviceBtn && musicUploadInput) {
     addMusicDeviceBtn.addEventListener('click', () => musicUploadInput.click());
-    musicUploadInput.addEventListener('change', () => {
+    musicUploadInput.addEventListener('change', async () => {
       const file = musicUploadInput.files?.[0];
       const edit = selectedUploadEdits[activeSuiteIndex];
       if (!file || !edit) return;
@@ -1540,8 +1549,116 @@ function bindEvents() {
       edit.musicLocalUrl = URL.createObjectURL(file);
       edit.musicQuery = file.name;
       if (addMusicInput) addMusicInput.value = file.name;
-      if (musicUploadName) musicUploadName.textContent = `Music: ${file.name}`;
+      if (musicUploadName) musicUploadName.textContent = `Uploading: ${file.name}`;
+      try {
+        const uploadedMusic = await uploadToBackend(file);
+        edit.musicRemoteUrl = uploadedMusic.dataUrl;
+        if (!edit.audioEnd || edit.audioEnd <= edit.audioStart) edit.audioEnd = Math.max(edit.trimEnd || MIN_TRIM_DURATION, MIN_TRIM_DURATION);
+        if (musicUploadName) musicUploadName.textContent = `Music: ${file.name}`;
+        updateSuiteAudioPlayer(edit);
+        renderTimelineTracks();
+      } catch (err) {
+        if (musicUploadName) musicUploadName.textContent = `Upload failed: ${file.name}`;
+      }
     });
+  }
+
+  if (timelineTrimTrack) {
+    timelineTrimTrack.addEventListener('click', () => {
+      activeTrimTarget = 'video';
+      timelineTrimTrack.classList.add('trim-mode');
+      audioTimelineLane?.classList.remove('trim-mode');
+    });
+    let dragType = null;
+    const toTime = (clientX) => {
+      const edit = selectedUploadEdits[activeSuiteIndex];
+      if (!edit) return 0;
+      const rect = timelineTrimTrack.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return ratio * getTrackDuration(edit);
+    };
+    timelineTrimTrack.addEventListener('pointerdown', (e) => {
+      const handle = e.target.closest('.trim-handle');
+      if (!handle) return;
+      dragType = handle.classList.contains('trim-left') ? 'left' : 'right';
+      activeTrimTarget = 'video';
+      timelineTrimTrack.classList.add('trim-mode');
+      timelineTrimTrack.setPointerCapture?.(e.pointerId);
+    });
+    timelineTrimTrack.addEventListener('pointermove', (e) => {
+      if (!dragType) return;
+      const edit = selectedUploadEdits[activeSuiteIndex];
+      if (!edit) return;
+      const duration = getTrackDuration(edit);
+      const nextTime = Math.max(0, Math.min(duration, toTime(e.clientX)));
+      if (dragType === 'left') edit.trimStart = Math.min(nextTime, (edit.trimEnd || duration) - MIN_TRIM_DURATION);
+      if (dragType === 'right') edit.trimEnd = Math.max(nextTime, edit.trimStart + MIN_TRIM_DURATION);
+      trimStartInput.value = edit.trimStart.toFixed(1);
+      trimEndInput.value = edit.trimEnd.toFixed(1);
+      if (trimStartValue) trimStartValue.textContent = `${edit.trimStart.toFixed(1)}s`;
+      if (trimEndValue) trimEndValue.textContent = `${edit.trimEnd.toFixed(1)}s`;
+      seekPreviewTo(dragType === 'left' ? edit.trimStart : edit.trimEnd);
+      renderTimelineTracks();
+    });
+    const endDrag = () => (dragType = null);
+    timelineTrimTrack.addEventListener('pointerup', endDrag);
+    timelineTrimTrack.addEventListener('pointercancel', endDrag);
+    timelineTrimTrack.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      timelineZoom = Math.max(1, Math.min(6, timelineZoom + (e.deltaY > 0 ? -0.1 : 0.1)));
+      renderTimelineTracks();
+    }, { passive: false });
+    timelineTrimTrack.addEventListener('touchmove', (e) => {
+      if (e.touches.length !== 2) return;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      if (!pinchDistance) {
+        pinchDistance = dist;
+        return;
+      }
+      const delta = (dist - pinchDistance) / 140;
+      timelineZoom = Math.max(1, Math.min(6, timelineZoom + delta));
+      pinchDistance = dist;
+      renderTimelineTracks();
+    }, { passive: true });
+    timelineTrimTrack.addEventListener('touchend', () => { pinchDistance = 0; });
+  }
+  if (audioTimelineLane && audioClipTrack) {
+    audioTimelineLane.addEventListener('click', () => {
+      activeTrimTarget = 'audio';
+      audioTimelineLane.classList.add('trim-mode');
+      timelineTrimTrack?.classList.remove('trim-mode');
+    });
+    addAudioLaneBtn?.addEventListener('click', () => addMusicDeviceBtn?.click());
+    let dragAudio = null;
+    const toAudioTime = (clientX) => {
+      const edit = selectedUploadEdits[activeSuiteIndex];
+      if (!edit) return 0;
+      const rect = audioClipTrack.getBoundingClientRect();
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return ratio * getTrackDuration(edit);
+    };
+    audioClipTrack.addEventListener('pointerdown', (e) => {
+      const handle = e.target.closest('.trim-handle');
+      if (!handle) return;
+      dragAudio = handle.classList.contains('audio-left') ? 'left' : 'right';
+      audioClipTrack.setPointerCapture?.(e.pointerId);
+      audioTimelineLane.classList.add('trim-mode');
+    });
+    audioClipTrack.addEventListener('pointermove', (e) => {
+      if (!dragAudio) return;
+      const edit = selectedUploadEdits[activeSuiteIndex];
+      if (!edit) return;
+      const duration = getTrackDuration(edit);
+      const next = Math.max(0, Math.min(duration, toAudioTime(e.clientX)));
+      if (dragAudio === 'left') edit.audioStart = Math.min(next, (edit.audioEnd || duration) - MIN_TRIM_DURATION);
+      if (dragAudio === 'right') edit.audioEnd = Math.max(next, edit.audioStart + MIN_TRIM_DURATION);
+      renderTimelineTracks();
+    });
+    const stopAudioDrag = () => (dragAudio = null);
+    audioClipTrack.addEventListener('pointerup', stopAudioDrag);
+    audioClipTrack.addEventListener('pointercancel', stopAudioDrag);
   }
 
   [trimStartInput, trimEndInput, overlayTextInput, overlayColorInput, audioVolumeInput, addMusicInput].filter(Boolean).forEach((input) => {
@@ -2683,6 +2800,9 @@ function setSelectedUploadFiles(files) {
     musicQuery: '',
     musicFileName: '',
     musicLocalUrl: '',
+    musicRemoteUrl: '',
+    audioStart: 0,
+    audioEnd: 0,
     coverIndex: 0,
     coverCustomName: '',
     coverCustomUrl: '',
@@ -2748,9 +2868,12 @@ function renderSuiteAssetList() {
 
 function loadSuiteFields() {
   const edit = selectedUploadEdits[activeSuiteIndex];
+  const file = selectedUploadRawFiles[activeSuiteIndex];
   if (!edit) return;
-  trimStartInput.value = edit.trimStart;
-  trimEndInput.value = edit.trimEnd;
+
+  const initialEnd = Number(edit.trimEnd || 0);
+  trimStartInput.value = Number(edit.trimStart || 0).toFixed(1);
+  trimEndInput.value = initialEnd ? initialEnd.toFixed(1) : '0.0';
   if (trimStartValue) trimStartValue.textContent = `${Number(edit.trimStart || 0).toFixed(1)}s`;
   if (trimEndValue) trimEndValue.textContent = `${Number(edit.trimEnd || 0).toFixed(1)}s`;
   overlayTextInput.value = edit.overlayText;
@@ -2766,16 +2889,32 @@ function loadSuiteFields() {
     if (firstThumb) firstThumb.style.backgroundImage = edit.coverCustomUrl ? `url(${edit.coverCustomUrl})` : '';
   }
   if (filterThumbRow) filterThumbRow.querySelectorAll('[data-filter]').forEach((item) => item.classList.toggle('active', item.dataset.filter === (edit.filterType || 'cinematic')));
+
+  if (file?.type?.startsWith('video/')) {
+    const probe = document.createElement('video');
+    probe.preload = 'metadata';
+    probe.src = URL.createObjectURL(file);
+    probe.onloadedmetadata = () => {
+      const duration = Number.isFinite(probe.duration) ? probe.duration : 0;
+      if (!edit.trimEnd || edit.trimEnd <= edit.trimStart) edit.trimEnd = Math.max(duration, MIN_TRIM_DURATION);
+      if (!edit.audioEnd || edit.audioEnd <= edit.audioStart) edit.audioEnd = Math.max(duration, MIN_TRIM_DURATION);
+      trimEndInput.value = Number(edit.trimEnd || 0).toFixed(1);
+      if (trimEndValue) trimEndValue.textContent = `${Number(edit.trimEnd || 0).toFixed(1)}s`;
+      renderTimelineTracks();
+    };
+  }
+  renderTimelineTracks();
+  updateSuiteAudioPlayer(edit);
 }
 
 function syncSuiteFields() {
   const edit = selectedUploadEdits[activeSuiteIndex];
   if (!edit) return;
-  edit.trimStart = Number(trimStartInput.value || 0);
-  edit.trimEnd = Number(trimEndInput.value || 0);
-  if (edit.trimEnd && edit.trimEnd < edit.trimStart) {
-    edit.trimEnd = edit.trimStart;
-    trimEndInput.value = edit.trimEnd;
+  edit.trimStart = Math.max(0, Number(trimStartInput.value || 0));
+  edit.trimEnd = Math.max(0, Number(trimEndInput.value || 0));
+  if (edit.trimEnd && edit.trimEnd - edit.trimStart < MIN_TRIM_DURATION) {
+    edit.trimEnd = edit.trimStart + MIN_TRIM_DURATION;
+    trimEndInput.value = edit.trimEnd.toFixed(1);
   }
   if (trimStartValue) trimStartValue.textContent = `${edit.trimStart.toFixed(1)}s`;
   if (trimEndValue) trimEndValue.textContent = `${edit.trimEnd.toFixed(1)}s`;
@@ -2785,10 +2924,72 @@ function syncSuiteFields() {
   if (edit.musicFileName && edit.musicQuery !== edit.musicFileName) {
     edit.musicFileName = '';
     edit.musicLocalUrl = '';
+    edit.musicRemoteUrl = '';
     if (musicUploadName) musicUploadName.textContent = 'No local music selected';
   }
   edit.overlayText = overlayTextInput.value;
   edit.overlayColor = overlayColorInput.value;
+  renderTimelineTracks();
+  updateSuiteAudioPlayer(edit);
+}
+
+
+function getTrackDuration(edit) {
+  return Math.max(Number(edit.trimEnd || 0), Number(edit.audioEnd || 0), MIN_TRIM_DURATION);
+}
+
+function renderTimelineTracks() {
+  const edit = selectedUploadEdits[activeSuiteIndex];
+  if (!edit || !timelineTrimTrack) return;
+  const duration = getTrackDuration(edit);
+  const pct = (val) => Math.max(0, Math.min(100, (Number(val || 0) / duration) * 100));
+  const left = pct(edit.trimStart);
+  const right = pct(edit.trimEnd || duration);
+  timelineTrimTrack.style.setProperty('--zoom', timelineZoom.toFixed(2));
+  timelineTrimTrack.querySelector('.trim-selected-window').style.left = `${left}%`;
+  timelineTrimTrack.querySelector('.trim-selected-window').style.right = `${Math.max(0, 100 - right)}%`;
+  timelineTrimTrack.querySelector('.trim-left').style.left = `calc(${left}% - 7px)`;
+  timelineTrimTrack.querySelector('.trim-right').style.left = `calc(${right}% - 7px)`;
+  if (audioClipTrack) {
+    const hasAudio = Boolean(edit.musicRemoteUrl || edit.musicLocalUrl);
+    addAudioLaneBtn.hidden = hasAudio;
+    audioClipTrack.hidden = !hasAudio;
+    if (hasAudio) {
+      const aLeft = pct(edit.audioStart || 0);
+      const aRight = pct(edit.audioEnd || duration);
+      audioClipTrack.querySelector('.audio-selected-window').style.left = `${aLeft}%`;
+      audioClipTrack.querySelector('.audio-selected-window').style.right = `${Math.max(0, 100 - aRight)}%`;
+      audioClipTrack.querySelector('.audio-left').style.left = `calc(${aLeft}% - 7px)`;
+      audioClipTrack.querySelector('.audio-right').style.left = `calc(${aRight}% - 7px)`;
+    }
+  }
+}
+
+function seekPreviewTo(timeSec) {
+  const video = suitePreview.querySelector('video');
+  if (!video || !Number.isFinite(timeSec)) return;
+  video.pause();
+  video.currentTime = Math.max(0, timeSec);
+  const durationText = Number.isFinite(video.duration) ? video.duration.toFixed(0).padStart(2, '0') : '00';
+  const currentText = Math.max(0, timeSec).toFixed(0).padStart(2, '0');
+  const stamp = document.querySelector('.suite-time-stamp');
+  if (stamp) stamp.textContent = `00:00:${currentText} / 00:00:${durationText}`;
+}
+
+function updateSuiteAudioPlayer(edit) {
+  if (!suiteAudioPlayer || !edit) return;
+  const src = edit.musicRemoteUrl || edit.musicLocalUrl;
+  if (!src) {
+    suiteAudioPlayer.hidden = true;
+    suiteAudioPlayer.removeAttribute('src');
+    return;
+  }
+  suiteAudioPlayer.hidden = false;
+  if (suiteAudioPlayer.src !== src) {
+    suiteAudioPlayer.src = src;
+    suiteAudioPlayer.load();
+  }
+  suiteAudioPlayer.volume = Math.max(0, Math.min(1, (edit.volume ?? 70) / 100));
 }
 
 function renderSuitePreview() {
@@ -2813,8 +3014,15 @@ function renderSuitePreview() {
     mono: 'grayscale(1)'
   };
   if (mediaNode) mediaNode.style.filter = filterMap[edit.filterType || 'cinematic'] || 'none';
+  if (mediaNode?.tagName === 'VIDEO') {
+    mediaNode.addEventListener('loadedmetadata', () => {
+      if (Number.isFinite(edit.trimStart)) mediaNode.currentTime = Math.max(0, edit.trimStart);
+    }, { once: true });
+  }
 
   if (suitePlayOverlay) suitePlayOverlay.textContent = '⏯';
+  if (timelineTrimTrack) timelineTrimTrack.classList.add('trim-mode');
+  if (audioTimelineLane) audioTimelineLane.classList.remove('trim-mode');
 
   if (edit.overlayText) {
     const overlay = document.createElement('div');
@@ -3018,7 +3226,7 @@ async function chunkedConcurrentUpload(files, onProgress) {
 }
 
 function defaultEdit(name) {
-  return { name, trimStart: 0, trimEnd: 0, overlayText: '', overlayColor: '#ffffff', overlayX: 10, overlayY: 10 };
+  return { name, trimStart: 0, trimEnd: 0, volume: 70, musicQuery: '', musicFileName: '', musicLocalUrl: '', musicRemoteUrl: '', audioStart: 0, audioEnd: 0, overlayText: '', overlayColor: '#ffffff', overlayX: 10, overlayY: 10 };
 }
 
 function validateUploadForType(type, files, caption, description) {
