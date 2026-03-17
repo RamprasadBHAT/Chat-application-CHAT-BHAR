@@ -477,6 +477,50 @@ function fetchAndSyncNotifications() {
   notificationsUnsubscribe = null;
 }
 
+async function markChatNotificationsAsRead(chatId) {
+  if (!activeSession?.id || !chatId) return;
+
+  if (useFirebase && db) {
+    try {
+      const unreadQuery = query(
+        collection(db, 'notifications'),
+        where('toUserId', '==', activeSession.id),
+        where('category', '==', 'messages'),
+        where('chatId', '==', chatId),
+        where('unread', '==', true),
+        limit(50)
+      );
+      const snap = await getDocs(unreadQuery);
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.forEach((d) => batch.update(d.ref, { unread: false }));
+        await batch.commit();
+      }
+    } catch (err) {
+      console.warn('Failed to mark chat notifications as read', err.message);
+    }
+    return;
+  }
+
+  const existing = loadJson(NOTIFICATION_STORE_KEY, []);
+  let changed = false;
+  const updated = existing.map((item) => {
+    if (item.toUserId === activeSession.id && item.category === 'messages' && item.chatId === chatId && item.unread !== false) {
+      changed = true;
+      return { ...item, unread: false };
+    }
+    return item;
+  });
+  if (changed) {
+    saveJson(NOTIFICATION_STORE_KEY, updated);
+    notifications = updated
+      .filter((item) => item.toUserId === activeSession.id)
+      .map((item) => normalizeNotificationItem(item))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    renderNotifications();
+  }
+}
+
 function startRealTimeSync() {
     initPresenceSocket();
     fetchAndSyncPosts();
@@ -815,6 +859,28 @@ async function fetchAndSyncMessages(chatIdArg = null) {
   }
 }
 
+function getLocalConversationFallbacks() {
+  const localStore = loadJson(CHAT_STORE_KEY, {});
+  if (!localStore || typeof localStore !== 'object') return [];
+
+  return Object.entries(localStore).map(([id, msgs]) => {
+    const list = Array.isArray(msgs) ? msgs : [];
+    const latest = list.at(-1) || {};
+    const participants = Array.isArray(latest.participants) && latest.participants.length
+      ? latest.participants
+      : (id.startsWith('dm:') ? id.replace('dm:', '').split('_') : [activeSession?.id].filter(Boolean));
+
+    return {
+      id,
+      participants,
+      isGroup: id.startsWith('group:'),
+      name: chatMeta[id]?.name || '',
+      lastMessage: latest.text || (latest.files?.length ? '📎 Attachment' : ''),
+      updatedAt: latest.createdAt || 0
+    };
+  });
+}
+
 function fetchAndSyncConversations() {
   if (!activeSession) return;
   if (useFirebase && (!auth || !auth.currentUser)) return;
@@ -828,12 +894,22 @@ function fetchAndSyncConversations() {
   } else {
     // Local mode
     const syncLocal = () => {
-      myConversations = loadJson('chatbhar.conversations', []);
+      const savedConversations = loadJson('chatbhar.conversations', []);
+      const fallbackConversations = getLocalConversationFallbacks();
+      const byId = new Map();
+      [...savedConversations, ...fallbackConversations].forEach((conv) => {
+        if (!conv?.id) return;
+        const existing = byId.get(conv.id);
+        if (!existing || (conv.updatedAt || 0) > (existing.updatedAt || 0)) {
+          byId.set(conv.id, conv);
+        }
+      });
+      myConversations = [...byId.values()];
       processConversations();
     };
     syncLocal();
     window.addEventListener('storage', (e) => {
-      if (e.key === 'chatbhar.conversations') syncLocal();
+      if (e.key === 'chatbhar.conversations' || e.key === CHAT_STORE_KEY) syncLocal();
        if (e.key === 'chatbhar.chatMeta') {
         chatMeta = loadJson('chatbhar.chatMeta', {});
         renderChatUsers();
