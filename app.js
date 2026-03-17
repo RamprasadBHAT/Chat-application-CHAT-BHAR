@@ -403,7 +403,6 @@ function notificationTimestampToMs(value) {
 function notificationTextFromPayload(payload) {
   const actor = payload.fromUserName || 'Someone';
   if (payload.type === 'follow_request') return `${actor} wants to follow you.`;
-  if (payload.type === 'follow_user') return `${actor} started following you.`;
   if (payload.type === 'like_item') return `${actor} liked your post.`;
   if (payload.type === 'comment_item') return `${actor}: "${payload.previewText || 'Commented on your post.'}"`;
   if (payload.type === 'message_item') return `Message from ${actor}: "${payload.previewText || 'New message'}"`;
