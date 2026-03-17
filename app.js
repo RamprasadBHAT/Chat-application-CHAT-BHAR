@@ -670,7 +670,6 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   const myUid = activeSession.id;
 
-
   let dmPeerUid = null;
   if (targetChatId.startsWith('dm:')) {
     const content = targetChatId.replace('dm:', '');
@@ -698,8 +697,6 @@ async function fetchAndSyncMessages(chatIdArg = null) {
   } else {
     selectedUser = null;
   }
-
-  markChatNotificationsAsRead(targetChatId);
 
   // Update Global State immediately
   activeChat = targetChatId;
@@ -2014,15 +2011,6 @@ async function followUser(followingId) {
           transaction.update(myRef, { "stats.following": increment(1), followingCount: increment(1) });
           transaction.update(theirRef, { "stats.followers": increment(1), followerCount: increment(1) });
         });
-
-        await createNotification({
-          toUserId: followingId,
-          fromUserId: activeSession.id,
-          fromUserName: activeHandle(),
-          category: 'follows',
-          type: 'follow_user',
-          relatedId: relId
-        });
       }
     } else {
       await apiRequest('/api/relationships/follow', {
@@ -2963,7 +2951,6 @@ function renderNotifications() {
   updateNotificationBadge();
   const visible = getVisibleNotifications();
   const followRequests = visible.filter((item) => item.category === 'follow_requests');
-  const follows = visible.filter((item) => item.category === 'follows');
   const likes = visible.filter((item) => item.category === 'likes');
   const comments = visible.filter((item) => item.category === 'comments');
   const messages = visible.filter((item) => item.category === 'messages');
@@ -2980,7 +2967,6 @@ function renderNotifications() {
 
   notificationBody.innerHTML = [
     buildNotificationGroup('Follow requests', 'follow_requests', followRequests, { respondCount: followRequests.length }),
-    buildNotificationGroup('New followers', 'follows', follows),
     buildNotificationGroup('Likes', 'likes', likes),
     buildNotificationGroup(`Comments (${comments.length})`, 'comments', comments),
     buildNotificationGroup('New messages', 'messages', messages)
