@@ -15,8 +15,22 @@ const CHAT_STORE_KEY = 'chatbhar.chatStore';
 const UPLOAD_STORE_KEY = 'chatbhar.uploads';
 const THEME_KEY = 'chatbhar.theme';
 
+const NOTIFICATION_SEED = [
+  { id: 'follow-a', category: 'follow_requests', type: 'follow_request', user: 'User A', text: 'User A wants to follow you.', unread: true },
+  { id: 'follow-b', category: 'follow_requests', type: 'follow_request', user: 'User B', text: 'User B wants to follow you.', unread: true },
+  { id: 'follow-c', category: 'follow_requests', type: 'follow_request', user: 'User C', text: 'User C wants to follow you.', unread: true },
+  { id: 'like-summary', category: 'likes', type: 'likes_summary', text: 'User 1, User 2, and 3 others liked your post.', unread: true },
+  { id: 'like-1', category: 'likes', type: 'like_item', user: 'User 1', text: 'User 1 liked your post.', unread: true },
+  { id: 'like-2', category: 'likes', type: 'like_item', user: 'User 2', text: 'User 2 liked your post.', unread: true },
+  { id: 'comment-1', category: 'comments', type: 'comment_item', user: 'User 6', text: 'User 6: "Great video!"', unread: true },
+  { id: 'comment-2', category: 'comments', type: 'comment_item', user: 'User 7', text: 'User 7: "Nice insights!"', unread: true },
+  { id: 'message-1', category: 'messages', type: 'message_item', user: 'User 8', text: 'Message from [User 8]: "Hey, loved your reel..."', unread: true },
+  { id: 'like-old', category: 'likes', type: 'like_item', user: 'User 9', text: 'User 9 liked your post.', unread: false },
+  { id: 'comment-old', category: 'comments', type: 'comment_item', user: 'User 10', text: 'User 10: "Following for more!"', unread: false }
+];
+
 let selectedUser = null;
-let notifications = [];
+let notifications = JSON.parse(JSON.stringify(NOTIFICATION_SEED));
 let activeNotificationTab = 'new';
 
 const authGate = document.getElementById('authGate');
@@ -1903,7 +1917,7 @@ async function followUser(followingId) {
           status: 'pending',
           createdAt: Date.now()
         });
-        await pushNotification({
+        await createNotification({
           toUserId: followingId,
           fromUserId: activeSession.id,
           fromUserName: activeHandle(),
@@ -2808,81 +2822,6 @@ function applyStoredTheme() {
   themeToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
 }
 
-function resolveNotificationActor(item) {
-  if (item?.fromUserId) {
-    const matched = authUsers.find((u) => u.id === item.fromUserId);
-    if (matched) {
-      const uname = (matched.usernames || []).find((x) => x.id === matched.activeUsernameId)?.value;
-      return uname || matched.username || matched.name || 'Unknown';
-    }
-  }
-  if (item?.fromUserName) return String(item.fromUserName);
-  return 'Unknown';
-}
-
-function formatNotificationText(item) {
-  const actor = escapeHtml(resolveNotificationActor(item));
-  if (item.type === 'follow_request') return `${actor} wants to follow you.`;
-  if (item.type === 'like_item') return `${actor} liked your post.`;
-  if (item.type === 'comment_item') return `${actor}: "${escapeHtml(item.previewText || 'New comment')}"`;
-  if (item.type === 'message_item') return `Message from ${actor}: "${escapeHtml(item.previewText || 'New message')}"`;
-  return escapeHtml(item.text || 'You have a new notification.');
-}
-
-async function pushNotification(payload) {
-  if (!useFirebase || !db || !payload?.toUserId) return;
-  try {
-    await addDoc(collection(db, 'notifications'), {
-      ...payload,
-      unread: true,
-      createdAt: serverTimestamp(),
-      createdAtMs: Date.now()
-    });
-  } catch (err) {
-    console.warn('Failed to create notification', err.message);
-  }
-}
-
-const createNotification = pushNotification;
-
-function fetchAndSyncNotifications() {
-  if (!activeSession?.id) return;
-
-  if (useFirebase && db) {
-    if (notificationsUnsubscribe) notificationsUnsubscribe();
-
-    const notificationsRef = collection(db, 'notifications');
-    const qWithOrder = query(
-      notificationsRef,
-      where('toUserId', '==', activeSession.id),
-      orderBy('createdAt', 'desc')
-    );
-
-    const normalize = (docs) => docs
-      .map((d) => ({ id: d.id, docId: d.id, ...d.data() }))
-      .filter((n) => ['follow_request', 'like_item', 'comment_item', 'message_item'].includes(n.type));
-
-    const hydrate = (snapshot) => {
-      notifications = normalize(snapshot.docs);
-      renderNotifications();
-    };
-
-    notificationsUnsubscribe = onSnapshot(qWithOrder, hydrate, (err) => {
-      console.warn('Notifications ordered query fallback:', err.message);
-      const qFallback = query(notificationsRef, where('toUserId', '==', activeSession.id));
-      notificationsUnsubscribe = onSnapshot(qFallback, (snapshot) => {
-        notifications = normalize(snapshot.docs)
-          .sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0));
-        renderNotifications();
-      });
-    });
-    return;
-  }
-
-  notifications = [];
-  renderNotifications();
-}
-
 function getVisibleNotifications() {
   if (activeNotificationTab === 'new') return notifications.filter((item) => item.unread);
   return notifications;
@@ -2902,76 +2841,40 @@ function updateNotificationBadge() {
   notificationsTabAll.textContent = `(${allCount}) ALL`;
 }
 
-async function removeNotificationById(id) {
-  if (useFirebase && db) {
-    await deleteDoc(doc(db, 'notifications', id));
-    return;
-  }
+function removeNotificationById(id) {
   notifications = notifications.filter((item) => item.id !== id);
   renderNotifications();
 }
 
-async function removeNotificationGroup(category) {
-  const categoryRows = getVisibleNotifications().filter((item) => item.category === category);
-  if (!categoryRows.length) return;
-
-  if (useFirebase && db) {
-    const batch = writeBatch(db);
-    categoryRows.forEach((item) => batch.delete(doc(db, 'notifications', item.id)));
-    await batch.commit();
-    return;
-  }
-
-  const ids = new Set(categoryRows.map((n) => n.id));
-  notifications = notifications.filter((item) => !ids.has(item.id));
+function removeNotificationGroup(category) {
+  notifications = notifications.filter((item) => item.category !== category);
   renderNotifications();
 }
 
-async function clearAllVisibleNotifications() {
-  const visible = getVisibleNotifications();
-  if (!visible.length) return;
-
-  if (useFirebase && db) {
-    const batch = writeBatch(db);
-    visible.forEach((item) => batch.delete(doc(db, 'notifications', item.id)));
-    await batch.commit();
-    return;
+function clearAllVisibleNotifications() {
+  if (activeNotificationTab === 'new') {
+    notifications = notifications.filter((item) => !item.unread);
+  } else {
+    notifications = [];
   }
-
-  const ids = new Set(visible.map((n) => n.id));
-  notifications = notifications.filter((item) => !ids.has(item.id));
   renderNotifications();
 }
 
 function renderNotificationRows(items) {
   return items.map((item) => {
-    return `<div class="notification-row"><div class="notification-avatar">👤</div><div class="notification-content">${formatNotificationText(item)}</div><button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button></div>`;
+    if (item.type === 'likes_summary') {
+      return `<div class="notification-row"><div class="stacked-avatars"><span>👤</span><span>👤</span><span>👤</span></div><div class="notification-content">${escapeHtml(item.text)} <a href="#" class="view-post-link">View post</a></div><button class="summary-clear-btn" data-remove-id="${item.id}" aria-label="Clear summary">✕</button></div>`;
+    }
+
+    return `<div class="notification-row"><div class="notification-avatar">👤</div><div class="notification-content">${escapeHtml(item.text)}</div><button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button></div>`;
   }).join('');
-}
-
-function buildLikesSummaryRow(items) {
-  const likeItems = items.filter((item) => item.type === 'like_item');
-  if (!likeItems.length) return '';
-  const unique = [...new Set(likeItems.map((item) => resolveNotificationActor(item)).filter(Boolean))];
-  const first = escapeHtml(unique[0] || '');
-  const second = escapeHtml(unique[1] || '');
-  const remaining = Math.max(0, unique.length - 2);
-  const summaryText = remaining > 0
-    ? `${first || 'Someone'}, ${second || 'someone'}, and ${remaining} others liked your post.`
-    : unique.length === 2
-      ? `${first || 'Someone'} and ${second || 'someone'} liked your post.`
-      : `${first || 'Someone'} liked your post.`;
-
-  const summaryIds = likeItems.map((item) => item.id).join(',');
-  return `<div class="notification-row"><div class="stacked-avatars"><span>👤</span><span>👤</span><span>👤</span></div><div class="notification-content">${summaryText} <a href="#" class="view-post-link">View post</a></div><button class="summary-clear-btn" data-remove-ids="${summaryIds}" aria-label="Clear likes summary">✕</button></div>`;
 }
 
 function buildNotificationGroup(title, category, items, options = {}) {
   if (!items.length) return '';
   const groupClear = `<button class="group-clear-btn" data-group-clear="${category}" aria-label="Clear ${escapeHtml(title)}">✕</button>`;
   const footer = options.respondCount ? `<button class="respond-btn" type="button">Respond (${options.respondCount})</button>` : '';
-  const summary = options.includeSummary ? buildLikesSummaryRow(items) : '';
-  return `<section class="notification-group"><div class="notification-group-header"><div class="notification-group-title">${escapeHtml(title)}</div>${groupClear}</div>${summary}${renderNotificationRows(items)}${footer}</section>`;
+  return `<section class="notification-group"><div class="notification-group-header"><div class="notification-group-title">${escapeHtml(title)}</div>${groupClear}</div>${renderNotificationRows(items)}${footer}</section>`;
 }
 
 function renderNotifications() {
@@ -2994,7 +2897,7 @@ function renderNotifications() {
 
   notificationBody.innerHTML = [
     buildNotificationGroup('Follow requests', 'follow_requests', followRequests, { respondCount: followRequests.length }),
-    buildNotificationGroup('Likes', 'likes', likes, { includeSummary: true }),
+    buildNotificationGroup('Likes', 'likes', likes),
     buildNotificationGroup(`Comments (${comments.length})`, 'comments', comments),
     buildNotificationGroup('New messages', 'messages', messages)
   ].join('');
@@ -3004,32 +2907,15 @@ function setNotificationPanelOpen(isOpen) {
   notificationOverlay.hidden = !isOpen;
 }
 
-async function handleNotificationBodyClick(event) {
+function handleNotificationBodyClick(event) {
   const removeBtn = event.target.closest('[data-remove-id]');
   if (removeBtn) {
-    await removeNotificationById(removeBtn.dataset.removeId);
+    removeNotificationById(removeBtn.dataset.removeId);
     return;
   }
-
-  const removeManyBtn = event.target.closest('[data-remove-ids]');
-  if (removeManyBtn) {
-    const ids = (removeManyBtn.dataset.removeIds || '').split(',').filter(Boolean);
-    if (!ids.length) return;
-    if (useFirebase && db) {
-      const batch = writeBatch(db);
-      ids.forEach((id) => batch.delete(doc(db, 'notifications', id)));
-      await batch.commit();
-    } else {
-      const set = new Set(ids);
-      notifications = notifications.filter((item) => !set.has(item.id));
-      renderNotifications();
-    }
-    return;
-  }
-
   const groupBtn = event.target.closest('[data-group-clear]');
   if (groupBtn) {
-    await removeNotificationGroup(groupBtn.dataset.groupClear);
+    removeNotificationGroup(groupBtn.dataset.groupClear);
   }
 }
 
@@ -3812,7 +3698,7 @@ async function likePost(postId) {
       });
 
       if (!liked && post.userId && post.userId !== activeSession.id) {
-        await pushNotification({
+        await createNotification({
           toUserId: post.userId,
           fromUserId: activeSession.id,
           fromUserName: activeHandle(),
@@ -3865,7 +3751,7 @@ async function addComment(postId, text) {
       });
 
       if (post.userId && post.userId !== activeSession.id) {
-        await pushNotification({
+        await createNotification({
           toUserId: post.userId,
           fromUserId: activeSession.id,
           fromUserName: activeHandle(),
@@ -4559,7 +4445,7 @@ async function sendMessage(prepared = null) {
       });
 
       if (selectedUser?.uid && selectedUser.uid !== myUid) {
-        await pushNotification({
+        await createNotification({
           toUserId: selectedUser.uid,
           fromUserId: myUid,
           fromUserName: activeHandle(),
