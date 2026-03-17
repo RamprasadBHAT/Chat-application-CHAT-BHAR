@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app'; 
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction, or, and, arrayUnion } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction, or, and, arrayUnion, writeBatch } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 function getDmChatId(uid1, uid2) {
@@ -249,6 +249,7 @@ let contactRequestsUnsubscribe = null;
 let followRequestsUnsubscribe = null;
 let postsUnsubscribe = null;
 let authUsersUnsubscribe = null;
+let notificationsUnsubscribe = null;
 
 let chatMeta = loadJson('chatbhar.chatMeta', {});
 
@@ -413,6 +414,7 @@ function startRealTimeSync() {
     fetchAndSyncConversations();
     fetchAndSyncContactRequests();
     fetchAndSyncRelationships();
+    fetchAndSyncNotifications();
 }
 //added new on 5 march 
 /*function getTypingUserNames(chatId) {
@@ -1915,6 +1917,14 @@ async function followUser(followingId) {
           status: 'pending',
           createdAt: Date.now()
         });
+        await createNotification({
+          toUserId: followingId,
+          fromUserId: activeSession.id,
+          fromUserName: activeHandle(),
+          category: 'follow_requests',
+          type: 'follow_request',
+          relatedId: relId
+        });
         alert('Follow request sent');
       } else {
         await runTransaction(db, async (transaction) => {
@@ -2775,6 +2785,7 @@ function onLogout() {
   if (followRequestsUnsubscribe) followRequestsUnsubscribe();
   if (postsUnsubscribe) postsUnsubscribe();
   if (authUsersUnsubscribe) authUsersUnsubscribe();
+  if (notificationsUnsubscribe) notificationsUnsubscribe();
 
   //mar 5
   setTypingState(false);
@@ -3685,6 +3696,33 @@ async function likePost(postId) {
       await updateDoc(doc(db, "posts", post.docId), {
         interactions: { ...interactions, likedBy, likes: likedBy.length }
       });
+
+      if (!liked && post.userId && post.userId !== activeSession.id) {
+        await createNotification({
+          toUserId: post.userId,
+          fromUserId: activeSession.id,
+          fromUserName: activeHandle(),
+          category: 'likes',
+          type: 'like_item',
+          postId: post.id
+        });
+      }
+
+      if (liked && post.userId && post.userId !== activeSession.id) {
+        const likeNotifQuery = query(
+          collection(db, 'notifications'),
+          where('toUserId', '==', post.userId),
+          where('fromUserId', '==', activeSession.id),
+          where('type', '==', 'like_item'),
+          where('postId', '==', post.id)
+        );
+        const likeNotifSnap = await getDocs(likeNotifQuery);
+        if (!likeNotifSnap.empty) {
+          const batch = writeBatch(db);
+          likeNotifSnap.forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
     } else {
       await apiRequest(`/api/posts/${postId}`, {
         method: 'PATCH',
@@ -3711,6 +3749,18 @@ async function addComment(postId, text) {
       await updateDoc(doc(db, "posts", post.docId), {
         interactions: { ...interactions, comments: [...(interactions.comments || []), newComment] }
       });
+
+      if (post.userId && post.userId !== activeSession.id) {
+        await createNotification({
+          toUserId: post.userId,
+          fromUserId: activeSession.id,
+          fromUserName: activeHandle(),
+          category: 'comments',
+          type: 'comment_item',
+          postId: post.id,
+          previewText: content.slice(0, 120)
+        });
+      }
     } else {
       await apiRequest(`/api/posts/${postId}`, {
         method: 'PATCH',
@@ -4393,6 +4443,18 @@ async function sendMessage(prepared = null) {
         lastMessage: payload.text || (payload.files?.length ? '📎 Attachment' : ''),
         updatedAt: now
       });
+
+      if (selectedUser?.uid && selectedUser.uid !== myUid) {
+        await createNotification({
+          toUserId: selectedUser.uid,
+          fromUserId: myUid,
+          fromUserName: activeHandle(),
+          category: 'messages',
+          type: 'message_item',
+          chatId: unifiedChatId,
+          previewText: (payload.text || (payload.files?.length ? '📎 Attachment' : 'New message')).slice(0, 120)
+        });
+      }
     } else {
       const msg = {
         chatId: unifiedChatId,
