@@ -70,6 +70,45 @@ button:hover{filter:brightness(1.03)}
 .brand h1{margin:0;font-size:1.8rem}
 .top-actions{display:flex;gap:6px;align-items:center}
 
+.notification-bell{position:relative;width:44px;height:44px;border-radius:12px;display:grid;place-items:center;font-size:1.3rem;background:rgba(0,0,0,.04)}
+.notification-bell:hover{background:rgba(0,0,0,.08)}
+.notification-badge{position:absolute;top:-6px;right:-4px;min-width:20px;height:20px;border-radius:999px;background:#ff3b30;color:#fff;font-size:.72rem;font-weight:700;display:grid;place-items:center;padding:0 6px;border:2px solid var(--card)}
+.notification-overlay{position:fixed;inset:86px 0 0 0;background:rgba(8,10,16,.35);backdrop-filter:blur(1px);display:flex;justify-content:center;z-index:120;padding:8px 10px}
+.notification-panel{width:min(450px,96vw);max-height:calc(100vh - 108px);background:rgba(255,255,255,.98);border:1px solid var(--border);border-radius:20px;overflow:hidden;box-shadow:0 20px 45px rgba(0,0,0,.28);display:flex;flex-direction:column}
+body.dark .notification-panel{background:linear-gradient(160deg,rgba(19,22,29,.97),rgba(27,31,40,.95));border-color:rgba(255,255,255,.12);box-shadow:0 24px 50px rgba(0,0,0,.5)}
+.notification-panel-header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:14px 14px 10px;border-bottom:1px solid var(--border)}
+body.dark .notification-panel-header{border-bottom-color:rgba(255,255,255,.12)}
+.notification-panel-header h3{margin:0;grid-column:2;font-size:2rem}
+.clear-all-btn{grid-column:3;justify-self:end;background:rgba(0,0,0,.08);color:var(--text);border:1px solid transparent;padding:8px 12px}
+body.dark .clear-all-btn{background:rgba(255,255,255,.18);color:#f7f7f7}
+.notification-tabs{display:flex;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+body.dark .notification-tabs{border-bottom-color:rgba(255,255,255,.12)}
+.notification-tab{background:transparent;color:var(--text);border:0;padding:6px 2px;font-size:1.9rem;font-weight:700;opacity:.62}
+.notification-tab.active{opacity:1}
+.notification-body{overflow:auto;padding:8px 0 10px}
+.notification-empty{padding:20px 16px;color:var(--muted);font-size:.95rem}
+.notification-group{padding:10px 14px 14px;border-bottom:1px solid var(--border)}
+body.dark .notification-group{border-bottom-color:rgba(255,255,255,.12)}
+.notification-group-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.notification-group-title{font-size:2.05rem;font-weight:700}
+.group-clear-btn,.row-clear-btn,.summary-clear-btn{background:transparent;border:0;box-shadow:none;color:var(--muted);font-size:1.8rem;padding:4px 6px;line-height:1}
+.group-clear-btn:hover,.row-clear-btn:hover,.summary-clear-btn:hover{color:#ff6b6b}
+.notification-row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:flex-start;padding:4px 0}
+.notification-avatar,.stacked-avatars{width:44px;height:44px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;background:linear-gradient(145deg,#f5f5f5,#dadada);border:1px solid #cfcfcf;color:#9a9a9a;font-size:1.25rem}
+.stacked-avatars{position:relative;background:transparent;border:0}
+.stacked-avatars span{position:absolute;width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,#f5f5f5,#dadada);border:1px solid #cfcfcf}
+.stacked-avatars span:nth-child(1){left:0;top:0}
+.stacked-avatars span:nth-child(2){left:12px;top:8px}
+.stacked-avatars span:nth-child(3){left:4px;top:16px}
+.notification-content{font-size:1.05rem;line-height:1.25}
+.notification-content strong{display:block;font-size:1.1rem}
+.view-post-link{color:var(--brand-a);font-weight:600;font-size:.92rem;text-decoration:none}
+.respond-btn{margin-top:10px;margin-left:54px;background:var(--brand-a);padding:8px 14px;border-radius:10px}
+body.dark .notification-overlay{background:rgba(0,0,0,.45)}
+body.dark .notification-bell{background:rgba(255,255,255,.1)}
+body.dark .notification-bell:hover{background:rgba(255,255,255,.16)}
+body.dark .notification-avatar,body.dark .stacked-avatars span{background:linear-gradient(145deg,#e7e7e7,#cfcfcf);border-color:#b7b7b7;color:#8f8f8f}
+
 .app-layout{display:grid;grid-template-rows:1fr auto;height:calc(100vh - 86px)}
 main{padding:0;overflow:auto}
 .web-sidepanel{display:none;padding:14px}

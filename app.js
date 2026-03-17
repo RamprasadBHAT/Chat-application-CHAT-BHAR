@@ -13,8 +13,25 @@ const AUTH_RESET_DONE_KEY = 'chatbhar.authResetDone';
 const AUTH_SESSION_KEY = 'chatbhar.session';
 const CHAT_STORE_KEY = 'chatbhar.chatStore';
 const UPLOAD_STORE_KEY = 'chatbhar.uploads';
+const THEME_KEY = 'chatbhar.theme';
+
+const NOTIFICATION_SEED = [
+  { id: 'follow-a', category: 'follow_requests', type: 'follow_request', user: 'User A', text: 'User A wants to follow you.', unread: true },
+  { id: 'follow-b', category: 'follow_requests', type: 'follow_request', user: 'User B', text: 'User B wants to follow you.', unread: true },
+  { id: 'follow-c', category: 'follow_requests', type: 'follow_request', user: 'User C', text: 'User C wants to follow you.', unread: true },
+  { id: 'like-summary', category: 'likes', type: 'likes_summary', text: 'User 1, User 2, and 3 others liked your post.', unread: true },
+  { id: 'like-1', category: 'likes', type: 'like_item', user: 'User 1', text: 'User 1 liked your post.', unread: true },
+  { id: 'like-2', category: 'likes', type: 'like_item', user: 'User 2', text: 'User 2 liked your post.', unread: true },
+  { id: 'comment-1', category: 'comments', type: 'comment_item', user: 'User 6', text: 'User 6: "Great video!"', unread: true },
+  { id: 'comment-2', category: 'comments', type: 'comment_item', user: 'User 7', text: 'User 7: "Nice insights!"', unread: true },
+  { id: 'message-1', category: 'messages', type: 'message_item', user: 'User 8', text: 'Message from [User 8]: "Hey, loved your reel..."', unread: true },
+  { id: 'like-old', category: 'likes', type: 'like_item', user: 'User 9', text: 'User 9 liked your post.', unread: false },
+  { id: 'comment-old', category: 'comments', type: 'comment_item', user: 'User 10', text: 'User 10: "Following for more!"', unread: false }
+];
 
 let selectedUser = null;
+let notifications = JSON.parse(JSON.stringify(NOTIFICATION_SEED));
+let activeNotificationTab = 'new';
 
 const authGate = document.getElementById('authGate');
 const appShell = document.getElementById('appShell');
@@ -28,6 +45,14 @@ const authMessage = document.getElementById('authMessage');
 
 const logoutBtn = document.getElementById('logoutBtn');
 const themeToggle = document.getElementById('themeToggle');
+const notificationBell = document.getElementById('notificationBell');
+const notificationBadge = document.getElementById('notificationBadge');
+const notificationOverlay = document.getElementById('notificationOverlay');
+const notificationPanel = document.getElementById('notificationPanel');
+const clearAllNotificationsBtn = document.getElementById('clearAllNotifications');
+const notificationsTabNew = document.getElementById('notificationsTabNew');
+const notificationsTabAll = document.getElementById('notificationsTabAll');
+const notificationBody = document.getElementById('notificationBody');
 const deleteAccountOpenBtn = document.getElementById('deleteAccountOpenBtn');
 const deleteAccountModal = document.getElementById('deleteAccountModal');
 const closeDeleteModal = document.getElementById('closeDeleteModal');
@@ -317,6 +342,8 @@ initApp();
 
 async function initApp() {
   hydrateState(); // Hydrate immediately for fast feedback
+  applyStoredTheme();
+  renderNotifications();
 
   bindEvents();
 
@@ -1279,6 +1306,12 @@ function bindEvents() {
   usernameForm.addEventListener('submit', onCreateUsername);
   logoutBtn.addEventListener('click', onLogout);
   themeToggle.addEventListener('click', toggleTheme);
+  notificationBell.addEventListener('click', () => setNotificationPanelOpen(notificationOverlay.hidden));
+  clearAllNotificationsBtn.addEventListener('click', clearAllVisibleNotifications);
+  notificationsTabNew.addEventListener('click', () => { activeNotificationTab = 'new'; renderNotifications(); });
+  notificationsTabAll.addEventListener('click', () => { activeNotificationTab = 'all'; renderNotifications(); });
+  notificationBody.addEventListener('click', handleNotificationBodyClick);
+  notificationOverlay.addEventListener('click', (event) => { if (event.target === notificationOverlay) setNotificationPanelOpen(false); });
   navButtons.forEach((btn) => {
     if (btn.dataset.tab === 'channels') {
       let timer;
@@ -2771,9 +2804,115 @@ function onLogout() {
   finishLogout();
 }
 
+
+function applyStoredTheme() {
+  const savedTheme = localStorage.getItem(THEME_KEY) || 'light';
+  document.body.classList.toggle('dark', savedTheme === 'dark');
+  themeToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+}
+
+function getVisibleNotifications() {
+  if (activeNotificationTab === 'new') return notifications.filter((item) => item.unread);
+  return notifications;
+}
+
+function countNotifications() {
+  const unreadCount = notifications.filter((item) => item.unread).length;
+  const allCount = notifications.length;
+  return { unreadCount, allCount };
+}
+
+function updateNotificationBadge() {
+  const { unreadCount, allCount } = countNotifications();
+  notificationBadge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
+  notificationBadge.hidden = unreadCount === 0;
+  notificationsTabNew.textContent = `${unreadCount} NEW`;
+  notificationsTabAll.textContent = `(${allCount}) ALL`;
+}
+
+function removeNotificationById(id) {
+  notifications = notifications.filter((item) => item.id !== id);
+  renderNotifications();
+}
+
+function removeNotificationGroup(category) {
+  notifications = notifications.filter((item) => item.category !== category);
+  renderNotifications();
+}
+
+function clearAllVisibleNotifications() {
+  if (activeNotificationTab === 'new') {
+    notifications = notifications.filter((item) => !item.unread);
+  } else {
+    notifications = [];
+  }
+  renderNotifications();
+}
+
+function renderNotificationRows(items) {
+  return items.map((item) => {
+    if (item.type === 'likes_summary') {
+      return `<div class="notification-row"><div class="stacked-avatars"><span>👤</span><span>👤</span><span>👤</span></div><div class="notification-content">${escapeHtml(item.text)} <a href="#" class="view-post-link">View post</a></div><button class="summary-clear-btn" data-remove-id="${item.id}" aria-label="Clear summary">✕</button></div>`;
+    }
+
+    return `<div class="notification-row"><div class="notification-avatar">👤</div><div class="notification-content">${escapeHtml(item.text)}</div><button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button></div>`;
+  }).join('');
+}
+
+function buildNotificationGroup(title, category, items, options = {}) {
+  if (!items.length) return '';
+  const groupClear = `<button class="group-clear-btn" data-group-clear="${category}" aria-label="Clear ${escapeHtml(title)}">✕</button>`;
+  const footer = options.respondCount ? `<button class="respond-btn" type="button">Respond (${options.respondCount})</button>` : '';
+  return `<section class="notification-group"><div class="notification-group-header"><div class="notification-group-title">${escapeHtml(title)}</div>${groupClear}</div>${renderNotificationRows(items)}${footer}</section>`;
+}
+
+function renderNotifications() {
+  updateNotificationBadge();
+  const visible = getVisibleNotifications();
+  const followRequests = visible.filter((item) => item.category === 'follow_requests');
+  const likes = visible.filter((item) => item.category === 'likes');
+  const comments = visible.filter((item) => item.category === 'comments');
+  const messages = visible.filter((item) => item.category === 'messages');
+
+  notificationsTabNew.classList.toggle('active', activeNotificationTab === 'new');
+  notificationsTabAll.classList.toggle('active', activeNotificationTab === 'all');
+  notificationsTabNew.setAttribute('aria-selected', String(activeNotificationTab === 'new'));
+  notificationsTabAll.setAttribute('aria-selected', String(activeNotificationTab === 'all'));
+
+  if (!visible.length) {
+    notificationBody.innerHTML = '<p class="notification-empty">No notifications in this view.</p>';
+    return;
+  }
+
+  notificationBody.innerHTML = [
+    buildNotificationGroup('Follow requests', 'follow_requests', followRequests, { respondCount: followRequests.length }),
+    buildNotificationGroup('Likes', 'likes', likes),
+    buildNotificationGroup(`Comments (${comments.length})`, 'comments', comments),
+    buildNotificationGroup('New messages', 'messages', messages)
+  ].join('');
+}
+
+function setNotificationPanelOpen(isOpen) {
+  notificationOverlay.hidden = !isOpen;
+}
+
+function handleNotificationBodyClick(event) {
+  const removeBtn = event.target.closest('[data-remove-id]');
+  if (removeBtn) {
+    removeNotificationById(removeBtn.dataset.removeId);
+    return;
+  }
+  const groupBtn = event.target.closest('[data-group-clear]');
+  if (groupBtn) {
+    removeNotificationGroup(groupBtn.dataset.groupClear);
+  }
+}
+
 function toggleTheme() {
   document.body.classList.toggle('dark');
-  themeToggle.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+  const isDark = document.body.classList.contains('dark');
+  localStorage.setItem(THEME_KEY, isDark ? 'dark' : 'light');
+  themeToggle.textContent = isDark ? '☀️' : '🌙';
 }
 
 function openTab(tabId) {
