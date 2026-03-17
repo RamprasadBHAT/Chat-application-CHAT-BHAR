@@ -81,10 +81,28 @@
           <h1>ChatBhar</h1>
         </div>
         <div class="top-actions">
+          <button id="notificationBell" class="icon-btn notification-bell" title="Open notifications" aria-label="Open notifications">
+            🔔
+            <span id="notificationBadge" class="notification-badge" hidden>0</span>
+          </button>
           <button id="themeToggle" class="icon-btn" title="Toggle theme">🌙</button>
           <button id="logoutBtn" class="admin-btn">Logout</button>
         </div>
       </header>
+
+      <div id="notificationOverlay" class="notification-overlay" hidden>
+        <section id="notificationPanel" class="notification-panel" aria-label="Notifications panel">
+          <header class="notification-panel-header">
+            <h3>Notifications</h3>
+            <button id="clearAllNotifications" class="clear-all-btn" type="button">Clear All</button>
+          </header>
+          <div class="notification-tabs" role="tablist" aria-label="Notification filters">
+            <button id="notificationsTabNew" class="notification-tab active" type="button" role="tab" aria-selected="true">0 NEW</button>
+            <button id="notificationsTabAll" class="notification-tab" type="button" role="tab" aria-selected="false">(0) ALL</button>
+          </div>
+          <div id="notificationBody" class="notification-body"></div>
+        </section>
+      </div>
 
       <div class="app-layout">
         <nav class="bottom-nav glass">
