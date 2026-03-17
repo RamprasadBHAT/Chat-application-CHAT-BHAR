@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app'; 
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction, or, and, arrayUnion } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction, or, and, arrayUnion, writeBatch } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 
 function getDmChatId(uid1, uid2) {
@@ -13,8 +13,11 @@ const AUTH_RESET_DONE_KEY = 'chatbhar.authResetDone';
 const AUTH_SESSION_KEY = 'chatbhar.session';
 const CHAT_STORE_KEY = 'chatbhar.chatStore';
 const UPLOAD_STORE_KEY = 'chatbhar.uploads';
+const THEME_KEY = 'chatbhar.theme';
 
 let selectedUser = null;
+let notifications = [];
+let activeNotificationTab = 'new';
 
 const authGate = document.getElementById('authGate');
 const appShell = document.getElementById('appShell');
@@ -28,6 +31,14 @@ const authMessage = document.getElementById('authMessage');
 
 const logoutBtn = document.getElementById('logoutBtn');
 const themeToggle = document.getElementById('themeToggle');
+const notificationBell = document.getElementById('notificationBell');
+const notificationBadge = document.getElementById('notificationBadge');
+const notificationOverlay = document.getElementById('notificationOverlay');
+const notificationPanel = document.getElementById('notificationPanel');
+const clearAllNotificationsBtn = document.getElementById('clearAllNotifications');
+const notificationsTabNew = document.getElementById('notificationsTabNew');
+const notificationsTabAll = document.getElementById('notificationsTabAll');
+const notificationBody = document.getElementById('notificationBody');
 const deleteAccountOpenBtn = document.getElementById('deleteAccountOpenBtn');
 const deleteAccountModal = document.getElementById('deleteAccountModal');
 const closeDeleteModal = document.getElementById('closeDeleteModal');
@@ -224,6 +235,7 @@ let contactRequestsUnsubscribe = null;
 let followRequestsUnsubscribe = null;
 let postsUnsubscribe = null;
 let authUsersUnsubscribe = null;
+let notificationsUnsubscribe = null;
 
 let chatMeta = loadJson('chatbhar.chatMeta', {});
 
@@ -317,6 +329,8 @@ initApp();
 
 async function initApp() {
   hydrateState(); // Hydrate immediately for fast feedback
+  applyStoredTheme();
+  renderNotifications();
 
   bindEvents();
 
@@ -386,6 +400,7 @@ function startRealTimeSync() {
     fetchAndSyncConversations();
     fetchAndSyncContactRequests();
     fetchAndSyncRelationships();
+    fetchAndSyncNotifications();
 }
 //added new on 5 march 
 /*function getTypingUserNames(chatId) {
@@ -1279,6 +1294,12 @@ function bindEvents() {
   usernameForm.addEventListener('submit', onCreateUsername);
   logoutBtn.addEventListener('click', onLogout);
   themeToggle.addEventListener('click', toggleTheme);
+  notificationBell.addEventListener('click', () => setNotificationPanelOpen(notificationOverlay.hidden));
+  clearAllNotificationsBtn.addEventListener('click', clearAllVisibleNotifications);
+  notificationsTabNew.addEventListener('click', () => { activeNotificationTab = 'new'; renderNotifications(); });
+  notificationsTabAll.addEventListener('click', () => { activeNotificationTab = 'all'; renderNotifications(); });
+  notificationBody.addEventListener('click', handleNotificationBodyClick);
+  notificationOverlay.addEventListener('click', (event) => { if (event.target === notificationOverlay) setNotificationPanelOpen(false); });
   navButtons.forEach((btn) => {
     if (btn.dataset.tab === 'channels') {
       let timer;
@@ -1881,6 +1902,14 @@ async function followUser(followingId) {
           toUserId: followingId,
           status: 'pending',
           createdAt: Date.now()
+        });
+        await createNotification({
+          toUserId: followingId,
+          fromUserId: activeSession.id,
+          fromUserName: activeHandle(),
+          category: 'follow_requests',
+          type: 'follow_request',
+          relatedId: relId
         });
         alert('Follow request sent');
       } else {
@@ -2742,6 +2771,7 @@ function onLogout() {
   if (followRequestsUnsubscribe) followRequestsUnsubscribe();
   if (postsUnsubscribe) postsUnsubscribe();
   if (authUsersUnsubscribe) authUsersUnsubscribe();
+  if (notificationsUnsubscribe) notificationsUnsubscribe();
 
   //mar 5
   setTypingState(false);
@@ -2771,9 +2801,226 @@ function onLogout() {
   finishLogout();
 }
 
+
+function applyStoredTheme() {
+  const savedTheme = localStorage.getItem(THEME_KEY) || 'light';
+  document.body.classList.toggle('dark', savedTheme === 'dark');
+  themeToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+}
+
+function formatNotificationText(item) {
+  const actor = escapeHtml(item.fromUserName || 'User');
+  if (item.type === 'follow_request') return `User ${actor} wants to follow you.`;
+  if (item.type === 'like_item') return `User ${actor} liked your post.`;
+  if (item.type === 'comment_item') return `User ${actor}: "${escapeHtml(item.previewText || 'Nice post!')}"`;
+  if (item.type === 'message_item') return `Message from [User ${actor}]: "${escapeHtml(item.previewText || 'New message...')}"`;
+  return escapeHtml(item.text || 'You have a new notification.');
+}
+
+async function createNotification(payload) {
+  if (!useFirebase || !db || !payload?.toUserId) return;
+  try {
+    await addDoc(collection(db, 'notifications'), {
+      ...payload,
+      unread: true,
+      createdAt: serverTimestamp(),
+      createdAtMs: Date.now()
+    });
+  } catch (err) {
+    console.warn('Failed to create notification', err.message);
+  }
+}
+
+function fetchAndSyncNotifications() {
+  if (!activeSession?.id) return;
+
+  if (useFirebase && db) {
+    if (notificationsUnsubscribe) notificationsUnsubscribe();
+
+    const notificationsRef = collection(db, 'notifications');
+    const qWithOrder = query(
+      notificationsRef,
+      where('toUserId', '==', activeSession.id),
+      orderBy('createdAt', 'desc')
+    );
+
+    const hydrate = (snapshot) => {
+      notifications = snapshot.docs.map((d) => ({ id: d.id, docId: d.id, ...d.data() }));
+      renderNotifications();
+    };
+
+    notificationsUnsubscribe = onSnapshot(qWithOrder, hydrate, (err) => {
+      console.warn('Notifications ordered query fallback:', err.message);
+      const qFallback = query(notificationsRef, where('toUserId', '==', activeSession.id));
+      notificationsUnsubscribe = onSnapshot(qFallback, (snapshot) => {
+        notifications = snapshot.docs
+          .map((d) => ({ id: d.id, docId: d.id, ...d.data() }))
+          .sort((a, b) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0));
+        renderNotifications();
+      });
+    });
+    return;
+  }
+
+  notifications = [];
+  renderNotifications();
+}
+
+function getVisibleNotifications() {
+  if (activeNotificationTab === 'new') return notifications.filter((item) => item.unread);
+  return notifications;
+}
+
+function countNotifications() {
+  const unreadCount = notifications.filter((item) => item.unread).length;
+  const allCount = notifications.length;
+  return { unreadCount, allCount };
+}
+
+function updateNotificationBadge() {
+  const { unreadCount, allCount } = countNotifications();
+  notificationBadge.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
+  notificationBadge.hidden = unreadCount === 0;
+  notificationsTabNew.textContent = `${unreadCount} NEW`;
+  notificationsTabAll.textContent = `(${allCount}) ALL`;
+}
+
+async function removeNotificationById(id) {
+  if (useFirebase && db) {
+    await deleteDoc(doc(db, 'notifications', id));
+    return;
+  }
+  notifications = notifications.filter((item) => item.id !== id);
+  renderNotifications();
+}
+
+async function removeNotificationGroup(category) {
+  const categoryRows = getVisibleNotifications().filter((item) => item.category === category);
+  if (!categoryRows.length) return;
+
+  if (useFirebase && db) {
+    const batch = writeBatch(db);
+    categoryRows.forEach((item) => batch.delete(doc(db, 'notifications', item.id)));
+    await batch.commit();
+    return;
+  }
+
+  const ids = new Set(categoryRows.map((n) => n.id));
+  notifications = notifications.filter((item) => !ids.has(item.id));
+  renderNotifications();
+}
+
+async function clearAllVisibleNotifications() {
+  const visible = getVisibleNotifications();
+  if (!visible.length) return;
+
+  if (useFirebase && db) {
+    const batch = writeBatch(db);
+    visible.forEach((item) => batch.delete(doc(db, 'notifications', item.id)));
+    await batch.commit();
+    return;
+  }
+
+  const ids = new Set(visible.map((n) => n.id));
+  notifications = notifications.filter((item) => !ids.has(item.id));
+  renderNotifications();
+}
+
+function renderNotificationRows(items) {
+  return items.map((item) => {
+    return `<div class="notification-row"><div class="notification-avatar">👤</div><div class="notification-content">${formatNotificationText(item)}</div><button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button></div>`;
+  }).join('');
+}
+
+function buildLikesSummaryRow(items) {
+  const likeItems = items.filter((item) => item.type === 'like_item');
+  if (!likeItems.length) return '';
+  const unique = [...new Set(likeItems.map((item) => item.fromUserName || 'User'))];
+  const first = escapeHtml(unique[0] || 'User 1');
+  const second = escapeHtml(unique[1] || 'User 2');
+  const remaining = Math.max(0, unique.length - 2);
+  const summaryText = remaining > 0
+    ? `User ${first}, User ${second}, and ${remaining} others liked your post.`
+    : unique.length === 2
+      ? `User ${first} and User ${second} liked your post.`
+      : `User ${first} liked your post.`;
+
+  const summaryIds = likeItems.map((item) => item.id).join(',');
+  return `<div class="notification-row"><div class="stacked-avatars"><span>👤</span><span>👤</span><span>👤</span></div><div class="notification-content">${summaryText} <a href="#" class="view-post-link">View post</a></div><button class="summary-clear-btn" data-remove-ids="${summaryIds}" aria-label="Clear likes summary">✕</button></div>`;
+}
+
+function buildNotificationGroup(title, category, items, options = {}) {
+  if (!items.length) return '';
+  const groupClear = `<button class="group-clear-btn" data-group-clear="${category}" aria-label="Clear ${escapeHtml(title)}">✕</button>`;
+  const footer = options.respondCount ? `<button class="respond-btn" type="button">Respond (${options.respondCount})</button>` : '';
+  const summary = options.includeSummary ? buildLikesSummaryRow(items) : '';
+  return `<section class="notification-group"><div class="notification-group-header"><div class="notification-group-title">${escapeHtml(title)}</div>${groupClear}</div>${summary}${renderNotificationRows(items)}${footer}</section>`;
+}
+
+function renderNotifications() {
+  updateNotificationBadge();
+  const visible = getVisibleNotifications();
+  const followRequests = visible.filter((item) => item.category === 'follow_requests');
+  const likes = visible.filter((item) => item.category === 'likes');
+  const comments = visible.filter((item) => item.category === 'comments');
+  const messages = visible.filter((item) => item.category === 'messages');
+
+  notificationsTabNew.classList.toggle('active', activeNotificationTab === 'new');
+  notificationsTabAll.classList.toggle('active', activeNotificationTab === 'all');
+  notificationsTabNew.setAttribute('aria-selected', String(activeNotificationTab === 'new'));
+  notificationsTabAll.setAttribute('aria-selected', String(activeNotificationTab === 'all'));
+
+  if (!visible.length) {
+    notificationBody.innerHTML = '<p class="notification-empty">No notifications in this view.</p>';
+    return;
+  }
+
+  notificationBody.innerHTML = [
+    buildNotificationGroup('Follow requests', 'follow_requests', followRequests, { respondCount: followRequests.length }),
+    buildNotificationGroup('Likes', 'likes', likes, { includeSummary: true }),
+    buildNotificationGroup(`Comments (${comments.length})`, 'comments', comments),
+    buildNotificationGroup('New messages', 'messages', messages)
+  ].join('');
+}
+
+function setNotificationPanelOpen(isOpen) {
+  notificationOverlay.hidden = !isOpen;
+}
+
+async function handleNotificationBodyClick(event) {
+  const removeBtn = event.target.closest('[data-remove-id]');
+  if (removeBtn) {
+    await removeNotificationById(removeBtn.dataset.removeId);
+    return;
+  }
+
+  const removeManyBtn = event.target.closest('[data-remove-ids]');
+  if (removeManyBtn) {
+    const ids = (removeManyBtn.dataset.removeIds || '').split(',').filter(Boolean);
+    if (!ids.length) return;
+    if (useFirebase && db) {
+      const batch = writeBatch(db);
+      ids.forEach((id) => batch.delete(doc(db, 'notifications', id)));
+      await batch.commit();
+    } else {
+      const set = new Set(ids);
+      notifications = notifications.filter((item) => !set.has(item.id));
+      renderNotifications();
+    }
+    return;
+  }
+
+  const groupBtn = event.target.closest('[data-group-clear]');
+  if (groupBtn) {
+    await removeNotificationGroup(groupBtn.dataset.groupClear);
+  }
+}
+
 function toggleTheme() {
   document.body.classList.toggle('dark');
-  themeToggle.textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+  const isDark = document.body.classList.contains('dark');
+  localStorage.setItem(THEME_KEY, isDark ? 'dark' : 'light');
+  themeToggle.textContent = isDark ? '☀️' : '🌙';
 }
 
 function openTab(tabId) {
@@ -3546,6 +3793,33 @@ async function likePost(postId) {
       await updateDoc(doc(db, "posts", post.docId), {
         interactions: { ...interactions, likedBy, likes: likedBy.length }
       });
+
+      if (!liked && post.userId && post.userId !== activeSession.id) {
+        await createNotification({
+          toUserId: post.userId,
+          fromUserId: activeSession.id,
+          fromUserName: activeHandle(),
+          category: 'likes',
+          type: 'like_item',
+          postId: post.id
+        });
+      }
+
+      if (liked && post.userId && post.userId !== activeSession.id) {
+        const likeNotifQuery = query(
+          collection(db, 'notifications'),
+          where('toUserId', '==', post.userId),
+          where('fromUserId', '==', activeSession.id),
+          where('type', '==', 'like_item'),
+          where('postId', '==', post.id)
+        );
+        const likeNotifSnap = await getDocs(likeNotifQuery);
+        if (!likeNotifSnap.empty) {
+          const batch = writeBatch(db);
+          likeNotifSnap.forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
     } else {
       await apiRequest(`/api/posts/${postId}`, {
         method: 'PATCH',
@@ -3572,6 +3846,18 @@ async function addComment(postId, text) {
       await updateDoc(doc(db, "posts", post.docId), {
         interactions: { ...interactions, comments: [...(interactions.comments || []), newComment] }
       });
+
+      if (post.userId && post.userId !== activeSession.id) {
+        await createNotification({
+          toUserId: post.userId,
+          fromUserId: activeSession.id,
+          fromUserName: activeHandle(),
+          category: 'comments',
+          type: 'comment_item',
+          postId: post.id,
+          previewText: content.slice(0, 120)
+        });
+      }
     } else {
       await apiRequest(`/api/posts/${postId}`, {
         method: 'PATCH',
@@ -4254,6 +4540,18 @@ async function sendMessage(prepared = null) {
         lastMessage: payload.text || (payload.files?.length ? '📎 Attachment' : ''),
         updatedAt: now
       });
+
+      if (selectedUser?.uid && selectedUser.uid !== myUid) {
+        await createNotification({
+          toUserId: selectedUser.uid,
+          fromUserId: myUid,
+          fromUserName: activeHandle(),
+          category: 'messages',
+          type: 'message_item',
+          chatId: unifiedChatId,
+          previewText: (payload.text || (payload.files?.length ? '📎 Attachment' : 'New message')).slice(0, 120)
+        });
+      }
     } else {
       const msg = {
         chatId: unifiedChatId,
