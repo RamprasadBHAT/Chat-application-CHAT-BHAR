@@ -14,23 +14,10 @@ const AUTH_SESSION_KEY = 'chatbhar.session';
 const CHAT_STORE_KEY = 'chatbhar.chatStore';
 const UPLOAD_STORE_KEY = 'chatbhar.uploads';
 const THEME_KEY = 'chatbhar.theme';
-
-const NOTIFICATION_SEED = [
-  { id: 'follow-a', category: 'follow_requests', type: 'follow_request', user: 'User A', text: 'User A wants to follow you.', unread: true },
-  { id: 'follow-b', category: 'follow_requests', type: 'follow_request', user: 'User B', text: 'User B wants to follow you.', unread: true },
-  { id: 'follow-c', category: 'follow_requests', type: 'follow_request', user: 'User C', text: 'User C wants to follow you.', unread: true },
-  { id: 'like-summary', category: 'likes', type: 'likes_summary', text: 'User 1, User 2, and 3 others liked your post.', unread: true },
-  { id: 'like-1', category: 'likes', type: 'like_item', user: 'User 1', text: 'User 1 liked your post.', unread: true },
-  { id: 'like-2', category: 'likes', type: 'like_item', user: 'User 2', text: 'User 2 liked your post.', unread: true },
-  { id: 'comment-1', category: 'comments', type: 'comment_item', user: 'User 6', text: 'User 6: "Great video!"', unread: true },
-  { id: 'comment-2', category: 'comments', type: 'comment_item', user: 'User 7', text: 'User 7: "Nice insights!"', unread: true },
-  { id: 'message-1', category: 'messages', type: 'message_item', user: 'User 8', text: 'Message from [User 8]: "Hey, loved your reel..."', unread: true },
-  { id: 'like-old', category: 'likes', type: 'like_item', user: 'User 9', text: 'User 9 liked your post.', unread: false },
-  { id: 'comment-old', category: 'comments', type: 'comment_item', user: 'User 10', text: 'User 10: "Following for more!"', unread: false }
-];
+const NOTIFICATION_STORE_KEY = 'chatbhar.notifications';
 
 let selectedUser = null;
-let notifications = JSON.parse(JSON.stringify(NOTIFICATION_SEED));
+let notifications = [];
 let activeNotificationTab = 'new';
 
 const authGate = document.getElementById('authGate');
@@ -405,6 +392,89 @@ async function initApp() {
   renderHome();
   renderChannelManager();
   initEnhancedMessaging();
+}
+
+function notificationTimestampToMs(value) {
+  if (typeof value === 'number') return value;
+  if (value && typeof value.toMillis === 'function') return value.toMillis();
+  return Date.now();
+}
+
+function notificationTextFromPayload(payload) {
+  const actor = payload.fromUserName || 'Someone';
+  if (payload.type === 'follow_request') return `${actor} wants to follow you.`;
+  if (payload.type === 'like_item') return `${actor} liked your post.`;
+  if (payload.type === 'comment_item') return `${actor}: "${payload.previewText || 'Commented on your post.'}"`;
+  if (payload.type === 'message_item') return `Message from ${actor}: "${payload.previewText || 'New message'}"`;
+  return payload.text || `${actor} sent a notification.`;
+}
+
+function normalizeNotificationItem(item) {
+  const id = item.id || (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+  const createdAt = notificationTimestampToMs(item.createdAt);
+  const unread = item.unread !== false;
+  return {
+    ...item,
+    id,
+    createdAt,
+    unread,
+    text: item.text || notificationTextFromPayload(item)
+  };
+}
+
+async function createNotification(payload) {
+  if (!payload?.toUserId || !payload?.fromUserId) return;
+  const notification = normalizeNotificationItem({
+    ...payload,
+    unread: true,
+    createdAt: Date.now()
+  });
+
+  if (useFirebase && db) {
+    await addDoc(collection(db, 'notifications'), {
+      ...notification,
+      createdAt: serverTimestamp()
+    });
+    return;
+  }
+
+  const existing = loadJson(NOTIFICATION_STORE_KEY, []);
+  existing.unshift(notification);
+  saveJson(NOTIFICATION_STORE_KEY, existing);
+}
+
+function fetchAndSyncNotifications() {
+  if (!activeSession?.id) return;
+  if (notificationsUnsubscribe) notificationsUnsubscribe();
+
+  if (useFirebase && db) {
+    const notifQuery = query(
+      collection(db, 'notifications'),
+      where('toUserId', '==', activeSession.id),
+      orderBy('createdAt', 'desc'),
+      limit(100)
+    );
+
+    notificationsUnsubscribe = onSnapshot(notifQuery, (snap) => {
+      notifications = snap.docs
+        .map((d) => normalizeNotificationItem({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      renderNotifications();
+    }, (err) => {
+      console.error('Failed to sync notifications', err);
+      notifications = [];
+      renderNotifications();
+    });
+    return;
+  }
+
+  const localItems = loadJson(NOTIFICATION_STORE_KEY, [])
+    .filter((item) => item.toUserId === activeSession.id)
+    .map((item) => normalizeNotificationItem(item))
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  notifications = localItems;
+  renderNotifications();
+  notificationsUnsubscribe = null;
 }
 
 function startRealTimeSync() {
