@@ -403,7 +403,6 @@ function notificationTimestampToMs(value) {
 function notificationTextFromPayload(payload) {
   const actor = payload.fromUserName || 'Someone';
   if (payload.type === 'follow_request') return `${actor} wants to follow you.`;
-  if (payload.type === 'follow_user') return `${actor} started following you.`;
   if (payload.type === 'like_item') return `${actor} liked your post.`;
   if (payload.type === 'comment_item') return `${actor}: "${payload.previewText || 'Commented on your post.'}"`;
   if (payload.type === 'message_item') return `Message from ${actor}: "${payload.previewText || 'New message'}"`;
@@ -476,50 +475,6 @@ function fetchAndSyncNotifications() {
   notifications = localItems;
   renderNotifications();
   notificationsUnsubscribe = null;
-}
-
-async function markChatNotificationsAsRead(chatId) {
-  if (!activeSession?.id || !chatId) return;
-
-  if (useFirebase && db) {
-    try {
-      const unreadQuery = query(
-        collection(db, 'notifications'),
-        where('toUserId', '==', activeSession.id),
-        where('category', '==', 'messages'),
-        where('chatId', '==', chatId),
-        where('unread', '==', true),
-        limit(50)
-      );
-      const snap = await getDocs(unreadQuery);
-      if (!snap.empty) {
-        const batch = writeBatch(db);
-        snap.forEach((d) => batch.update(d.ref, { unread: false }));
-        await batch.commit();
-      }
-    } catch (err) {
-      console.warn('Failed to mark chat notifications as read', err.message);
-    }
-    return;
-  }
-
-  const existing = loadJson(NOTIFICATION_STORE_KEY, []);
-  let changed = false;
-  const updated = existing.map((item) => {
-    if (item.toUserId === activeSession.id && item.category === 'messages' && item.chatId === chatId && item.unread !== false) {
-      changed = true;
-      return { ...item, unread: false };
-    }
-    return item;
-  });
-  if (changed) {
-    saveJson(NOTIFICATION_STORE_KEY, updated);
-    notifications = updated
-      .filter((item) => item.toUserId === activeSession.id)
-      .map((item) => normalizeNotificationItem(item))
-      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    renderNotifications();
-  }
 }
 
 function startRealTimeSync() {
