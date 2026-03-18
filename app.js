@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, deleteUser, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, orderBy, limit, serverTimestamp, increment, runTransaction, or, and, arrayUnion, writeBatch } from 'firebase/firestore';
 import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
+import { buildBackupImportPayload, persistImportedChatsToFirestore } from './chatBackup.js';
 
 function getDmChatId(uid1, uid2) {
   const ids = [uid1, uid2].sort();
@@ -4787,27 +4788,63 @@ async function saveBackupToMobile() {
   exportBackupFile();
 }
 
+async function applyImportedBackup(parsed) {
+  const backup = buildBackupImportPayload(parsed, {
+    activeUserId: activeSession?.id || auth?.currentUser?.uid || null,
+    authUsers,
+    existingChatMeta: chatMeta
+  });
+
+  chatStore = backup.chatStore;
+  uploads = backup.uploads;
+  chatMeta = backup.chatMeta;
+  activeChat = backup.activeChat;
+  myConversations = backup.conversations;
+
+  saveJson(CHAT_STORE_KEY, chatStore);
+  saveJson(UPLOAD_STORE_KEY, uploads);
+  saveJson('chatbhar.chatMeta', chatMeta);
+  saveJson('chatbhar.conversations', myConversations);
+
+  if (useFirebase && db && activeSession?.id) {
+    await persistImportedChatsToFirestore({
+      db,
+      backup,
+      setDoc,
+      doc,
+      collection
+    });
+  }
+
+  renderChatUsers();
+  renderMessages(chatStore[activeChat] || []);
+  renderHome();
+  renderExploreUsers();
+  renderUploads();
+  renderChannelManager();
+  initEnhancedMessaging();
+  if (useFirebase) {
+    fetchAndSyncConversations();
+  }
+  if (activeChat) {
+    await fetchAndSyncMessages(activeChat);
+  }
+}
+
 function importBackupFile(event) {
   const selected = event.target.files[0];
   if (!selected) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const parsed = JSON.parse(String(reader.result));
-      chatStore = parsed.chatStore || { General: [] };
-      uploads = parsed.uploads || [];
-      activeChat = Object.keys(chatStore)[0] || 'General';
-      saveJson(CHAT_STORE_KEY, chatStore);
-      saveJson(UPLOAD_STORE_KEY, uploads);
-      renderChatUsers();
-      renderMessages();
-      renderHome();
-      renderExploreUsers();
-      renderUploads();
-      renderChannelManager();
-      initEnhancedMessaging();
-    } catch {
+      await applyImportedBackup(parsed);
+      authMessage.textContent = 'Backup imported successfully.';
+    } catch (error) {
+      console.error('Backup import failed', error);
       authMessage.textContent = 'Backup import failed.';
+    } finally {
+      event.target.value = '';
     }
   };
   reader.readAsText(selected);
