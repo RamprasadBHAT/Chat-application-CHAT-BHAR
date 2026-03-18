@@ -119,14 +119,8 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
     const messages = Array.isArray(rawMessages) ? rawMessages : [];
     const normalizedId = normalizeChatId(rawChatId, messages, activeUserId);
     const participants = inferParticipants(normalizedId, messages, activeUserId);
-    if (activeUserId && participants.length && !participants.includes(activeUserId)) continue;
-    if (!messages.length) continue;
     const normalizedMessages = messages
       .map((message, index) => normalizeMessage({ message, chatId: normalizedId, participants, activeUserId, index }))
-      .map((message) => ({
-        ...message,
-        visibleTo: activeUserId ? [activeUserId] : (Array.isArray(message.visibleTo) ? message.visibleTo : undefined)
-      }))
       .sort((a, b) => a.createdAt - b.createdAt);
 
     normalizedChatStore[normalizedId] = normalizedMessages;
@@ -140,9 +134,7 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
       name,
       participants,
       isGroup: normalizedId.startsWith('group:'),
-      typingUsers: nextChatMeta[normalizedId]?.typingUsers || {},
-      visibleTo: activeUserId ? [activeUserId] : (nextChatMeta[normalizedId]?.visibleTo || undefined),
-      clearedAtBy: nextChatMeta[normalizedId]?.clearedAtBy || {}
+      typingUsers: nextChatMeta[normalizedId]?.typingUsers || {}
     };
 
     conversations.push({
@@ -151,10 +143,12 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
       isGroup: normalizedId.startsWith('group:'),
       name,
       lastMessage: latest?.text || (latest?.files?.length ? '📎 Attachment' : 'No messages yet'),
-      updatedAt: latest?.createdAt || 0,
-      visibleTo: activeUserId ? [activeUserId] : undefined,
-      clearedAtBy: {}
+      updatedAt: latest?.createdAt || 0
     });
+  }
+
+  if (!Object.keys(normalizedChatStore).length) {
+    normalizedChatStore.General = [];
   }
 
   conversations.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -164,7 +158,7 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
     uploads: Array.isArray(parsed?.uploads) ? clone(parsed.uploads) : [],
     chatMeta: nextChatMeta,
     conversations,
-    activeChat: conversations[0]?.id || Object.keys(normalizedChatStore)[0] || null
+    activeChat: conversations[0]?.id || Object.keys(normalizedChatStore)[0] || 'General'
   };
 }
 
