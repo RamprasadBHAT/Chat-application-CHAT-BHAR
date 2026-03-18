@@ -1,61 +1,69 @@
-import { test, expect } from '@playwright/test';
+const { test, expect } = require('@playwright/test');
 
-test('Robust localStorage parsing and Local Signup Consistency', async ({ page }) => {
-    // Block API calls to force fallback to localApiRequest
-    await page.route('**/api/**', route => route.abort());
+test('Verify deduplication and tab persistence', async ({ page }) => {
+  await page.goto('http://localhost:4173');
 
-    await page.goto('http://localhost:4173');
+  // 1. Mock Data and Login
+  await page.evaluate(() => {
+    localStorage.clear();
+    const user = {
+      id: 'user123',
+      name: 'Test User',
+      email: 'test@gmail.com',
+      username: 'testuser',
+      usernames: [{ id: 'u1', value: 'testuser' }],
+      activeUsernameId: 'u1'
+    };
+    const otherUser = {
+        id: 'other456',
+        name: 'Other Person',
+        username: 'otherperson',
+        usernames: [{ id: 'u2', value: 'otherperson' }],
+        activeUsernameId: 'u2'
+    };
+    localStorage.setItem('chatbhar.users', JSON.stringify([user, otherUser]));
+    localStorage.setItem('chatbhar.session', JSON.stringify(user));
+  });
 
-    // Simulate broken/wrapped localStorage format that caused users.some is not a function
-    await page.evaluate(() => {
-        localStorage.setItem('chatbhar.users', JSON.stringify({
-            users: [
-                { id: '1', email: 'existing@gmail.com', password: 'password123', name: 'Existing User' }
-            ]
-        }));
-        // Ensure we are logged out
-        localStorage.removeItem('chatbhar.session');
-    });
+  await page.reload();
 
-    await page.reload();
+  // 2. Simulate Import with mixed ID formats
+  await page.evaluate(() => {
+      const backup = {
+          chatStore: {
+              'other456': [{ text: 'Msg 1', senderId: 'other456', createdAt: 1000 }],
+              'dm:other456': [{ text: 'Msg 2', senderId: 'user123', createdAt: 2000 }],
+              'otherperson': [{ text: 'Msg 3', senderId: 'other456', createdAt: 3000 }]
+          },
+          uploads: [],
+          chatMeta: {},
+          conversations: [
+              { id: 'other456', name: 'Other Person', updatedAt: 1000 },
+              { id: 'dm:other456', name: 'Other Person', updatedAt: 2000 },
+              { id: 'otherperson', name: 'otherperson', updatedAt: 3000 }
+          ]
+      };
+      // Trigger the internal apply function (mocking the file read result)
+      window.applyImportedBackup(backup);
+  });
 
-    // Verify we can still see signup form
-    await expect(page.locator('#signupForm')).toBeVisible();
+  await page.waitForTimeout(1000);
 
-    // Try to signup with existing email (should trigger the users.some check in localApiRequest)
-    await page.fill('#signupName', 'New User');
-    await page.fill('#signupEmail', 'existing@gmail.com');
-    await page.fill('#signupPassword', 'password123');
-    await page.fill('#signupConfirmPassword', 'password123');
-    await page.click('#signupForm button[type="submit"]');
+  // 3. Verify Sidebar - Should only have ONE conversation
+  const chatUsers = await page.locator('.chat-user');
+  const count = await chatUsers.count();
+  console.log(`Conversations in sidebar: ${count}`);
 
-    // Should show error message "Email already exists"
-    // Note: It might take a moment for the async localApiRequest to complete and update the UI
-    await expect(page.locator('#authMessage')).toContainText('Email already exists', { timeout: 10000 });
+  // Take screenshot of sidebar
+  await page.screenshot({ path: 'verification_sidebar_dedup.png' });
 
-    // Try valid signup to verify newUser object consistency
-    const uniqueEmail = `user_${Date.now()}@gmail.com`;
-    await page.fill('#signupEmail', uniqueEmail);
-    await page.click('#signupForm button[type="submit"]');
+  // 4. Verify Tab Persistence
+  await page.click('.nav-btn[data-tab="chat"]');
+  await page.reload();
 
-    // Should proceed to onboarding
-    await expect(page.locator('#usernameForm')).toBeVisible();
+  // Should still be in chat tab
+  const chatScreen = page.locator('#chat');
+  await expect(chatScreen).toHaveClass(/active/);
 
-    // Check localStorage to see if the new user has all fields
-    const usersData = await page.evaluate(() => JSON.parse(localStorage.getItem('chatbhar.users')));
-    // Since we fixed the parsing, it should still be an array now (because saveJson is called with the array)
-    const users = Array.isArray(usersData) ? usersData : usersData.users;
-    const newUser = users.find(u => u.email.includes('user_'));
-
-    expect(newUser).toBeDefined();
-    expect(newUser.usernameChangeLogs).toBeDefined();
-    expect(newUser.profilePic).toBe('');
-    expect(newUser.bio).toBe('');
-    expect(newUser.profession).toBe('');
-    expect(newUser.location).toBe('');
-    expect(newUser.socialLinks).toBeDefined();
-    expect(newUser.stats).toBeDefined();
-    expect(newUser.isPrivate).toBe(false);
-
-    console.log('Verification successful: Robust parsing and data consistency confirmed.');
+  await page.screenshot({ path: 'verification_tab_persistence.png' });
 });

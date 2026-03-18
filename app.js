@@ -255,22 +255,36 @@ function getOtherUserIdFromConversation(convOrId) {
 }
 
 function getUnifiedChatId(id) {
-  if (!id) return null;
-  if (!id.startsWith('dm:')) return id;
+  if (!id || id === 'General' || id.startsWith('group:')) return id;
 
-  const content = id.replace('dm:', '');
-  let uids;
-  if (content.includes('_')) {
-    uids = content.split('_');
+  const myUid = activeSession?.id || (useFirebase && auth?.currentUser?.uid);
+  let otherUid = null;
+
+  if (id.startsWith('dm:')) {
+    const content = id.replace('dm:', '');
+    if (content.includes('_')) {
+      const parts = content.split('_').filter(Boolean);
+      if (parts.length === 2) {
+        const sorted = parts.sort();
+        return `dm:${sorted[0]}_${sorted[1]}`;
+      }
+      otherUid = parts.find(p => p !== myUid) || parts[0];
+    } else {
+      otherUid = content;
+    }
   } else {
-    // Legacy single UID format: dm:OTHER_UID
-    const myUid = activeSession?.id || (useFirebase && auth?.currentUser?.uid);
-    if (!myUid) return id;
-    uids = [myUid, content];
+    // Handle bare UID or username
+    otherUid = id;
+    const userByUsername = authUsers.find(u => u.username?.toLowerCase() === id.toLowerCase());
+    if (userByUsername) otherUid = userByUsername.id;
   }
 
-  uids.sort();
-  return `dm:${uids[0]}_${uids[1]}`;
+  if (myUid && otherUid && otherUid !== myUid) {
+    const ids = [myUid, otherUid].sort();
+    return `dm:${ids[0]}_${ids[1]}`;
+  }
+
+  return id;
 }
 
 function toMillisValue(value) {
@@ -1224,7 +1238,13 @@ function hydrateState() {
   if (activeSession && activeSession.username) {
     authGate.hidden = true;
     appShell.hidden = false;
-    renderHome();
+
+    const savedTab = localStorage.getItem('chatbhar.activeTab');
+    if (savedTab && document.getElementById(savedTab)) {
+      openTab(savedTab);
+    } else {
+      renderHome();
+    }
     renderChannelManager();
   }
 }
@@ -3133,6 +3153,8 @@ function toggleTheme() {
 function openTab(tabId) {
   screens.forEach((s) => s.classList.toggle('active', s.id === tabId));
   navButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === tabId));
+  localStorage.setItem('chatbhar.activeTab', tabId);
+
   if (tabId === 'chat') {
     renderFollowRequests();
     renderMessages();
@@ -4298,10 +4320,9 @@ function renderChatUsers() {
     let chatName = conv.name || "Chat";
 
     if (!isGroup) {
-      const uids = chatId.replace('dm:', '').split('_');
-      const otherUid = uids.find(id => id !== activeSession.id) || uids[0];
+      const otherUid = getOtherUserIdFromConversation(chatId);
       otherUser = authUsers.find(u => u.id === otherUid);
-      chatName = otherUser ? (otherUser.username || otherUser.name) : "User";
+      chatName = otherUser ? (otherUser.username || otherUser.name) : (conv.name || "User");
     }
 
     const latestMsg = chatStore[chatId]?.at(-1) || { text: conv.lastMessage || 'No messages yet' };
@@ -4879,6 +4900,7 @@ async function saveBackupToMobile() {
   exportBackupFile();
 }
 
+window.applyImportedBackup = applyImportedBackup;
 async function applyImportedBackup(parsed) {
   const backup = buildBackupImportPayload(parsed, {
     activeUserId: activeSession?.id || auth?.currentUser?.uid || null,
@@ -4886,16 +4908,43 @@ async function applyImportedBackup(parsed) {
     existingChatMeta: chatMeta
   });
 
-  chatStore = backup.chatStore;
-  uploads = backup.uploads;
-  chatMeta = backup.chatMeta;
-  activeChat = backup.activeChat;
-  myConversations = backup.conversations;
+  // Deep merge chatStore to prevent overwriting current local messages
+  Object.keys(backup.chatStore).forEach(cid => {
+    const existing = chatStore[cid] || [];
+    const incoming = backup.chatStore[cid];
+    const combined = [...existing, ...incoming];
+    // Deduplicate by fingerprint
+    const uniqueMap = new Map();
+    combined.forEach(m => {
+      const ts = toMillisValue(m.createdAt);
+      const key = `${m.senderId}:${ts}:${String(m.text || '').slice(0, 30)}`;
+      if (!uniqueMap.has(key) || m.id?.startsWith('msg:')) uniqueMap.set(key, m);
+    });
+    chatStore[cid] = Array.from(uniqueMap.values()).sort((a,b) => toMillisValue(a.createdAt) - toMillisValue(b.createdAt));
+  });
+
+  uploads = backup.uploads.length > uploads.length ? backup.uploads : uploads;
+  chatMeta = { ...chatMeta, ...backup.chatMeta };
+  activeChat = backup.activeChat || activeChat;
+
+  // Deduplicate conversations immediately
+  const convMap = new Map();
+  [...myConversations, ...backup.conversations].forEach(c => {
+    const uid = getUnifiedChatId(c.id);
+    const existing = convMap.get(uid);
+    if (!existing || (c.updatedAt || 0) > (existing.updatedAt || 0)) {
+      convMap.set(uid, { ...c, id: uid });
+    }
+  });
+  myConversations = Array.from(convMap.values());
 
   saveJson(CHAT_STORE_KEY, chatStore);
   saveJson(UPLOAD_STORE_KEY, uploads);
   saveJson('chatbhar.chatMeta', chatMeta);
   saveJson('chatbhar.conversations', myConversations);
+
+  renderChatUsers();
+  renderMessages();
 
   if (useFirebase && db && activeSession?.id) {
     await persistImportedChatsToFirestore({

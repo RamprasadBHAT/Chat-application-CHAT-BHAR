@@ -32,32 +32,39 @@ function inferParticipants(chatId, messages, activeUserId) {
   return activeUserId ? [activeUserId] : [];
 }
 
-function normalizeChatId(chatId, messages, activeUserId) {
+function normalizeChatId(chatId, messages, activeUserId, authUsers = []) {
   if (!chatId) return 'General';
   if (chatId === 'General' || chatId.startsWith('group:')) return chatId;
 
-  let actualId = chatId;
+  let otherUid = null;
   if (chatId.startsWith('dm:')) {
     const content = chatId.replace('dm:', '');
     if (content.includes('_')) {
-      const ids = content.split('_').filter(Boolean).sort();
-      return ids.length === 2 ? `dm:${ids[0]}_${ids[1]}` : chatId;
+      const parts = content.split('_').filter(Boolean);
+      if (parts.length === 2) {
+        const sorted = parts.sort();
+        return `dm:${sorted[0]}_${sorted[1]}`;
+      }
+      otherUid = parts.find(p => p !== activeUserId) || parts[0];
+    } else {
+      otherUid = content;
     }
-    // Legacy dm:UID format
-    if (activeUserId && content && content !== activeUserId) {
-      return getDmChatId(activeUserId, content);
-    }
-    actualId = content;
+  } else {
+    // Bare UID or Username
+    otherUid = chatId;
+    const userByUsername = (authUsers || []).find(u => u.username?.toLowerCase() === chatId.toLowerCase());
+    if (userByUsername) otherUid = userByUsername.id;
   }
 
-  // If it's just a UID or we still haven't found a pair
+  // If we have an activeUserId and identified an otherUid, unify
+  if (activeUserId && otherUid && otherUid !== activeUserId) {
+    return getDmChatId(activeUserId, otherUid) || chatId;
+  }
+
+  // Fallback: Infer from participants in messages
   const participants = inferParticipants(chatId, messages, activeUserId);
   if (participants.length >= 2) {
     return getDmChatId(participants[0], participants[1]) || chatId;
-  }
-
-  if (activeUserId && actualId && actualId !== activeUserId) {
-    return getDmChatId(activeUserId, actualId) || chatId;
   }
 
   return chatId;
@@ -141,7 +148,7 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
 
   for (const [rawChatId, rawMessages] of Object.entries(sourceChatStore)) {
     const messages = Array.isArray(rawMessages) ? rawMessages : [];
-    const normalizedId = normalizeChatId(rawChatId, messages, activeUserId);
+    const normalizedId = normalizeChatId(rawChatId, messages, activeUserId, authUsers);
     const participants = inferParticipants(normalizedId, messages, activeUserId);
     const normalizedMessages = messages
       .map((message, index) => normalizeMessage({ message, chatId: normalizedId, participants, activeUserId, index }))
