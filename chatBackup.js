@@ -90,11 +90,6 @@ function inferChatName({ chatId, normalizedId, messages, chatMeta = {}, authUser
 }
 
 function normalizeMessage({ message, chatId, participants, activeUserId, index }) {
-  const text = message.text || '';
-  const files = Array.isArray(message.files) ? message.files : [];
-  // Requirement: Skip "junk" messages (no text and no files)
-  if (!text.trim() && !files.length) return null;
-
   const createdAt = toMillis(message.createdAt || message.timestamp) || (Date.now() + index);
   const isDm = chatId.startsWith('dm:');
   const senderId = message.senderId
@@ -152,40 +147,12 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
     const participants = inferParticipants(normalizedId, messages, activeUserId);
     const normalizedMessages = messages
       .map((message, index) => normalizeMessage({ message, chatId: normalizedId, participants, activeUserId, index }))
-      .filter(Boolean);
+      .sort((a, b) => a.createdAt - b.createdAt);
 
-    if (!normalizedChatStore[normalizedId]) {
-      normalizedChatStore[normalizedId] = [];
-    }
-    normalizedChatStore[normalizedId].push(...normalizedMessages);
-  }
+    normalizedChatStore[normalizedId] = normalizedMessages;
 
-  // Final pass to merge messages with exact same timestamp and sender, and sort chronologically
-  for (const [chatId, messages] of Object.entries(normalizedChatStore)) {
-    messages.sort((a, b) => a.createdAt - b.createdAt);
-
-    const merged = [];
-    for (const msg of messages) {
-      const prev = merged.at(-1);
-      if (prev && prev.createdAt === msg.createdAt && prev.senderId === msg.senderId) {
-        // Merge files and text if they have the exact same timestamp and sender
-        prev.files = [...(prev.files || []), ...(msg.files || [])];
-        if (msg.text && !prev.text.includes(msg.text)) {
-          prev.text = prev.text ? `${prev.text}\n${msg.text}` : msg.text;
-        }
-        // Update fingerprint/id if it was deterministic based on text
-        const textFragment = String(prev.text || '').slice(0, 50).replace(/\s+/g, '_');
-        prev.id = `msg:${prev.senderId}:${prev.createdAt}:${textFragment}:${chatId}`;
-        prev.docId = prev.id;
-      } else {
-        merged.push(msg);
-      }
-    }
-    normalizedChatStore[chatId] = merged;
-
-    const latest = merged.at(-1);
-    const participants = inferParticipants(chatId, messages, activeUserId);
-    const name = inferChatName({ chatId: chatId, normalizedId: chatId, messages: messages, chatMeta: nextChatMeta, authUsers, activeUserId });
+    const latest = normalizedMessages.at(-1);
+    const name = inferChatName({ chatId: rawChatId, normalizedId, messages: normalizedMessages, chatMeta: nextChatMeta, authUsers, activeUserId });
 
     nextChatMeta[chatId] = {
       ...(nextChatMeta[normalizedId] || {}),
@@ -196,11 +163,11 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
       typingUsers: nextChatMeta[normalizedId]?.typingUsers || {}
     };
 
-    const existingConvIdx = conversations.findIndex(c => c.id === chatId);
+    const existingConvIdx = conversations.findIndex(c => c.id === normalizedId);
     const convData = {
-      id: chatId,
+      id: normalizedId,
       participants,
-      isGroup: chatId.startsWith('group:'),
+      isGroup: normalizedId.startsWith('group:'),
       name,
       lastMessage: latest?.text || (latest?.files?.length ? '📎 Attachment' : 'No messages yet'),
       updatedAt: latest?.createdAt || 0
