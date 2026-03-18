@@ -86,7 +86,12 @@ function normalizeMessage({ message, chatId, participants, activeUserId, index }
   const normalizedParticipants = Array.isArray(message.participants) && message.participants.length
     ? [...new Set(message.participants.filter(Boolean))]
     : participants;
-  const id = message.id || message.docId || `${chatId}:${createdAt}:${index}`;
+
+  // Use a fingerprint for deterministic ID to prevent duplicates
+  // Fingerprint: sender + timestamp + text (first 50 chars) + chatId
+  const textFragment = String(message.text || '').slice(0, 50).replace(/\s+/g, '_');
+  const fingerprint = `msg:${senderId}:${createdAt}:${textFragment}:${chatId}`;
+  const id = message.id || message.docId || fingerprint;
 
   return {
     ...clone(message),
@@ -103,7 +108,10 @@ function normalizeMessage({ message, chatId, participants, activeUserId, index }
     readBy: Array.isArray(message.readBy) ? [...new Set(message.readBy.filter(Boolean))] : (senderId ? [senderId] : []),
     status: message.status || 'sent',
     text: message.text || '',
-    dir: message.dir || (senderId === activeUserId ? 'outgoing' : 'incoming')
+    dir: message.dir || (senderId === activeUserId ? 'outgoing' : 'incoming'),
+    // Requirement: Imported messages are visible only to the importer by default
+    // unless they already have a visibleTo array.
+    visibleTo: Array.isArray(message.visibleTo) ? message.visibleTo : [activeUserId].filter(Boolean)
   };
 }
 
@@ -137,14 +145,23 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
       typingUsers: nextChatMeta[normalizedId]?.typingUsers || {}
     };
 
-    conversations.push({
+    const existingConvIdx = conversations.findIndex(c => c.id === normalizedId);
+    const convData = {
       id: normalizedId,
       participants,
       isGroup: normalizedId.startsWith('group:'),
       name,
       lastMessage: latest?.text || (latest?.files?.length ? '📎 Attachment' : 'No messages yet'),
       updatedAt: latest?.createdAt || 0
-    });
+    };
+
+    if (existingConvIdx !== -1) {
+      if (convData.updatedAt > conversations[existingConvIdx].updatedAt) {
+        conversations[existingConvIdx] = convData;
+      }
+    } else {
+      conversations.push(convData);
+    }
   }
 
   if (!Object.keys(normalizedChatStore).length) {
@@ -162,32 +179,65 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
   };
 }
 
-export async function persistImportedChatsToFirestore({ db, backup, setDoc, doc, collection }) {
+export async function persistImportedChatsToFirestore({ db, backup, setDoc, getDoc, updateDoc, doc, collection, arrayUnion, activeUserId }) {
   if (!db) throw new Error('Firestore database instance is required for backup import.');
   if (typeof setDoc !== 'function' || typeof doc !== 'function' || typeof collection !== 'function') {
     throw new Error('Firestore helper functions are required for backup import.');
   }
 
-  const writes = [];
-
-  for (const conversation of backup.conversations || []) {
+  // Optimize conversations: process in parallel
+  const convTasks = (backup.conversations || []).map(async (conversation) => {
     const convRef = doc(db, 'conversations', conversation.id);
-    writes.push(setDoc(convRef, {
-      ...conversation,
-      updatedAt: conversation.updatedAt || Date.now()
-    }, { merge: true }));
-  }
+    const convSnap = await getDoc(convRef);
 
-  for (const [chatId, messages] of Object.entries(backup.chatStore || {})) {
-    for (const message of messages || []) {
-      const msgRef = doc(collection(db, 'messages'), message.id);
-      writes.push(setDoc(msgRef, {
-        ...message,
-        chatId,
-        createdAt: message.createdAt || Date.now()
-      }, { merge: true }));
+    if (convSnap.exists()) {
+      if (typeof arrayUnion === 'function' && typeof updateDoc === 'function') {
+        const updates = {
+          participants: arrayUnion(activeUserId),
+          visibleTo: arrayUnion(activeUserId),
+          updatedAt: Math.max(convSnap.data().updatedAt || 0, conversation.updatedAt || 0)
+        };
+        updates[`clearedAtBy.${activeUserId}`] = 0;
+        return updateDoc(convRef, updates);
+      }
+    } else {
+      return setDoc(convRef, {
+        ...conversation,
+        updatedAt: conversation.updatedAt || Date.now(),
+        participants: conversation.participants || [activeUserId],
+        visibleTo: conversation.visibleTo || [activeUserId]
+      });
     }
-  }
+  });
 
-  await Promise.all(writes);
+  await Promise.all(convTasks);
+
+  // Optimize messages: process in chunks to avoid overwhelming the network
+  const CHUNK_SIZE = 25;
+  const allMessages = Object.entries(backup.chatStore || {}).flatMap(([chatId, msgs]) => msgs.map(m => ({ ...m, chatId })));
+
+  for (let i = 0; i < allMessages.length; i += CHUNK_SIZE) {
+    const chunk = allMessages.slice(i, i + CHUNK_SIZE);
+    await Promise.all(chunk.map(async (message) => {
+      const msgRef = doc(collection(db, 'messages'), message.id);
+      const msgSnap = await getDoc(msgRef);
+
+      if (msgSnap.exists()) {
+        const existingData = msgSnap.data();
+        if (existingData.visibleTo && Array.isArray(existingData.visibleTo)) {
+          if (typeof arrayUnion === 'function' && typeof updateDoc === 'function') {
+            return updateDoc(msgRef, {
+              visibleTo: arrayUnion(activeUserId)
+            });
+          }
+        }
+      } else {
+        return setDoc(msgRef, {
+          ...message,
+          createdAt: message.createdAt || Date.now(),
+          visibleTo: [activeUserId]
+        });
+      }
+    }));
+  }
 }
