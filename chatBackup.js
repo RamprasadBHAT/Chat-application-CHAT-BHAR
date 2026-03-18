@@ -34,30 +34,19 @@ function inferParticipants(chatId, messages, activeUserId) {
 
 function normalizeChatId(chatId, messages, activeUserId) {
   if (!chatId) return 'General';
-  if (chatId === 'General' || chatId.startsWith('group:')) return chatId;
-
-  let actualId = chatId;
-  if (chatId.startsWith('dm:')) {
-    const content = chatId.replace('dm:', '');
-    if (content.includes('_')) {
-      const ids = content.split('_').filter(Boolean).sort();
-      return ids.length === 2 ? `dm:${ids[0]}_${ids[1]}` : chatId;
-    }
-    // Legacy dm:UID format
-    if (activeUserId && content && content !== activeUserId) {
-      return getDmChatId(activeUserId, content);
-    }
-    actualId = content;
+  if (!chatId.startsWith('dm:')) return chatId;
+  if (chatId.includes('_')) {
+    const ids = chatId.replace('dm:', '').split('_').filter(Boolean).sort();
+    return ids.length === 2 ? `dm:${ids[0]}_${ids[1]}` : chatId;
   }
 
-  // If it's just a UID or we still haven't found a pair
   const participants = inferParticipants(chatId, messages, activeUserId);
   if (participants.length >= 2) {
     return getDmChatId(participants[0], participants[1]) || chatId;
   }
 
-  if (activeUserId && actualId && actualId !== activeUserId) {
-    return getDmChatId(activeUserId, actualId) || chatId;
+  if (activeUserId && chatId !== `dm:${activeUserId}`) {
+    return getDmChatId(activeUserId, chatId.replace('dm:', '')) || chatId;
   }
 
   return chatId;
@@ -83,11 +72,6 @@ function inferChatName({ chatId, normalizedId, messages, chatMeta = {}, authUser
 }
 
 function normalizeMessage({ message, chatId, participants, activeUserId, index }) {
-  const text = message.text || '';
-  const files = Array.isArray(message.files) ? message.files : [];
-  // Requirement: Skip "junk" messages (no text and no files)
-  if (!text.trim() && !files.length) return null;
-
   const createdAt = toMillis(message.createdAt || message.timestamp) || (Date.now() + index);
   const isDm = chatId.startsWith('dm:');
   const senderId = message.senderId
@@ -145,55 +129,27 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
     const participants = inferParticipants(normalizedId, messages, activeUserId);
     const normalizedMessages = messages
       .map((message, index) => normalizeMessage({ message, chatId: normalizedId, participants, activeUserId, index }))
-      .filter(Boolean);
+      .sort((a, b) => a.createdAt - b.createdAt);
 
-    if (!normalizedChatStore[normalizedId]) {
-      normalizedChatStore[normalizedId] = [];
-    }
-    normalizedChatStore[normalizedId].push(...normalizedMessages);
-  }
+    normalizedChatStore[normalizedId] = normalizedMessages;
 
-  // Final pass to merge messages with exact same timestamp and sender, and sort chronologically
-  for (const [chatId, messages] of Object.entries(normalizedChatStore)) {
-    messages.sort((a, b) => a.createdAt - b.createdAt);
+    const latest = normalizedMessages.at(-1);
+    const name = inferChatName({ chatId: rawChatId, normalizedId, messages: normalizedMessages, chatMeta: nextChatMeta, authUsers, activeUserId });
 
-    const merged = [];
-    for (const msg of messages) {
-      const prev = merged.at(-1);
-      if (prev && prev.createdAt === msg.createdAt && prev.senderId === msg.senderId) {
-        // Merge files and text if they have the exact same timestamp and sender
-        prev.files = [...(prev.files || []), ...(msg.files || [])];
-        if (msg.text && !prev.text.includes(msg.text)) {
-          prev.text = prev.text ? `${prev.text}\n${msg.text}` : msg.text;
-        }
-        // Update fingerprint/id if it was deterministic based on text
-        const textFragment = String(prev.text || '').slice(0, 50).replace(/\s+/g, '_');
-        prev.id = `msg:${prev.senderId}:${prev.createdAt}:${textFragment}:${chatId}`;
-        prev.docId = prev.id;
-      } else {
-        merged.push(msg);
-      }
-    }
-    normalizedChatStore[chatId] = merged;
-
-    const latest = merged.at(-1);
-    const participants = inferParticipants(chatId, messages, activeUserId);
-    const name = inferChatName({ chatId: chatId, normalizedId: chatId, messages: messages, chatMeta: nextChatMeta, authUsers, activeUserId });
-
-    nextChatMeta[chatId] = {
-      ...(nextChatMeta[chatId] || {}),
-      id: chatId,
+    nextChatMeta[normalizedId] = {
+      ...(nextChatMeta[normalizedId] || {}),
+      id: normalizedId,
       name,
       participants,
-      isGroup: chatId.startsWith('group:'),
-      typingUsers: nextChatMeta[chatId]?.typingUsers || {}
+      isGroup: normalizedId.startsWith('group:'),
+      typingUsers: nextChatMeta[normalizedId]?.typingUsers || {}
     };
 
-    const existingConvIdx = conversations.findIndex(c => c.id === chatId);
+    const existingConvIdx = conversations.findIndex(c => c.id === normalizedId);
     const convData = {
-      id: chatId,
+      id: normalizedId,
       participants,
-      isGroup: chatId.startsWith('group:'),
+      isGroup: normalizedId.startsWith('group:'),
       name,
       lastMessage: latest?.text || (latest?.files?.length ? '📎 Attachment' : 'No messages yet'),
       updatedAt: latest?.createdAt || 0
