@@ -273,6 +273,31 @@ function getUnifiedChatId(id) {
   return `dm:${uids[0]}_${uids[1]}`;
 }
 
+function toMillisValue(value) {
+  if (!value) return 0;
+  if (typeof value === 'number') return value;
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (value?.seconds) return value.seconds * 1000;
+  const parsed = new Date(value).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function isVisibleToUser(item, userId) {
+  if (!userId) return true;
+  return !Array.isArray(item?.visibleTo) || item.visibleTo.includes(userId);
+}
+
+function getConversationClearCutoff(conv, userId) {
+  return toMillisValue(conv?.clearedAtBy?.[userId]);
+}
+
+function shouldShowConversationForUser(conv, userId) {
+  if (!conv?.id || !isVisibleToUser(conv, userId)) return false;
+  const clearCutoff = getConversationClearCutoff(conv, userId);
+  if (!clearCutoff) return true;
+  return (conv.updatedAt || 0) > clearCutoff;
+}
+
 let previewPendingMessage = null;
 let typingTimeout = null;
 let typingState = false;
@@ -755,26 +780,23 @@ async function fetchAndSyncMessages(chatIdArg = null) {
     messageUnsubscribe = null;
   }
 
-  const toMillis = (value) => {
-    if (!value) return 0;
-    if (typeof value === 'number') return value;
-    if (typeof value?.toMillis === 'function') return value.toMillis();
-    if (value?.seconds) return value.seconds * 1000;
-    const parsed = new Date(value).getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
-  };
-
   const mapAndSortVisibleMessages = (docs) => {
+    const clearCutoff = getConversationClearCutoff(chatMeta[currentChatId], myUid);
     const snapshotMsgs = docs.map((msgDoc) => {
       const data = msgDoc.data();
       const dir = data.senderId === myUid ? 'outgoing' : 'incoming';
       return { id: msgDoc.id, ...data, dir, docId: msgDoc.id };
     });
 
-    const visible = snapshotMsgs.filter((m) => !m.deletedFor || !m.deletedFor.includes(myUid));
+    const visible = snapshotMsgs.filter((m) => {
+      const createdAt = toMillisValue(m.createdAt || m.timestamp);
+      return isVisibleToUser(m, myUid)
+        && (!m.deletedFor || !m.deletedFor.includes(myUid))
+        && (!clearCutoff || createdAt > clearCutoff);
+    });
     visible.sort((a, b) => {
-      const aTime = toMillis(a.createdAt || a.timestamp);
-      const bTime = toMillis(b.createdAt || b.timestamp);
+      const aTime = toMillisValue(a.createdAt || a.timestamp);
+      const bTime = toMillisValue(b.createdAt || b.timestamp);
       return aTime - bTime;
     });
     return visible;
@@ -889,7 +911,9 @@ function fetchAndSyncConversations() {
   if (useFirebase && typeof db !== 'undefined') {
     if (conversationsUnsubscribe) conversationsUnsubscribe();
     conversationsUnsubscribe = onSnapshot(query(collection(db, "conversations"), where("participants", "array-contains", (auth?.currentUser?.uid || activeSession.id))), (snapshot) => {
-      myConversations = snapshot.docs.map(d => ({ ...d.data(), id: d.id }));
+      myConversations = snapshot.docs
+        .map(d => ({ ...d.data(), id: d.id }))
+        .filter((conv) => shouldShowConversationForUser(conv, activeSession.id));
       processConversations();
     });
   } else {
@@ -905,7 +929,7 @@ function fetchAndSyncConversations() {
           byId.set(conv.id, conv);
         }
       });
-      myConversations = [...byId.values()];
+      myConversations = [...byId.values()].filter((conv) => shouldShowConversationForUser(conv, activeSession.id));
       processConversations();
     };
     syncLocal();
@@ -935,11 +959,19 @@ function fetchAndSyncConversations() {
           participants: conv.participants,
           isGroup: conv.isGroup,
           online: false,
-          typingUsers: conv.typingBy || {}
+          typingUsers: conv.typingBy || {},
+          clearedAtBy: conv.clearedAtBy || {},
+          visibleTo: conv.visibleTo
         };
       } else if (conv.typingBy) {
         chatMeta[unifiedId].typingUsers = conv.typingBy;
-         }
+      }
+      if (conv.clearedAtBy) {
+        chatMeta[unifiedId].clearedAtBy = conv.clearedAtBy;
+      }
+      if (conv.visibleTo) {
+        chatMeta[unifiedId].visibleTo = conv.visibleTo;
+      }
         
     });
     renderChatUsers();
@@ -4576,7 +4608,8 @@ async function sendMessage(prepared = null) {
           isGroup,
           name: isGroup ? unifiedChatId.replace('group:', '').split('-')[0] : "",
           lastMessage: "Conversation initialized",
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
+          visibleTo: participants
         });
       }
 
@@ -4602,7 +4635,8 @@ async function sendMessage(prepared = null) {
       // Update conversation record
       await updateDoc(convRef, {
         lastMessage: payload.text || (payload.files?.length ? '📎 Attachment' : ''),
-        updatedAt: now
+        updatedAt: now,
+        visibleTo: selectedUser ? [myUid, selectedUser.uid] : (chatMeta[unifiedChatId]?.participants || [myUid])
       });
 
       if (selectedUser?.uid && selectedUser.uid !== myUid) {
@@ -4704,34 +4738,56 @@ function deleteCurrentChat() {
   openConfirm(`Clear chat '${displayName}'?`, async () => {
     try {
       if (useFirebase && db) {
-        const messagesToDelete = new Map();
         const messagesRef = collection(db, 'messages');
+        const convRef = doc(db, 'conversations', currentChatId);
+        const convSnap = await getDoc(convRef);
+        const convData = convSnap.exists() ? convSnap.data() : {};
+        const participants = Array.isArray(convData.participants) && convData.participants.length
+          ? convData.participants
+          : (chatMeta[currentChatId]?.participants || [activeSession.id]);
+        const clearTimestamp = Date.now();
+        const clearedAtBy = { ...(convData.clearedAtBy || {}), [activeSession.id]: clearTimestamp };
 
-        const byChatIdSnap = await getDocs(query(messagesRef, where('chatId', '==', currentChatId)));
-        byChatIdSnap.forEach((docSnap) => messagesToDelete.set(docSnap.id, docSnap.ref));
+        await setDoc(convRef, {
+          id: currentChatId,
+          participants,
+          isGroup: Boolean(convData.isGroup ?? currentChatId.startsWith('group:')),
+          name: convData.name || chatMeta[currentChatId]?.name || '',
+          updatedAt: convData.updatedAt || clearTimestamp,
+          lastMessage: convData.lastMessage || '',
+          visibleTo: convData.visibleTo || participants,
+          clearedAtBy
+        }, { merge: true });
 
-        if (currentChatId.startsWith('dm:')) {
-          const ids = currentChatId.replace('dm:', '').split('_');
-          if (ids.length === 2) {
-            const dmSnap = await getDocs(query(
-              messagesRef,
-              or(
-                and(where('senderId', '==', ids[0]), where('receiverId', '==', ids[1])),
-                and(where('senderId', '==', ids[1]), where('receiverId', '==', ids[0]))
-              )
-            ));
-            dmSnap.forEach((docSnap) => messagesToDelete.set(docSnap.id, docSnap.ref));
+        const everyoneCleared = participants.length > 0 && participants.every((uid) => Boolean(clearedAtBy[uid]));
+        if (everyoneCleared) {
+          const messagesToDelete = new Map();
+          const byChatIdSnap = await getDocs(query(messagesRef, where('chatId', '==', currentChatId)));
+          byChatIdSnap.forEach((docSnap) => messagesToDelete.set(docSnap.id, docSnap.ref));
+
+          if (currentChatId.startsWith('dm:')) {
+            const ids = currentChatId.replace('dm:', '').split('_');
+            if (ids.length === 2) {
+              const dmSnap = await getDocs(query(
+                messagesRef,
+                or(
+                  and(where('senderId', '==', ids[0]), where('receiverId', '==', ids[1])),
+                  and(where('senderId', '==', ids[1]), where('receiverId', '==', ids[0]))
+                )
+              ));
+              dmSnap.forEach((docSnap) => messagesToDelete.set(docSnap.id, docSnap.ref));
+            }
           }
-        }
 
-        for (const msgRef of messagesToDelete.values()) {
-          await deleteDoc(msgRef);
-        }
+          for (const msgRef of messagesToDelete.values()) {
+            await deleteDoc(msgRef);
+          }
 
-        try {
-          await deleteDoc(doc(db, 'conversations', currentChatId));
-        } catch {
-          // Ignore if doc does not exist.
+          try {
+            await deleteDoc(convRef);
+          } catch {
+            // Ignore if doc does not exist.
+          }
         }
       }
 
@@ -5439,7 +5495,8 @@ async function createGroupChat() {
         participants,
         isGroup: true,
         lastMessage: "Group created",
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        visibleTo: participants
       });
     } else {
       const convs = loadJson('chatbhar.conversations', []);
