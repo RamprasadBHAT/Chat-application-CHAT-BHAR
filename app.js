@@ -788,7 +788,18 @@ async function fetchAndSyncMessages(chatIdArg = null) {
       return { id: msgDoc.id, ...data, dir, docId: msgDoc.id };
     });
 
-    const visible = snapshotMsgs.filter((m) => {
+    // Client-side deduplication by fingerprint for mixed legacy/imported data
+    const uniqueMap = new Map();
+    snapshotMsgs.forEach(m => {
+      const createdAt = toMillisValue(m.createdAt || m.timestamp);
+      const textFragment = String(m.text || '').slice(0, 50);
+      const fingerprint = `${m.senderId}:${createdAt}:${textFragment}`;
+      if (!uniqueMap.has(fingerprint) || m.docId.startsWith('msg:')) {
+        uniqueMap.set(fingerprint, m);
+      }
+    });
+
+    const visible = Array.from(uniqueMap.values()).filter((m) => {
       const createdAt = toMillisValue(m.createdAt || m.timestamp);
       return isVisibleToUser(m, myUid)
         && (!m.deletedFor || !m.deletedFor.includes(myUid))
@@ -4268,8 +4279,17 @@ function renderChatUsers() {
 
   chatUsersWrap.innerHTML = '';
 
-  // Sort conversations by updatedAt descending
-  const sortedConvs = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  // Deduplicate and Sort conversations by updatedAt descending
+  const uniqueConvs = new Map();
+  myConversations.forEach(conv => {
+    const unifiedId = getUnifiedChatId(conv.id);
+    const existing = uniqueConvs.get(unifiedId);
+    if (!existing || (conv.updatedAt || 0) > (existing.updatedAt || 0)) {
+      uniqueConvs.set(unifiedId, conv);
+    }
+  });
+
+  const sortedConvs = Array.from(uniqueConvs.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
   sortedConvs.forEach((conv) => {
     const chatId = getUnifiedChatId(conv.id);
@@ -4471,15 +4491,20 @@ function renderMessages(msgsArg = null) {
     const dir = msg.dir || (msg.senderId === myUid ? 'outgoing' : 'incoming');
     bubble.className = `bubble ${dir} ${isImageOnly ? 'image-only' : ''}`;
 
-    /*if (msg.deleted) {
-      bubble.innerHTML = '<i style="opacity: 0.7;">This message was deleted</i>';
+    if (msg.deleted) {
+      // Requirement: show a "This message was deleted" placeholder
+      bubble.innerHTML = '<i style="opacity: 0.7; font-size: 0.85rem;">This message was deleted</i>';
       bubble.classList.add('deleted-placeholder');
       bubble.dataset.id = msg.id;
+      if (msg.docId) bubble.dataset.docId = msg.docId;
+      if (msg.senderId) bubble.dataset.senderId = msg.senderId;
+
+      bubble.onclick = (e) => showContextMenu(e, bubble);
+      bubble.oncontextmenu = (e) => showContextMenu(e, bubble);
+
       messagesContainer.appendChild(bubble);
       return;
-    } */
-
-    if (msg.deleted) return;
+    }
 
     let fileHtml = '';
     (msg.files || []).forEach((f) => {
@@ -4722,48 +4747,41 @@ function renderAttachmentPreview() {
 }
 
 function deleteCurrentChat() {
-/*  openConfirm(`Delete chat '${activeChat}'?`, () => {
-    delete chatStore[activeChat];
-    if (!Object.keys(chatStore).length) chatStore = { General: [] };
-    activeChat = Object.keys(chatStore)[0];
-    saveJson(CHAT_STORE_KEY, chatStore);
-    renderChatUsers();
-    renderMessages(); */
-
   if (!activeChat) return;
 
   const currentChatId = getUnifiedChatId(activeChat);
   const displayName = chatMeta[currentChatId]?.name || currentChatId;
 
-  openConfirm(`Clear chat '${displayName}'?`, async () => {
+  openConfirm(`Clear chat with '${displayName}'?`, async () => {
     try {
+      const clearTimestamp = Date.now();
+
       if (useFirebase && db) {
         const messagesRef = collection(db, 'messages');
         const convRef = doc(db, 'conversations', currentChatId);
         const convSnap = await getDoc(convRef);
         const convData = convSnap.exists() ? convSnap.data() : {};
+
         const participants = Array.isArray(convData.participants) && convData.participants.length
           ? convData.participants
           : (chatMeta[currentChatId]?.participants || [activeSession.id]);
-        const clearTimestamp = Date.now();
+
         const clearedAtBy = { ...(convData.clearedAtBy || {}), [activeSession.id]: clearTimestamp };
 
-        await setDoc(convRef, {
-          id: currentChatId,
-          participants,
-          isGroup: Boolean(convData.isGroup ?? currentChatId.startsWith('group:')),
-          name: convData.name || chatMeta[currentChatId]?.name || '',
-          updatedAt: convData.updatedAt || clearTimestamp,
-          lastMessage: convData.lastMessage || '',
-          visibleTo: convData.visibleTo || participants,
-          clearedAtBy
-        }, { merge: true });
+        // Requirement: Disappear for this user by updating clearedAtBy
+        await updateDoc(convRef, {
+          clearedAtBy,
+          // We also update visibleTo to remove user if they want it gone from sidebar
+          visibleTo: (convData.visibleTo || participants).filter(uid => uid !== activeSession.id)
+        });
 
+        // Requirement: Full erase from Firestore only after both users clear-chat
         const everyoneCleared = participants.length > 0 && participants.every((uid) => Boolean(clearedAtBy[uid]));
+
         if (everyoneCleared) {
-          const messagesToDelete = new Map();
+          const messagesToDelete = [];
           const byChatIdSnap = await getDocs(query(messagesRef, where('chatId', '==', currentChatId)));
-          byChatIdSnap.forEach((docSnap) => messagesToDelete.set(docSnap.id, docSnap.ref));
+          byChatIdSnap.forEach((docSnap) => messagesToDelete.push(docSnap.ref));
 
           if (currentChatId.startsWith('dm:')) {
             const ids = currentChatId.replace('dm:', '').split('_');
@@ -4775,30 +4793,48 @@ function deleteCurrentChat() {
                   and(where('senderId', '==', ids[1]), where('receiverId', '==', ids[0]))
                 )
               ));
-              dmSnap.forEach((docSnap) => messagesToDelete.set(docSnap.id, docSnap.ref));
+              dmSnap.forEach((docSnap) => {
+                if (!messagesToDelete.some(ref => ref.path === docSnap.ref.path)) {
+                   messagesToDelete.push(docSnap.ref);
+                }
+              });
             }
           }
 
-          for (const msgRef of messagesToDelete.values()) {
-            await deleteDoc(msgRef);
+          // Optimized deletion: process in parallel chunks
+          const DEL_CHUNK_SIZE = 50;
+          for (let i = 0; i < messagesToDelete.length; i += DEL_CHUNK_SIZE) {
+             const chunk = messagesToDelete.slice(i, i + DEL_CHUNK_SIZE);
+             await Promise.all(chunk.map(ref => deleteDoc(ref)));
           }
+          await deleteDoc(convRef);
+        }
+      } else {
+        // Local mode fallback
+        const convs = loadJson('chatbhar.conversations', []);
+        const idx = convs.findIndex(c => getUnifiedChatId(c.id) === currentChatId);
+        if (idx !== -1) {
+          convs[idx].clearedAtBy = { ...(convs[idx].clearedAtBy || {}), [activeSession.id]: clearTimestamp };
+          convs[idx].visibleTo = (convs[idx].visibleTo || convs[idx].participants || []).filter(uid => uid !== activeSession.id);
 
-          try {
-            await deleteDoc(convRef);
-          } catch {
-            // Ignore if doc does not exist.
+          const participants = convs[idx].participants || [];
+          const everyoneCleared = participants.length > 0 && participants.every(uid => convs[idx].clearedAtBy[uid]);
+
+          if (everyoneCleared) {
+            convs.splice(idx, 1);
+            // In local mode, we should also clear chatStore
+            delete chatStore[currentChatId];
+            saveJson(CHAT_STORE_KEY, chatStore);
           }
+          saveJson('chatbhar.conversations', convs);
         }
       }
 
+      // Cleanup local UI state
       delete chatStore[currentChatId];
-      delete chatStore[activeChat];
       saveJson(CHAT_STORE_KEY, chatStore);
 
       myConversations = myConversations.filter((conv) => getUnifiedChatId(conv.id) !== currentChatId);
-      const localConversations = loadJson('chatbhar.conversations', []);
-      saveJson('chatbhar.conversations', localConversations.filter((conv) => getUnifiedChatId(conv.id) !== currentChatId));
-
       delete chatMeta[currentChatId];
       saveJson('chatbhar.chatMeta', chatMeta);
 
@@ -4809,17 +4845,16 @@ function deleteCurrentChat() {
 
       activeChat = null;
       renderChatUsers();
+      renderMessages();
 
+      // Switch to next available chat if any
       if (myConversations.length > 0) {
         const sorted = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
         fetchAndSyncMessages(sorted[0].id);
-      } else {
-        renderMessages();
       }
     } catch (err) {
       alert('Failed to clear chat: ' + err.message);
     }
-
   });
 }
 
@@ -4867,8 +4902,12 @@ async function applyImportedBackup(parsed) {
       db,
       backup,
       setDoc,
+      getDoc,
+      updateDoc,
       doc,
-      collection
+      collection,
+      arrayUnion,
+      activeUserId: activeSession.id
     });
   }
 
@@ -5189,15 +5228,15 @@ function showContextMenu(e, bubble) {
    currentContextMsg = currentMsgs.find((m) => String(m.id) === String(messageId));
   if (!currentContextMsg) return;
 
-  if (currentContextMsg.deleted) return;
+  // Support actions on deleted placeholders (like Delete for Me)
+  const isDeleted = !!currentContextMsg.deleted;
 
   msgContextMenu.hidden = false;
 
   const x = (e && e.touches && e.touches[0]) ? e.touches[0].clientX : (e ? e.clientX : 100);
-  const y = (e.touches && e.touches[0]) ? e.touches[0].clientY : e.clientY;
+  const y = (e.touches && e.touches[0]) ? e.touches[0].clientY : (e ? e.clientY : 100);
 
   const menuWidth = 200;
-  // const menuHeight = 150;
   const menuHeight = 220;
 
   let left = x;
@@ -5213,14 +5252,23 @@ function showContextMenu(e, bubble) {
 
   const deleteEveryoneBtn = document.getElementById('deleteEveryoneBtn');
   const contextEditBtn = document.getElementById('contextEditBtn');
+  const contextReplyBtn = document.getElementById('contextReplyBtn');
+  const emojiBar = msgContextMenu.querySelector('.emoji-bar');
+
   const isOutgoing = currentContextMsg.dir === 'outgoing';
   const ageInMinutes = (Date.now() - (currentContextMsg.createdAt || 0)) / 1000 / 60;
 
   if (deleteEveryoneBtn) {
-    deleteEveryoneBtn.hidden = !isOutgoing || ageInMinutes > 15;
+    deleteEveryoneBtn.hidden = isDeleted || !isOutgoing || ageInMinutes > 15;
   }
   if (contextEditBtn) {
-    contextEditBtn.hidden = !isOutgoing || ageInMinutes > 15 || !!currentContextMsg.files?.length;
+    contextEditBtn.hidden = isDeleted || !isOutgoing || ageInMinutes > 15 || !!currentContextMsg.files?.length;
+  }
+  if (contextReplyBtn) {
+    contextReplyBtn.hidden = isDeleted;
+  }
+  if (emojiBar) {
+    emojiBar.style.display = isDeleted ? 'none' : 'flex';
   }
 //
   const removeReactionBtn = document.getElementById('removeReactionBtn');
@@ -5235,9 +5283,21 @@ async function deleteMessage(type) {
   if (!currentContextMsg || !activeSession) return;
 
   if (type === 'everyone') {
+    // Requirement: “delete from all” should only be allowed by the message sender
+    if (currentContextMsg.senderId !== activeSession.id) {
+      alert('Only the sender can delete for everyone.');
+      return;
+    }
+
     try {
       if (useFirebase && currentContextMsg.docId) {
-        await updateDoc(doc(db, "messages", currentContextMsg.docId), { deleted: true, text: '', files: [] });
+        // Update Firestore with deleted: true
+        await updateDoc(doc(db, "messages", currentContextMsg.docId), {
+          deleted: true,
+          text: '',
+          files: [],
+          deletedAt: Date.now()
+        });
       } else {
         // Local mode delete for everyone
         const chatStore = loadJson(CHAT_STORE_KEY, {});
@@ -5254,8 +5314,6 @@ async function deleteMessage(type) {
       alert('Delete failed: ' + err.message);
       return;
     }
-
-    
   } else {
     // Delete for me
     try {
