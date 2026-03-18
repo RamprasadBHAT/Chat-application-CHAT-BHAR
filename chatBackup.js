@@ -188,12 +188,12 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
     const name = inferChatName({ chatId: chatId, normalizedId: chatId, messages: messages, chatMeta: nextChatMeta, authUsers, activeUserId });
 
     nextChatMeta[chatId] = {
-      ...(nextChatMeta[chatId] || {}),
-      id: chatId,
+      ...(nextChatMeta[normalizedId] || {}),
+      id: normalizedId,
       name,
       participants,
-      isGroup: chatId.startsWith('group:'),
-      typingUsers: nextChatMeta[chatId]?.typingUsers || {}
+      isGroup: normalizedId.startsWith('group:'),
+      typingUsers: nextChatMeta[normalizedId]?.typingUsers || {}
     };
 
     const existingConvIdx = conversations.findIndex(c => c.id === chatId);

@@ -244,9 +244,13 @@ let chatMeta = loadJson('chatbhar.chatMeta', {});
 function getOtherUserIdFromConversation(convOrId) {
   const myId = activeSession?.id || (useFirebase && auth?.currentUser?.uid);
   if (typeof convOrId === 'string') {
-    if (!convOrId.startsWith('dm:')) return null;
-    const ids = convOrId.replace('dm:', '').split('_');
-    return ids.find(id => id !== myId);
+    if (!convOrId.startsWith('dm:')) {
+      // Could be a bare UID
+      return convOrId !== myId ? convOrId : null;
+    }
+    const content = convOrId.replace('dm:', '');
+    const ids = content.includes('_') ? content.split('_') : [content];
+    return ids.find(id => id !== myId) || ids[0];
   }
   if (convOrId && convOrId.participants) {
     return convOrId.participants.find(id => id !== myId);
@@ -1238,13 +1242,7 @@ function hydrateState() {
   if (activeSession && activeSession.username) {
     authGate.hidden = true;
     appShell.hidden = false;
-
-    const savedTab = localStorage.getItem('chatbhar.activeTab');
-    if (savedTab && document.getElementById(savedTab)) {
-      openTab(savedTab);
-    } else {
-      renderHome();
-    }
+    renderHome();
     renderChannelManager();
   }
 }
