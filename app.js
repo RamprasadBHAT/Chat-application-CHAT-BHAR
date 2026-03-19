@@ -159,6 +159,16 @@ const audioTimelineLane = document.getElementById('audioTimelineLane');
 const audioClipTrack = document.getElementById('audioClipTrack');
 const addAudioLaneBtn = document.getElementById('addAudioLaneBtn');
 const suiteAudioPlayer = document.getElementById('suiteAudioPlayer');
+const suiteAddClipsBtn = document.getElementById('suiteAddClipsBtn');
+const suiteClipsUploadInput = document.getElementById('suiteClipsUploadInput');
+const scheduleModal = document.getElementById('scheduleModal');
+const closeScheduleModal = document.getElementById('closeScheduleModal');
+const cancelScheduleBtn = document.getElementById('cancelScheduleBtn');
+const confirmScheduleBtn = document.getElementById('confirmScheduleBtn');
+const scheduleDateTime = document.getElementById('scheduleDateTime');
+const scheduleInfo = document.getElementById('scheduleInfo');
+const successToast = document.getElementById('successToast');
+const toastMessage = document.getElementById('toastMessage');
 
 const postViewer = document.getElementById('postViewer');
 const closePostViewer = document.getElementById('closePostViewer');
@@ -222,6 +232,7 @@ let activeProfileTab = 'posts';
 let selectedUploadRawFiles = [];
 let selectedUploadEdits = [];
 let activeSuiteIndex = 0;
+let pendingScheduleTime = null;
 let activeTrimTarget = null;
 let timelineZoom = 1;
 let pinchDistance = 0;
@@ -1726,7 +1737,7 @@ function bindEvents() {
   if (scheduleCreativeSuite) {
     scheduleCreativeSuite.addEventListener('click', () => {
       syncSuiteFields();
-      alert('Scheduling queued. You can finalize from Create Upload.');
+      openScheduleModal();
     });
   }
   if (coverThumbRow) {
@@ -1784,6 +1795,10 @@ function bindEvents() {
         if (musicUploadName) musicUploadName.textContent = `Music: ${file.name}`;
         updateSuiteAudioPlayer(edit);
         renderTimelineTracks();
+
+        // Disable inbuilt video audio
+        const video = suitePreview.querySelector('video');
+        if (video) video.muted = true;
       } catch (err) {
         if (musicUploadName) musicUploadName.textContent = `Upload failed: ${file.name}`;
       }
@@ -1897,16 +1912,60 @@ function bindEvents() {
   if (suitePlayOverlay) {
     suitePlayOverlay.addEventListener('click', () => {
       const video = suitePreview.querySelector('video');
+      const audio = suiteAudioPlayer;
       if (!video) return;
       if (video.paused) {
         video.play();
+        if (audio && !audio.hidden && audio.src) {
+            audio.currentTime = (video.currentTime - (selectedUploadEdits[activeSuiteIndex].trimStart || 0)) + (selectedUploadEdits[activeSuiteIndex].audioStart || 0);
+            audio.play();
+        }
         suitePlayOverlay.textContent = '⏸';
       } else {
         video.pause();
+        if (audio) audio.pause();
         suitePlayOverlay.textContent = '▶';
       }
     });
   }
+
+  if (suiteAddClipsBtn) {
+    suiteAddClipsBtn.onclick = () => suiteClipsUploadInput.click();
+    suiteClipsUploadInput.onchange = async (e) => {
+        const newFiles = [...e.target.files];
+        if (newFiles.length) {
+            const currentCount = selectedUploadRawFiles.length;
+            selectedUploadRawFiles = [...selectedUploadRawFiles, ...newFiles];
+            const newEdits = newFiles.map((f) => ({
+                name: f.name,
+                trimStart: 0,
+                trimEnd: 0,
+                volume: 70,
+                musicQuery: '',
+                musicFileName: '',
+                musicLocalUrl: '',
+                musicRemoteUrl: '',
+                audioStart: 0,
+                audioEnd: 0,
+                coverIndex: 0,
+                coverCustomName: '',
+                coverCustomUrl: '',
+                filterType: 'cinematic',
+                overlayText: '',
+                overlayColor: '#ffffff',
+                overlayX: 10,
+                overlayY: 10
+            }));
+            selectedUploadEdits = [...selectedUploadEdits, ...newEdits];
+            renderSuiteAssetList();
+            renderUploadSelectedPreview();
+        }
+    };
+  }
+
+  if (closeScheduleModal) closeScheduleModal.onclick = () => scheduleModal.hidden = true;
+  if (cancelScheduleBtn) cancelScheduleBtn.onclick = () => scheduleModal.hidden = true;
+  if (confirmScheduleBtn) confirmScheduleBtn.onclick = setPostSchedule;
 
   closePostViewer.addEventListener('click', () => (postViewer.hidden = true));
 
@@ -3478,7 +3537,7 @@ function renderSuitePreview() {
   const ratioClass = file.type.startsWith('image/') ? 'media-9x16' : 'media-16x9';
   suitePreview.innerHTML = file.type.startsWith('image/')
     ? `<div class="${ratioClass}"><img src="${src}" alt="suite" /></div>`
-    : `<div class="${ratioClass}"><video src="${src}" controls muted></video></div>`;
+    : `<div class="${ratioClass}"><video src="${src}" muted></video></div>`;
 
   const mediaNode = suitePreview.querySelector('img, video');
   const filterMap = {
@@ -3492,6 +3551,21 @@ function renderSuitePreview() {
     mediaNode.addEventListener('loadedmetadata', () => {
       if (Number.isFinite(edit.trimStart)) mediaNode.currentTime = Math.max(0, edit.trimStart);
     }, { once: true });
+
+    mediaNode.ontimeupdate = () => {
+        if (mediaNode.currentTime >= edit.trimEnd) {
+            mediaNode.currentTime = edit.trimStart;
+            if (suiteAudioPlayer && !suiteAudioPlayer.hidden && suiteAudioPlayer.src) {
+                suiteAudioPlayer.currentTime = edit.audioStart;
+            }
+        }
+    };
+
+    mediaNode.onseeking = () => {
+        if (suiteAudioPlayer && !suiteAudioPlayer.hidden && suiteAudioPlayer.src) {
+            suiteAudioPlayer.currentTime = (mediaNode.currentTime - (edit.trimStart || 0)) + (edit.audioStart || 0);
+        }
+    };
   }
 
   if (suitePlayOverlay) suitePlayOverlay.textContent = '⏯';
@@ -3587,6 +3661,8 @@ async function onUploadSubmit(event) {
       userId: activeSession.id,
       caption,
       description,
+      status: pendingScheduleTime ? 'scheduled' : 'published',
+      scheduledAt: pendingScheduleTime || null,
       interactions: { likes: 0, likedBy: [], comments: [], shares: 0 }
     };
 
@@ -3616,6 +3692,7 @@ async function onUploadSubmit(event) {
       else await apiRequest('/api/posts', { method: 'POST', body: JSON.stringify(postDoc) });
     }
 
+    pendingScheduleTime = null;
     await fetchAndSyncPosts();
     uploadForm.reset();
     clearUploadSelectionState();
@@ -3902,8 +3979,10 @@ function renderStories() {
 
 function renderFeed() {
   feedList.innerHTML = '';
+  const now = Date.now();
   const items = uploads.filter((u) => {
     if (u.type === 'story') return false;
+    if (u.status === 'scheduled' && u.scheduledAt && u.scheduledAt > now) return false;
     if (!activeSession) return false;
     if (u.userId === activeSession.id) return true;
 
@@ -4248,7 +4327,9 @@ function persistAndRerender(postId) {
 
 function renderChannelManager() {
   if (!activeSession) return;
+  const now = Date.now();
   const mine = uploads.filter((u) => u.userId === activeSession.id);
+  const publishedPosts = mine.filter(u => !u.status || u.status === 'published' || (u.status === 'scheduled' && u.scheduledAt <= now));
 
   // Populate Header
   if (myChannelHandle) myChannelHandle.textContent = activeSession.username || activeSession.name || 'User';
@@ -4308,21 +4389,21 @@ function renderChannelManager() {
   if (!channelContentGrid) return;
   channelContentGrid.innerHTML = '';
 
-  let filtered = mine;
+  let filtered = publishedPosts;
   if (activeProfileTab === 'analytics') {
     renderAnalytics(mine);
     return;
   }
 
   if (activeProfileTab === 'videos') {
-    filtered = mine.filter(u => u.type === 'short' || u.type === 'ltv');
+    filtered = publishedPosts.filter(u => u.type === 'short' || u.type === 'ltv');
   } else if (activeProfileTab === 'saved') {
     const savedIds = activeSession.savedPosts || [];
     filtered = uploads.filter(u => savedIds.includes(u.id));
   } else if (activeProfileTab === 'tagged') {
     filtered = uploads.filter(u => (u.taggedUsers || []).includes(activeSession.id));
   } else {
-    filtered = mine.filter(u => u.type !== 'story');
+    filtered = publishedPosts.filter(u => u.type !== 'story');
   }
 
   if (!filtered.length) {
@@ -5158,6 +5239,61 @@ function normalizeFiles(files) {
   })));
 }
 
+function openScheduleModal() {
+  const now = new Date();
+  const minDate = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 1 day from now
+  const maxDate = new Date(now.getTime() + 75 * 24 * 60 * 60 * 1000); // 75 days from now
+
+  scheduleDateTime.min = minDate.toISOString().slice(0, 16);
+  scheduleDateTime.max = maxDate.toISOString().slice(0, 16);
+  scheduleDateTime.value = minDate.toISOString().slice(0, 16);
+
+  updateScheduleInfo();
+  scheduleDateTime.oninput = updateScheduleInfo;
+  scheduleModal.hidden = false;
+}
+
+function updateScheduleInfo() {
+    const selected = new Date(scheduleDateTime.value);
+    const now = new Date();
+    const diffTime = selected - now;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 1 || diffDays > 75) {
+        scheduleInfo.textContent = "Please select a date between 1 and 75 days from now.";
+        scheduleInfo.style.color = "#ef4444";
+        confirmScheduleBtn.disabled = true;
+    } else {
+        const timeStr = selected.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        scheduleInfo.textContent = `Will go live in ${diffDays} days at ${timeStr}`;
+        scheduleInfo.style.color = "var(--brand-a)";
+        confirmScheduleBtn.disabled = false;
+    }
+}
+
+function setPostSchedule() {
+    const selected = new Date(scheduleDateTime.value);
+    const now = new Date();
+    const diffTime = selected - now;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 1 || diffDays > 75) return;
+
+    pendingScheduleTime = selected.getTime();
+    scheduleModal.hidden = true;
+
+    showSuccessToast(selected, diffDays);
+}
+
+function showSuccessToast(date, days) {
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    toastMessage.textContent = `scheduling set successfully. Live in ${days} days at ${timeStr}`;
+    successToast.hidden = false;
+    setTimeout(() => {
+        successToast.hidden = true;
+    }, 3000);
+}
+
 async function dataFilesToBlobs(files) {
   const blobs = [];
   for (const f of files || []) {
@@ -5812,6 +5948,8 @@ function renderAnalytics(mine) {
   channelContentGrid.hidden = true;
   document.getElementById('analyticsSection').hidden = false;
 
+  renderScheduledPosts(mine);
+
   const totalLikes = mine.reduce((sum, u) => sum + (u.interactions?.likes || 0), 0);
   const totalComments = mine.reduce((sum, u) => sum + (u.interactions?.comments?.length || 0), 0);
   const totalShares = mine.reduce((sum, u) => sum + (u.interactions?.shares || 0), 0);
@@ -5857,6 +5995,48 @@ function renderAnalytics(mine) {
     chart.appendChild(barWrap);
   });
 }
+
+function renderScheduledPosts(mine) {
+    const container = document.getElementById('scheduledPostsList');
+    if (!container) return;
+
+    const now = Date.now();
+    const scheduled = mine.filter(u => u.status === 'scheduled' && u.scheduledAt > now);
+
+    if (scheduled.length === 0) {
+        container.innerHTML = '<p style="color: var(--muted); font-size: 0.9rem;">No posts scheduled.</p>';
+        return;
+    }
+
+    container.innerHTML = '';
+    scheduled.sort((a,b) => a.scheduledAt - b.scheduledAt).forEach(post => {
+        const date = new Date(post.scheduledAt);
+        const item = document.createElement('div');
+        item.className = 'scheduled-post-item';
+        item.innerHTML = `
+            <div class="scheduled-post-info">
+                <strong>${escapeHtml(post.caption || 'Untitled')}</strong>
+                <span>Live on: ${date.toLocaleDateString()} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            </div>
+            <button class="danger" style="padding: 4px 8px; font-size: 0.75rem;" onclick="deleteScheduledPost('${post.id}', '${post.docId}')">Cancel</button>
+        `;
+        container.appendChild(item);
+    });
+}
+
+window.deleteScheduledPost = async (id, docId) => {
+    if (!confirm('Cancel this scheduled post?')) return;
+    try {
+        if (useFirebase && docId) {
+            await deleteDoc(doc(db, "posts", docId));
+        } else {
+            await apiRequest(`/api/posts/${id}`, { method: 'DELETE' });
+        }
+        await fetchAndSyncPosts();
+    } catch (err) {
+        alert('Failed to cancel: ' + err.message);
+    }
+};
 
 function openShareModal(postId) {
   const modal = document.getElementById('shareModal');
