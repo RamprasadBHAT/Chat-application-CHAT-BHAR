@@ -444,11 +444,18 @@ function notificationTimestampToMs(value) {
   return Date.now();
 }
 
+function getMilestone(count) {
+  const milestones = [5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
+  return milestones.find(m => m === count) || null;
+}
+
 function notificationTextFromPayload(payload) {
   const actor = payload.fromUserName || 'Someone';
   if (payload.type === 'follow_request') return `${actor} wants to follow you.`;
   if (payload.type === 'like_item') return `${actor} liked your post.`;
+  if (payload.type === 'likes_summary') return `${actor} and ${payload.count - 1} others liked your post.`;
   if (payload.type === 'comment_item') return `${actor}: "${payload.previewText || 'Commented on your post.'}"`;
+  if (payload.type === 'comments_summary') return `${actor} and ${payload.count - 1} others commented on your post.`;
   if (payload.type === 'message_item') return `Message from ${actor}: "${payload.previewText || 'New message'}"`;
   return payload.text || `${actor} sent a notification.`;
 }
@@ -566,7 +573,6 @@ async function markChatNotificationsAsRead(chatId) {
 }
 
 function startRealTimeSync() {
-    initPresenceSocket();
     fetchAndSyncPosts();
     fetchAndSyncMessages();
     fetchAndSyncConversations();
@@ -631,6 +637,8 @@ async function setTypingState(isTyping) {
     }
   }
 }
+
+let presenceHeartbeat = null;
 
 async function setPresenceOnline(isOnline) {
   if (!activeSession?.id) return;
@@ -1198,35 +1206,6 @@ async function stopVoiceRecordingAndSend() {
   });
 }
 
-function initPresenceSocket() {
-  if (!activeSession?.id || typeof window === 'undefined') return;
-  try {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/presence`;
-    ws = new WebSocket(wsUrl);
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'presence', userId: activeSession.id, online: true }));
-    };
-    ws.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type !== 'presence' || !payload.userId) return;
-        const idx = authUsers.findIndex((u) => u.id === payload.userId);
-        if (idx !== -1) {
-          authUsers[idx].online = Boolean(payload.online);
-          saveJson(AUTH_USERS_KEY, authUsers);
-          renderChatUsers();
-          renderMessages();
-        }
-      } catch (err) {
-        console.warn('Presence socket parse failed', err.message);
-      }
-    };
-  } catch (err) {
-    console.warn('Presence websocket unavailable', err.message);
-  }
-}
-
 function hydrateState() {
   activeSession = loadJson(AUTH_SESSION_KEY, null);
   uploads = loadJson(UPLOAD_STORE_KEY, []);
@@ -1495,6 +1474,8 @@ async function syncAuthUsers() {
       authUsers = users;
       saveJson(AUTH_USERS_KEY, authUsers);
       renderExploreUsers();
+      renderChatUsers();
+      renderMessages();
     });
   } else {
     try {
@@ -3082,11 +3063,80 @@ function clearAllVisibleNotifications() {
 
 function renderNotificationRows(items) {
   return items.map((item) => {
-    if (item.type === 'likes_summary') {
-      return `<div class="notification-row"><div class="stacked-avatars"><span>👤</span><span>👤</span><span>👤</span></div><div class="notification-content">${escapeHtml(item.text)} <a href="#" class="view-post-link">View post</a></div><button class="summary-clear-btn" data-remove-id="${item.id}" aria-label="Clear summary">✕</button></div>`;
+    const actor = authUsers.find(u => u.id === item.fromUserId);
+    const actorName = actor ? (actor.username || actor.name) : 'User';
+    let avatarHtml = '<div class="notification-avatar">👤</div>';
+    if (actor?.profilePic) {
+      avatarHtml = `<img src="${actor.profilePic}" class="notification-avatar" style="object-fit:cover" />`;
     }
 
-    return `<div class="notification-row"><div class="notification-avatar">👤</div><div class="notification-content">${escapeHtml(item.text)}</div><button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button></div>`;
+    if (item.type === 'likes_summary' || item.type === 'comments_summary') {
+      return `
+        <div class="notification-row summary-row">
+          <div class="stacked-avatars"><span>👤</span><span>👤</span><span>👤</span></div>
+          <div class="notification-content">
+            ${escapeHtml(item.text)}
+            <a href="#" class="view-post-link" onclick="openPostViewer('${item.postId}'); return false;">View post</a>
+          </div>
+          <button class="summary-clear-btn" data-remove-id="${item.id}" aria-label="Clear summary">✕</button>
+        </div>`;
+    }
+
+    if (item.type === 'message_item') {
+      return `
+        <div class="notification-row message-notif-row" data-notif-id="${item.id}">
+          <div style="position:relative">
+            ${avatarHtml}
+            <span class="presence-dot ${actor?.online ? 'online' : 'offline'}"></span>
+          </div>
+          <div class="notification-content">
+            <strong>${escapeHtml(actorName)}</strong>
+            <div class="message-preview-bubble" onclick="onExploreMessageClick('${item.fromUserId}', '${escapeAttr(actorName)}'); setNotificationPanelOpen(false);">
+              ${escapeHtml(item.previewText || 'New message')}
+            </div>
+            <div class="notif-actions" style="margin-top:5px; display:flex; gap:10px;">
+              <button class="notif-reply-btn" onclick="toggleNotifReply('${item.id}')" style="background:transparent; color:var(--brand-a); border:0; padding:0; font-size:0.8rem;">Reply</button>
+              <button class="notif-emoji-btn" style="background:transparent; color:var(--brand-a); border:0; padding:0; font-size:0.8rem;">❤️</button>
+            </div>
+            <div id="notif-reply-field-${item.id}" class="notif-reply-field" hidden style="margin-top:8px; display:flex; gap:5px;">
+              <input type="text" placeholder="Reply..." style="flex:1; border:1px solid var(--border); border-radius:15px; padding:4px 10px; font-size:0.8rem; background:transparent; color:var(--text);" />
+              <button onclick="sendNotifReply('${item.id}', '${item.fromUserId}', '${item.chatId}')" style="padding:4px 8px; font-size:0.7rem;">Send</button>
+            </div>
+          </div>
+          <button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button>
+        </div>`;
+    }
+
+    if (item.type === 'follow_request') {
+      return `
+        <div class="notification-row">
+          ${avatarHtml}
+          <div class="notification-content">
+            ${escapeHtml(item.text)}
+            <div class="notif-actions" style="margin-top:5px; display:flex; gap:5px;">
+              <button onclick="acceptFollowRequest('${item.relatedId}')" style="padding:4px 8px; font-size:0.75rem;">Accept</button>
+              <button onclick="declineFollowRequest('${item.relatedId}')" style="padding:4px 8px; font-size:0.75rem; background:var(--muted);">Decline</button>
+            </div>
+          </div>
+          <button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button>
+        </div>`;
+    }
+
+    if (item.type === 'follow_user') {
+      return `
+        <div class="notification-row">
+          ${avatarHtml}
+          <div class="notification-content">
+            ${escapeHtml(item.text)}
+            <div class="notif-actions" style="margin-top:5px;">
+              <button onclick="followUser('${item.fromUserId}')" style="padding:4px 8px; font-size:0.75rem;">Follow Back</button>
+            </div>
+          </div>
+          <button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button>
+        </div>`;
+    }
+
+    return `<div class="notification-row">${avatarHtml}<div class="notification-content">${escapeHtml(item.text)}</div><button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button></div>`;
   }).join('');
 }
 
@@ -3127,7 +3177,52 @@ function renderNotifications() {
 
 function setNotificationPanelOpen(isOpen) {
   notificationOverlay.hidden = !isOpen;
+  if (isOpen) {
+    // Circle count should be gone because we opened the panel
+    const unreadIds = notifications.filter(n => n.unread).map(n => n.id);
+    if (unreadIds.length > 0) {
+      if (useFirebase && db) {
+        const batch = writeBatch(db);
+        unreadIds.forEach(id => {
+          batch.update(doc(db, 'notifications', id), { unread: false });
+        });
+        batch.commit();
+      } else {
+        notifications.forEach(n => n.unread = false);
+        saveJson(NOTIFICATION_STORE_KEY, notifications);
+        renderNotifications();
+      }
+    }
+  }
 }
+
+window.toggleNotifReply = function(notifId) {
+  const field = document.getElementById(`notif-reply-field-${notifId}`);
+  if (field) field.hidden = !field.hidden;
+};
+
+window.sendNotifReply = async function(notifId, toUserId, chatId) {
+  const field = document.getElementById(`notif-reply-field-${notifId}`);
+  const input = field?.querySelector('input');
+  const text = input?.value.trim();
+  if (!text) return;
+
+  // Set active chat and selected user for sendMessage to work correctly
+  activeChat = chatId;
+  const user = authUsers.find(u => u.id === toUserId);
+  selectedUser = user ? { ...user, uid: user.id } : null;
+
+  await sendMessage({
+    text,
+    files: [],
+    viewOnce: false,
+    replyToId: null
+  });
+
+  input.value = '';
+  field.hidden = true;
+  alert('Reply sent!');
+};
 
 function handleNotificationBodyClick(event) {
   const removeBtn = event.target.closest('[data-remove-id]');
@@ -3922,14 +4017,27 @@ async function likePost(postId) {
       });
 
       if (!liked && post.userId && post.userId !== activeSession.id) {
-        await createNotification({
-          toUserId: post.userId,
-          fromUserId: activeSession.id,
-          fromUserName: activeHandle(),
-          category: 'likes',
-          type: 'like_item',
-          postId: post.id
-        });
+        const milestone = getMilestone(likedBy.length);
+        if (milestone) {
+          await createNotification({
+            toUserId: post.userId,
+            fromUserId: activeSession.id,
+            fromUserName: activeHandle(),
+            category: 'likes',
+            type: 'likes_summary',
+            postId: post.id,
+            count: milestone
+          });
+        } else {
+          await createNotification({
+            toUserId: post.userId,
+            fromUserId: activeSession.id,
+            fromUserName: activeHandle(),
+            category: 'likes',
+            type: 'like_item',
+            postId: post.id
+          });
+        }
       }
 
       if (liked && post.userId && post.userId !== activeSession.id) {
@@ -3975,15 +4083,28 @@ async function addComment(postId, text) {
       });
 
       if (post.userId && post.userId !== activeSession.id) {
-        await createNotification({
-          toUserId: post.userId,
-          fromUserId: activeSession.id,
-          fromUserName: activeHandle(),
-          category: 'comments',
-          type: 'comment_item',
-          postId: post.id,
-          previewText: content.slice(0, 120)
-        });
+        const milestone = getMilestone(interactions.comments.length + 1);
+        if (milestone) {
+          await createNotification({
+            toUserId: post.userId,
+            fromUserId: activeSession.id,
+            fromUserName: activeHandle(),
+            category: 'comments',
+            type: 'comments_summary',
+            postId: post.id,
+            count: milestone
+          });
+        } else {
+          await createNotification({
+            toUserId: post.userId,
+            fromUserId: activeSession.id,
+            fromUserName: activeHandle(),
+            category: 'comments',
+            type: 'comment_item',
+            postId: post.id,
+            previewText: content.slice(0, 120)
+          });
+        }
       }
     } else {
       await apiRequest(`/api/posts/${postId}`, {
@@ -4499,6 +4620,27 @@ function renderMessages(msgsArg = null) {
   const onlineNow = getChatOnlineState(activeChat);
   const activeTitle = `${onlineNow ? '● ' : ''}${meta.name} - ${onlineNow ? 'Online' : 'Offline'}`;
   activeChatTitle.textContent = activeTitle;
+
+  // Show follow request bar if there's a pending request from this user
+  const otherUid = getOtherUserIdFromConversation(activeChat);
+  const pendingReq = incomingFollowRequests.find(r => r.fromUserId === otherUid);
+  const existingReqBar = document.getElementById('chatFollowReqBar');
+  if (existingReqBar) existingReqBar.remove();
+
+  if (pendingReq) {
+    const bar = document.createElement('div');
+    bar.id = 'chatFollowReqBar';
+    bar.style = 'background:rgba(33,150,243,0.1); padding:10px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; font-size:0.85rem;';
+    bar.innerHTML = `
+      <span><strong>${escapeHtml(meta.name)}</strong> wants to follow you</span>
+      <div style="display:flex; gap:8px;">
+        <button onclick="acceptFollowRequest('${pendingReq.id}')" style="padding:4px 10px; font-size:0.75rem;">Accept</button>
+        <button onclick="declineFollowRequest('${pendingReq.id}')" style="padding:4px 10px; font-size:0.75rem; background:var(--muted);">Decline</button>
+      </div>
+    `;
+    messagesContainer.parentNode.insertBefore(bar, messagesContainer);
+  }
+
 //  if (typingIndicator && !typingIndicator.textContent) typingIndicator.textContent = meta.online ? 'online' : 'offline';
     updateTypingIndicators();  // mar 5
    
