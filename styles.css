@@ -103,6 +103,25 @@ body.dark .notification-group{border-bottom-color:rgba(255,255,255,.12)}
 .notification-content{font-size:1.05rem;line-height:1.25}
 .notification-content strong{display:block;font-size:1.1rem}
 .view-post-link{color:var(--brand-a);font-weight:600;font-size:.92rem;text-decoration:none}
+.message-preview-bubble {
+  background: rgba(0,0,0,0.05);
+  padding: 8px 12px;
+  border-radius: 18px;
+  border-bottom-left-radius: 4px;
+  margin-top: 5px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.message-preview-bubble:hover {
+  background: rgba(0,0,0,0.1);
+}
+body.dark .message-preview-bubble {
+  background: rgba(255,255,255,0.1);
+}
+body.dark .message-preview-bubble:hover {
+  background: rgba(255,255,255,0.15);
+}
 .respond-btn{margin-top:10px;margin-left:54px;background:var(--brand-a);padding:8px 14px;border-radius:10px}
 body.dark .notification-overlay{background:rgba(0,0,0,.45)}
 body.dark .notification-bell{background:rgba(255,255,255,.1)}
