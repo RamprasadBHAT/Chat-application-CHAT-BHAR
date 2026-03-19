@@ -4945,17 +4945,22 @@ async function applyImportedBackup(parsed) {
   renderMessages();
 
   if (useFirebase && db && activeSession?.id) {
-    await persistImportedChatsToFirestore({
-      db,
-      backup,
-      setDoc,
-      getDoc,
-      updateDoc,
-      doc,
-      collection,
-      arrayUnion,
-      activeUserId: activeSession.id
-    });
+    try {
+        await persistImportedChatsToFirestore({
+            db,
+            backup,
+            setDoc,
+            getDoc,
+            updateDoc,
+            doc,
+            collection,
+            arrayUnion,
+            activeUserId: activeSession.id
+          });
+    } catch (err) {
+        console.error('Firestore backup sync failed', err);
+        throw new Error('Failed to sync backup to cloud. Local sync completed.');
+    }
   }
 
   renderChatUsers();
@@ -4981,10 +4986,10 @@ function importBackupFile(event) {
     try {
       const parsed = JSON.parse(String(reader.result));
       await applyImportedBackup(parsed);
-      authMessage.textContent = 'Backup imported successfully.';
+      alert('Backup imported successfully.');
     } catch (error) {
       console.error('Backup import failed', error);
-      authMessage.textContent = 'Backup import failed.';
+      alert('Backup import failed: ' + error.message);
     } finally {
       event.target.value = '';
     }
