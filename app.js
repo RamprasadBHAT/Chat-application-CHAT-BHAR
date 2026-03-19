@@ -2092,6 +2092,7 @@ function renderProfileAvatar(el, user) {
   }
 }
 
+window.followUser = followUser;
 async function followUser(followingId) {
   if (!activeSession) return;
   try {
@@ -2266,6 +2267,7 @@ async function isMutualFollow(userId1, userId2) {
   }
 }
 
+window.onExploreMessageClick = onExploreMessageClick;
 async function onExploreMessageClick(userId, username) {
   if (!activeSession) return;
   if (useFirebase && (!auth || !auth.currentUser)) return;
@@ -2516,6 +2518,7 @@ async function renderOtherProfile(userId) {
   }
 }
 
+window.acceptFollowRequest = acceptFollowRequest;
 async function acceptFollowRequest(relationshipId) {
   try {
     if (useFirebase) {
@@ -2555,6 +2558,7 @@ async function acceptFollowRequest(relationshipId) {
   }
 }
 
+window.declineFollowRequest = declineFollowRequest;
 async function declineFollowRequest(relationshipId) {
   try {
     if (useFirebase) {
@@ -3175,6 +3179,7 @@ function renderNotifications() {
   ].join('');
 }
 
+window.setNotificationPanelOpen = setNotificationPanelOpen;
 function setNotificationPanelOpen(isOpen) {
   notificationOverlay.hidden = !isOpen;
   if (isOpen) {
@@ -4122,6 +4127,7 @@ async function sharePost(postId) {
   openShareModal(postId);
 }
 
+window.openPostViewer = openPostViewer;
 function openPostViewer(postId) {
   activePostViewerId = postId;
   const post = uploads.find((u) => u.id === postId);
