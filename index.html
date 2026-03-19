@@ -199,6 +199,13 @@
                   </div>
                 </div>
               </div>
+
+              <div id="scheduledPostsContainer" class="scheduled-posts-container glass" style="margin-top: 20px; padding: 15px;">
+                <h4 style="margin-bottom: 12px;">Scheduled Posts</h4>
+                <div id="scheduledPostsList" class="scheduled-posts-list">
+                  <p style="color: var(--muted); font-size: 0.9rem;">No posts scheduled.</p>
+                </div>
+              </div>
             </div>
 
             <div class="profile-tabs">
@@ -380,7 +387,11 @@
           <section class="suite-controls-pane">
             <div class="suite-toolbar" role="group" aria-label="Editing controls">
               <article class="suite-module suite-module-trim" id="suiteTrimModule">
-                <h4>✂ Trim</h4>
+                <div class="module-head">
+                  <h4>✂ Trim & Timeline</h4>
+                  <button type="button" class="add-device-btn" id="suiteAddClipsBtn" title="Add more clips" style="width: 32px; height: 32px; font-size: 1rem;">＋</button>
+                  <input id="suiteClipsUploadInput" type="file" multiple accept="video/*,image/*" hidden />
+                </div>
                 <div class="trim-instruction">Tap on a track to trim. Pinch to zoom.</div>
                 <div id="timelineTrimTrack" class="trim-visual-track" aria-label="Video trim timeline">
                   <span class="trim-selected-window"></span>
@@ -467,14 +478,9 @@
           </section>
         </div>
         <div class="upload-btn-row suite-actions">
-          <button id="scheduleCreativeSuite" type="button" class="secondary-btn">Schedule</button>
+          <button id="scheduleCreativeSuite" type="button" class="schedule-btn">Schedule</button>
           <button id="saveCreativeSuite" type="button">Save edits</button>
         </div>
-        <nav class="suite-bottom-nav" aria-label="Editor actions">
-          <button type="button" class="suite-nav-item active">Edit</button>
-          <button type="button" class="suite-nav-item">Add clips</button>
-          <button type="button" class="suite-nav-item">Audio</button>
-        </nav>
       </div>
     </div>
 
@@ -680,6 +686,32 @@
           <button id="saveEditMsgBtn">Save Changes</button>
         </div>
       </div>
+    </div>
+
+    <div id="scheduleModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card" style="width: min(400px, 90vw);">
+        <div class="modal-top">
+          <h3>Schedule Post</h3>
+          <button id="closeScheduleModal" class="icon-btn">✕</button>
+        </div>
+        <div style="padding: 15px; display: flex; flex-direction: column; gap: 15px;">
+          <p style="font-size: 0.9rem; color: var(--muted);">Choose a date and time to publish this post (1 to 75 days from now).</p>
+          <div class="form-group">
+            <label for="scheduleDateTime">Date & Time</label>
+            <input type="datetime-local" id="scheduleDateTime" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text);" />
+          </div>
+          <div id="scheduleInfo" style="font-size: 0.85rem; color: var(--brand-a); min-height: 1.2rem;"></div>
+        </div>
+        <div class="upload-btn-row">
+          <button id="cancelScheduleBtn" type="button" class="secondary-btn" style="background: transparent; color: var(--text);">Cancel</button>
+          <button id="confirmScheduleBtn" type="button">Set Schedule</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="successToast" class="success-toast glass" hidden>
+      <div class="toast-icon">✅</div>
+      <div class="toast-message" id="toastMessage">scheduling set successfully</div>
     </div>
 
     <script type="module" src="app.js"></script>
