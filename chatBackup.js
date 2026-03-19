@@ -154,7 +154,7 @@ export function buildBackupImportPayload(parsed, { activeUserId = null, authUser
     const latest = normalizedMessages.at(-1);
     const name = inferChatName({ chatId: rawChatId, normalizedId, messages: normalizedMessages, chatMeta: nextChatMeta, authUsers, activeUserId });
 
-    nextChatMeta[chatId] = {
+    nextChatMeta[normalizedId] = {
       ...(nextChatMeta[normalizedId] || {}),
       id: normalizedId,
       name,
