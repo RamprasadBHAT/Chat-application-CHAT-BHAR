@@ -4648,6 +4648,21 @@ function formatMessageTime(value) {
   return new Date(stamp || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
+function getChatDateLabel(timestamp) {
+  const date = new Date(timestamp);
+  const now = new Date();
+
+  const diffTime = now.setHours(0,0,0,0) - new Date(timestamp).setHours(0,0,0,0);
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) {
+    return date.toLocaleDateString([], { weekday: 'long' });
+  }
+  return date.toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 function getStatusClass(status) {
   if (status === 'read') return 'read';
   if (status === 'delivered') return 'delivered';
@@ -4741,7 +4756,20 @@ function renderMessages(msgsArg = null) {
     updateTypingIndicators();  // mar 5
    
   messagesContainer.innerHTML = '';
+  let lastDateLabel = null;
+
   msgs.forEach((msg, idx) => {
+    const msgDate = toMillisValue(msg.createdAt || msg.timestamp);
+    const dateLabel = getChatDateLabel(msgDate);
+
+    if (dateLabel !== lastDateLabel) {
+      const separator = document.createElement('div');
+      separator.className = 'date-separator';
+      separator.innerHTML = `<span class="date-label">${dateLabel}</span>`;
+      messagesContainer.appendChild(separator);
+      lastDateLabel = dateLabel;
+    }
+
     const bubble = document.createElement('div');
     const files = msg.files || [];
     const isSticker = files.some(f => f.type === "image/webp/sticker");
@@ -5004,10 +5032,26 @@ function renderAttachmentPreview() {
   if (!pendingFiles.length) {
     attachmentPreview.hidden = true;
     attachmentPreview.innerHTML = '';
+    updateComposerButtons();
     return;
   }
   attachmentPreview.hidden = false;
   attachmentPreview.innerHTML = `<strong>Attachments</strong><ul>${pendingFiles.map((f) => `<li>${escapeHtml(f.name)}</li>`).join('')}</ul>`;
+  updateComposerButtons();
+}
+
+function updateComposerButtons() {
+  const hasText = Boolean(messageInput.value.trim());
+  const hasFiles = pendingFiles.length > 0;
+  const shouldShowSend = hasText || hasFiles;
+
+  if (shouldShowSend) {
+    micHoldBtn.hidden = true;
+    sendMsgBtn.hidden = false;
+  } else {
+    micHoldBtn.hidden = false;
+    sendMsgBtn.hidden = true;
+  }
 }
 
 function deleteCurrentChat() {
@@ -5453,7 +5497,8 @@ async function sendSticker(url) {
   // Update recents
   saveSticker(url);
   stickerTray.hidden = true;
-  stickerToggleBtn.textContent = '😊';
+  const img = stickerToggleBtn.querySelector('img');
+  if (img) img.src = 'assets/icons/social (1).svg';
 }
 
 function initEnhancedMessaging() {
@@ -5681,14 +5726,7 @@ function bindMessagingUI() {
         typingTimeout = setTimeout(() => setTypingState(false), 1200);
       }
 
-      // Toggle Mic vs Send icon
-      if (hasText) {
-        micHoldBtn.hidden = true;
-        sendMsgBtn.hidden = false;
-      } else {
-        micHoldBtn.hidden = false;
-        sendMsgBtn.hidden = true;
-      }
+      updateComposerButtons();
     });
 
     messageInput.addEventListener('blur', () => setTypingState(false));
@@ -5697,10 +5735,23 @@ function bindMessagingUI() {
   if (stickerToggleBtn) {
     stickerToggleBtn.addEventListener('click', () => {
       stickerTray.hidden = !stickerTray.hidden;
-      stickerToggleBtn.textContent = stickerTray.hidden ? '😊' : '⌨️';
+      const img = stickerToggleBtn.querySelector('img');
+      if (img) {
+        img.src = stickerTray.hidden ? 'assets/icons/social (1).svg' : 'assets/icons/keyboard.svg';
+      }
       if (!stickerTray.hidden) {
         renderStickerGrid('recent');
       }
+    });
+  }
+
+  const closeStickerTrayBtn = document.getElementById('closeStickerTrayBtn');
+  if (closeStickerTrayBtn) {
+    closeStickerTrayBtn.addEventListener('click', () => {
+      stickerTray.hidden = true;
+      const img = stickerToggleBtn.querySelector('img');
+      if (img) img.src = 'assets/icons/social (1).svg';
+      messageInput.focus();
     });
   }
 
