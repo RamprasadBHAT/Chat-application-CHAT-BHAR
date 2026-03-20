@@ -297,14 +297,26 @@
                 <div id="attachmentPreview" class="attachment-preview" hidden></div>
                 <input id="backupInput" type="file" accept="application/json" hidden />
                 <small id="composerTypingIndicator" class="typing-indicator" style="display:block; margin: 0 4px 6px 4px;"></small>
+                <div id="stickerTray" class="sticker-tray glass" hidden>
+                  <div class="sticker-tabs">
+                    <button type="button" class="sticker-tab active" data-tab="recent">🕒</button>
+                    <button type="button" class="sticker-tab" data-tab="favorites">⭐</button>
+                    <button type="button" class="sticker-tab" data-tab="packs">📦</button>
+                    <button type="button" id="createStickerBtn" class="sticker-tab create">➕</button>
+                    <input id="stickerFileInput" type="file" accept="image/*,video/gif" hidden />
+                  </div>
+                  <div id="stickerGrid" class="sticker-grid"></div>
+                </div>
                 <form id="chatForm" class="composer">
                   <label class="attach-btn" for="fileInput">📎</label>
                   <input id="fileInput" type="file" multiple />
+                  <button id="stickerToggleBtn" class="icon-btn" type="button">😊</button>
                   <input id="messageInput" type="text" placeholder="Type a message" />
                   <button id="micHoldBtn" class="mic-btn" type="button" title="Hold to record voice message">🎙</button>
                   <label class="view-once-toggle" title="View once image"><input id="viewOnceToggle" type="checkbox" /> 1x</label>
-                  <button type="submit">Send</button>
+                  <button id="sendMsgBtn" type="submit" hidden>Send</button>
                 </form>
+                <canvas id="stickerCanvas" width="512" height="512" style="display:none"></canvas>
                 <div id="recordingIndicator" class="recording-indicator" hidden>
                   <span class="recording-dot" aria-hidden="true"></span>
                   <strong>Recording...</strong>
