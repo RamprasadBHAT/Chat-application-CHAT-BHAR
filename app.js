@@ -495,8 +495,59 @@ function normalizeNotificationItem(item) {
 
 async function createNotification(payload) {
   if (!payload?.toUserId || !payload?.fromUserId) return;
+
+  // Requirement: Group unread message notifications from same user/chat
+  if (payload.type === 'message_item') {
+    if (useFirebase && db) {
+      try {
+        const existingQuery = query(
+          collection(db, 'notifications'),
+          where('toUserId', '==', payload.toUserId),
+          where('fromUserId', '==', payload.fromUserId),
+          where('chatId', '==', payload.chatId),
+          where('type', '==', 'message_item'),
+          where('unread', '==', true),
+          limit(1)
+        );
+        const snap = await getDocs(existingQuery);
+        if (!snap.empty) {
+          const docRef = snap.docs[0].ref;
+          const data = snap.docs[0].data();
+          const currentCount = data.count || 1;
+          await updateDoc(docRef, {
+            count: currentCount + 1,
+            previewText: payload.previewText,
+            messageId: payload.messageId,
+            createdAt: serverTimestamp()
+          });
+          return;
+        }
+      } catch (err) {
+        console.warn('Failed to group firebase notifications', err);
+      }
+    } else {
+      const existing = loadJson(NOTIFICATION_STORE_KEY, []);
+      const idx = existing.findIndex(n =>
+        n.toUserId === payload.toUserId &&
+        n.fromUserId === payload.fromUserId &&
+        n.chatId === payload.chatId &&
+        n.type === 'message_item' &&
+        n.unread
+      );
+      if (idx !== -1) {
+        existing[idx].count = (existing[idx].count || 1) + 1;
+        existing[idx].previewText = payload.previewText;
+        existing[idx].messageId = payload.messageId;
+        existing[idx].createdAt = Date.now();
+        saveJson(NOTIFICATION_STORE_KEY, existing);
+        return;
+      }
+    }
+  }
+
   const notification = normalizeNotificationItem({
     ...payload,
+    count: 1,
     unread: true,
     createdAt: Date.now()
   });
@@ -3114,17 +3165,64 @@ function updateNotificationBadge() {
   notificationsTabAll.textContent = `(${allCount}) ALL`;
 }
 
-function removeNotificationById(id) {
+async function removeNotificationById(id) {
+  if (useFirebase && db) {
+    try {
+      await deleteDoc(doc(db, 'notifications', id));
+    } catch (err) {
+      console.warn('Failed to delete notification from firebase', err);
+    }
+  } else {
+    const existing = loadJson(NOTIFICATION_STORE_KEY, []);
+    const updated = existing.filter(n => n.id !== id);
+    saveJson(NOTIFICATION_STORE_KEY, updated);
+  }
   notifications = notifications.filter((item) => item.id !== id);
   renderNotifications();
 }
 
-function removeNotificationGroup(category) {
+async function removeNotificationGroup(category) {
+  if (useFirebase && db) {
+    try {
+      const qNotifs = query(
+        collection(db, 'notifications'),
+        where('toUserId', '==', activeSession.id),
+        where('category', '==', category)
+      );
+      const snap = await getDocs(qNotifs);
+      const batch = writeBatch(db);
+      snap.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    } catch (err) {
+      console.warn('Failed to delete notification group from firebase', err);
+    }
+  } else {
+    const existing = loadJson(NOTIFICATION_STORE_KEY, []);
+    const updated = existing.filter(n => n.category !== category || n.toUserId !== activeSession.id);
+    saveJson(NOTIFICATION_STORE_KEY, updated);
+  }
   notifications = notifications.filter((item) => item.category !== category);
   renderNotifications();
 }
 
-function clearAllVisibleNotifications() {
+async function clearAllVisibleNotifications() {
+  const visible = getVisibleNotifications();
+  const idsToRemove = visible.map(n => n.id);
+
+  if (useFirebase && db) {
+    try {
+      const batch = writeBatch(db);
+      idsToRemove.forEach(id => batch.delete(doc(db, 'notifications', id)));
+      await batch.commit();
+    } catch (err) {
+      console.warn('Failed to clear all notifications from firebase', err);
+    }
+  } else {
+    const existing = loadJson(NOTIFICATION_STORE_KEY, []);
+    const updated = existing.filter(n => !idsToRemove.includes(n.id));
+    saveJson(NOTIFICATION_STORE_KEY, updated);
+  }
+
   if (activeNotificationTab === 'new') {
     notifications = notifications.filter((item) => !item.unread);
   } else {
@@ -3155,6 +3253,7 @@ function renderNotificationRows(items) {
     }
 
     if (item.type === 'message_item') {
+      const countLabel = (item.count || 1) > 1 ? ` (${item.count} messages)` : '';
       return `
         <div class="notification-row message-notif-row" data-notif-id="${item.id}">
           <div style="position:relative">
@@ -3162,7 +3261,7 @@ function renderNotificationRows(items) {
             <span class="presence-dot ${actor?.online ? 'online' : 'offline'}"></span>
           </div>
           <div class="notification-content">
-            <strong>${escapeHtml(actorName)}</strong>
+            <strong>${escapeHtml(actorName)}${countLabel}</strong>
             <div class="message-preview-bubble" onclick="onExploreMessageClick('${item.fromUserId}', '${escapeAttr(actorName)}'); setNotificationPanelOpen(false);">
               ${escapeHtml(item.previewText || 'New message')}
             </div>
@@ -3172,7 +3271,7 @@ function renderNotificationRows(items) {
             </div>
             <div id="notif-reply-field-${item.id}" class="notif-reply-field" hidden style="margin-top:8px; display:flex; gap:5px;">
               <input type="text" placeholder="Reply..." style="flex:1; border:1px solid var(--border); border-radius:15px; padding:4px 10px; font-size:0.8rem; background:transparent; color:var(--text);" />
-              <button onclick="sendNotifReply('${item.id}', '${item.fromUserId}', '${item.chatId}')" style="padding:4px 8px; font-size:0.7rem;">Send</button>
+              <button onclick="sendNotifReply('${item.id}', '${item.fromUserId}', '${item.chatId}', ${item.messageId || 'null'})" style="padding:4px 8px; font-size:0.7rem;">Send</button>
             </div>
           </div>
           <button class="row-clear-btn" data-remove-id="${item.id}" aria-label="Clear notification">✕</button>
@@ -3274,7 +3373,7 @@ window.toggleNotifReply = function(notifId) {
   if (field) field.hidden = !field.hidden;
 };
 
-window.sendNotifReply = async function(notifId, toUserId, chatId) {
+window.sendNotifReply = async function(notifId, toUserId, chatId, replyToId = null) {
   const field = document.getElementById(`notif-reply-field-${notifId}`);
   const input = field?.querySelector('input');
   const text = input?.value.trim();
@@ -3289,7 +3388,7 @@ window.sendNotifReply = async function(notifId, toUserId, chatId) {
     text,
     files: [],
     viewOnce: false,
-    replyToId: null
+    replyToId: replyToId
   });
 
   input.value = '';
@@ -4670,9 +4769,13 @@ function getStatusClass(status) {
 }
 
 function getStatusIcon(status) {
-  if (status === 'read') return '✓✓';
-  if (status === 'delivered') return '✓✓';
-  return '✓';
+  const isRead = status === 'read';
+  // Standard blue filter for read ticks (#34B7F1 approx)
+  const filter = isRead
+    ? 'invert(67%) sepia(87%) saturate(3025%) hue-rotate(168deg) brightness(98%) contrast(97%)'
+    : 'brightness(0) invert(1)';
+  const icon = (status === 'read' || status === 'delivered') ? 'double-tick.svg' : 'tick.svg';
+  return `<img src="assets/icons/${icon}" style="width:14px; height:14px; filter: ${filter}; vertical-align: middle;" />`;
 }
 
 function computeOutgoingStatus(msg) {
@@ -4962,6 +5065,7 @@ async function sendMessage(prepared = null) {
           category: 'messages',
           type: 'message_item',
           chatId: unifiedChatId,
+          messageId: msg.createdAt,
           previewText: (payload.text || (payload.files?.length ? '📎 Attachment' : 'New message')).slice(0, 120)
         });
       }
