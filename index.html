@@ -303,18 +303,29 @@
                     <button type="button" class="sticker-tab" data-tab="favorites">⭐</button>
                     <button type="button" class="sticker-tab" data-tab="packs">📦</button>
                     <button type="button" id="createStickerBtn" class="sticker-tab create">➕</button>
+                    <button type="button" id="closeStickerTrayBtn" class="sticker-tab close-tray">
+                      <img src="assets/icons/keyboard.svg" alt="keyboard" style="width: 20px; height: 20px;" />
+                    </button>
                     <input id="stickerFileInput" type="file" accept="image/*,video/gif" hidden />
                   </div>
                   <div id="stickerGrid" class="sticker-grid"></div>
                 </div>
                 <form id="chatForm" class="composer">
-                  <label class="attach-btn" for="fileInput">📎</label>
+                  <label class="attach-btn" for="fileInput">
+                    <img src="assets/icons/paperclip.svg" alt="attach" />
+                  </label>
                   <input id="fileInput" type="file" multiple />
-                  <button id="stickerToggleBtn" class="icon-btn" type="button">😊</button>
+                  <button id="stickerToggleBtn" class="icon-btn" type="button">
+                    <img src="assets/icons/social (1).svg" alt="stickers" />
+                  </button>
                   <input id="messageInput" type="text" placeholder="Type a message" />
-                  <button id="micHoldBtn" class="mic-btn" type="button" title="Hold to record voice message">🎙</button>
+                  <button id="micHoldBtn" class="mic-btn" type="button" title="Hold to record voice message">
+                    <img src="assets/icons/microphone.svg" alt="mic" />
+                  </button>
                   <label class="view-once-toggle" title="View once image"><input id="viewOnceToggle" type="checkbox" /> 1x</label>
-                  <button id="sendMsgBtn" type="submit" hidden>Send</button>
+                  <button id="sendMsgBtn" type="submit" hidden>
+                    <img src="assets/icons/share.svg" alt="send" />
+                  </button>
                 </form>
                 <canvas id="stickerCanvas" width="512" height="512" style="display:none"></canvas>
                 <div id="recordingIndicator" class="recording-indicator" hidden>

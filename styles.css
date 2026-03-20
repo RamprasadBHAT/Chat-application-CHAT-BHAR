@@ -197,7 +197,7 @@ main{padding:0;overflow:auto}
 .incoming{align-self:flex-start;background:var(--card);border-bottom-left-radius:4px;color:var(--text)}
 .outgoing{align-self:flex-end;background:linear-gradient(135deg,var(--chat-dark-blue),var(--chat-light-blue));border-bottom-right-radius:4px;color:#fff}
 .attachment-preview{border:1px dashed var(--border);border-radius:14px;padding:8px;margin:0 0 8px;font-size:.9rem}
-.composer{display:flex;gap:8px;align-items:center}.composer input[type='text']{flex:1;border:1px solid var(--border);border-radius:999px;padding:10px 14px;background:transparent;color:var(--text)}#fileInput{display:none}.attach-btn{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:rgba(99,91,255,.2);cursor:pointer}
+.composer{display:flex;gap:8px;align-items:center}.composer input[type='text']{flex:1;border:1px solid var(--border);border-radius:999px;padding:10px 14px;background:transparent;color:var(--text)}#fileInput{display:none}.attach-btn{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:rgba(99,91,255,.2);cursor:pointer}.attach-btn img{width:22px;height:22px;object-fit:contain}.mic-btn img{width:22px;height:22px;object-fit:contain}#stickerToggleBtn img{width:24px;height:24px;object-fit:contain}#sendMsgBtn img{width:24px;height:24px;object-fit:contain}
 
 .sticker-tray {
   position: absolute;
@@ -211,6 +211,19 @@ main{padding:0;overflow:auto}
   box-shadow: 0 -5px 20px rgba(0,0,0,0.1);
   overflow: hidden;
   background: var(--card);
+  transition: all 0.3s ease;
+}
+
+@media (min-width: 1024px) {
+  .sticker-tray {
+    width: 320px;
+    height: 400px;
+    right: auto;
+    left: 20px;
+    bottom: 70px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+  }
 }
 .sticker-tabs {
   display: flex;
@@ -272,6 +285,37 @@ main{padding:0;overflow:auto}
 .presence-dot.online{background:#22c55e}
 .presence-dot.offline{background:#94a3b8}
 .chat-audio audio{max-width:220px;width:100%;height:32px}
+
+.date-separator {
+  text-align: center;
+  margin: 15px 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.date-separator::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+  z-index: 1;
+  opacity: 0.5;
+}
+.date-label {
+  background: var(--bg);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  position: relative;
+  z-index: 2;
+  border: 1px solid var(--border);
+  text-transform: uppercase;
+}
 
 .bottom-nav{display:grid;grid-template-columns:repeat(5,1fr);padding:10px 4px;gap:2px;margin-top:6px}
 .nav-btn{display:grid;place-items:center;font-size:1.1rem;gap:2px}.nav-btn span{font-size:.8rem}
