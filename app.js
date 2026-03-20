@@ -114,6 +114,13 @@ const micHoldBtn = document.getElementById('micHoldBtn');
 const recordingIndicator = document.getElementById('recordingIndicator');
 const recordingTime = document.getElementById('recordingTime');
 const attachmentPreview = document.getElementById('attachmentPreview');
+const stickerTray = document.getElementById('stickerTray');
+const stickerGrid = document.getElementById('stickerGrid');
+const stickerToggleBtn = document.getElementById('stickerToggleBtn');
+const sendMsgBtn = document.getElementById('sendMsgBtn');
+const createStickerBtn = document.getElementById('createStickerBtn');
+const stickerFileInput = document.getElementById('stickerFileInput');
+const stickerCanvas = document.getElementById('stickerCanvas');
 const backupNowBtn = document.getElementById('backupNowBtn');
 const shareBackupBtn = document.getElementById('shareBackupBtn');
 const importBackupBtn = document.getElementById('importBackupBtn');
@@ -344,6 +351,8 @@ let touchStartX = 0;
 let swipeBubble = null;
 let currentPendingRequest = null;
 let recentSearches = loadJson('chatbhar.recentSearches', []);
+let recentStickers = loadJson('chatbhar.recentStickers', []);
+let favoriteStickers = loadJson('chatbhar.favoriteStickers', []);
 let myRelationships = [];
 let myFollows = [];
 let myFollowRequests = [];
@@ -4735,9 +4744,10 @@ function renderMessages(msgsArg = null) {
   msgs.forEach((msg, idx) => {
     const bubble = document.createElement('div');
     const files = msg.files || [];
-    const isImageOnly = !msg.text && !msg.replyToId && files.length > 0 && files.every(f => (f.type || '').startsWith('image/'));
+    const isSticker = files.some(f => f.type === "image/webp/sticker");
+    const isImageOnly = !msg.text && !msg.replyToId && files.length > 0 && files.every(f => (f.type || '').startsWith('image/') && f.type !== "image/webp/sticker");
     const dir = msg.dir || (msg.senderId === myUid ? 'outgoing' : 'incoming');
-    bubble.className = `bubble ${dir} ${isImageOnly ? 'image-only' : ''}`;
+    bubble.className = `bubble ${dir} ${isImageOnly ? 'image-only' : ''} ${isSticker ? 'sticker' : ''}`;
 
     if (msg.deleted) {
       // Requirement: show a "This message was deleted" placeholder
@@ -4756,6 +4766,10 @@ function renderMessages(msgsArg = null) {
 
     let fileHtml = '';
     (msg.files || []).forEach((f) => {
+      if (f.type === "image/webp/sticker") {
+        fileHtml += `<img src="${f.dataUrl}" alt="sticker" class="sticker-img" />`;
+        return;
+      }
       const ext = (f.name.split('.').pop() || '').toLowerCase();
       const isImage = (f.type || '').startsWith('image/');
       const hideName = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'heif'].includes(ext);
@@ -4972,6 +4986,8 @@ async function sendMessage(prepared = null) {
   }
   messageInput.value = '';
   setTypingState(false);
+  micHoldBtn.hidden = false;
+  sendMsgBtn.hidden = true;
   fileInput.value = '';
   pendingFiles = [];
   replyToMsg = null;
@@ -5323,6 +5339,123 @@ function escapeHtml(value) {
 
 function escapeAttr(value) { return String(value).replaceAll('"', '&quot;'); }
 
+async function processAndUploadSticker(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = async () => {
+      const ctx = stickerCanvas.getContext('2d');
+      ctx.clearRect(0, 0, 512, 512);
+
+      // Maintain aspect ratio while filling 512x512
+      const ratio = Math.min(512 / img.width, 512 / img.height);
+      const w = img.width * ratio;
+      const h = img.height * ratio;
+      const x = (512 - w) / 2;
+      const y = (512 - h) / 2;
+
+      ctx.drawImage(img, x, y, w, h);
+
+      stickerCanvas.toBlob(async (blob) => {
+        const webpFile = new File([blob], "sticker.webp", { type: "image/webp" });
+        try {
+          const res = await uploadToBackend(webpFile);
+          resolve(res.dataUrl);
+        } catch (err) {
+          console.error("Sticker upload failed", err);
+          resolve(null);
+        }
+      }, "image/webp");
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function saveSticker(url) {
+  recentStickers = [url, ...recentStickers.filter(u => u !== url)].slice(0, 20);
+  saveJson('chatbhar.recentStickers', recentStickers);
+}
+
+function renderStickerGrid(type) {
+  stickerGrid.innerHTML = '';
+  let list = [];
+  if (type === 'recent') list = recentStickers;
+  else if (type === 'favorites') list = favoriteStickers;
+  else if (type === 'packs') list = [];
+
+  if (list.length === 0) {
+    stickerGrid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: var(--muted);">No stickers yet.</p>';
+    return;
+  }
+
+  list.forEach(url => {
+    const item = document.createElement('div');
+    item.className = 'sticker-item';
+    item.innerHTML = `<img src="${url}" loading="lazy" />`;
+
+    let isLongPress = false;
+    let timer;
+
+    const startTimer = () => {
+      isLongPress = false;
+      timer = setTimeout(() => {
+        isLongPress = true;
+        toggleFavoriteSticker(url);
+      }, 700);
+    };
+
+    const clearTimer = () => clearTimeout(timer);
+
+    item.onmousedown = startTimer;
+    item.onmouseup = clearTimer;
+    item.onmouseleave = clearTimer;
+
+    item.ontouchstart = (e) => {
+      startTimer();
+    };
+    item.ontouchend = clearTimer;
+
+    item.onclick = (e) => {
+      if (!isLongPress) {
+        sendSticker(url);
+      }
+      isLongPress = false;
+    };
+
+    stickerGrid.appendChild(item);
+  });
+}
+
+function toggleFavoriteSticker(url) {
+  if (favoriteStickers.includes(url)) {
+    favoriteStickers = favoriteStickers.filter(u => u !== url);
+  } else {
+    favoriteStickers.unshift(url);
+  }
+  saveJson('chatbhar.favoriteStickers', favoriteStickers);
+  alert(favoriteStickers.includes(url) ? 'Added to favorites' : 'Removed from favorites');
+  renderStickerGrid('favorites');
+}
+
+async function sendSticker(url) {
+  const stickerFile = {
+    name: "sticker.webp",
+    type: "image/webp/sticker",
+    dataUrl: url
+  };
+
+  await sendMessage({
+    text: '',
+    files: [stickerFile],
+    viewOnce: false,
+    replyToId: null
+  });
+
+  // Update recents
+  saveSticker(url);
+  stickerTray.hidden = true;
+  stickerToggleBtn.textContent = '😊';
+}
+
 function initEnhancedMessaging() {
   ensureChatMeta();
   bindMessagingUI();
@@ -5493,6 +5626,22 @@ function bindMessagingUI() {
 
     
 
+    const menuActions = document.querySelector('.menu-actions');
+    if (menuActions && !document.getElementById('contextFavoriteBtn')) {
+      const favoriteStickerBtn = document.createElement('button');
+      favoriteStickerBtn.id = 'contextFavoriteBtn';
+      favoriteStickerBtn.textContent = 'Add to Favorites';
+      menuActions.insertBefore(favoriteStickerBtn, document.getElementById('deleteMeBtn'));
+
+      favoriteStickerBtn.onclick = () => {
+        const sticker = (currentContextMsg.files || []).find(f => f.type === "image/webp/sticker");
+        if (sticker) {
+          toggleFavoriteSticker(sticker.dataUrl);
+        }
+        document.getElementById('msgContextMenu').hidden = true;
+      };
+    }
+
     const deleteMeBtn = document.getElementById('deleteMeBtn');
     if (deleteMeBtn) deleteMeBtn.onclick = () => deleteMessage('me');
 
@@ -5531,10 +5680,55 @@ function bindMessagingUI() {
       if (hasText) {
         typingTimeout = setTimeout(() => setTypingState(false), 1200);
       }
+
+      // Toggle Mic vs Send icon
+      if (hasText) {
+        micHoldBtn.hidden = true;
+        sendMsgBtn.hidden = false;
+      } else {
+        micHoldBtn.hidden = false;
+        sendMsgBtn.hidden = true;
+      }
     });
 
     messageInput.addEventListener('blur', () => setTypingState(false));
   }
+
+  if (stickerToggleBtn) {
+    stickerToggleBtn.addEventListener('click', () => {
+      stickerTray.hidden = !stickerTray.hidden;
+      stickerToggleBtn.textContent = stickerTray.hidden ? '😊' : '⌨️';
+      if (!stickerTray.hidden) {
+        renderStickerGrid('recent');
+      }
+    });
+  }
+
+  if (createStickerBtn) {
+    createStickerBtn.addEventListener('click', () => stickerFileInput.click());
+  }
+
+  if (stickerFileInput) {
+    stickerFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const stickerUrl = await processAndUploadSticker(file);
+      if (stickerUrl) {
+        saveSticker(stickerUrl);
+        renderStickerGrid('recent');
+      }
+    });
+  }
+
+  document.querySelectorAll('.sticker-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      if (tab.id === 'createStickerBtn') return;
+      document.querySelectorAll('.sticker-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderStickerGrid(tab.dataset.tab);
+    });
+  });
 
   
   if (closeImagePreview) closeImagePreview.addEventListener('click', closeImagePreviewModal);
@@ -5605,6 +5799,17 @@ function showContextMenu(e, bubble) {
   }
   if (emojiBar) {
     emojiBar.style.display = isDeleted ? 'none' : 'flex';
+  }
+
+  const contextFavoriteBtn = document.getElementById('contextFavoriteBtn');
+  if (contextFavoriteBtn) {
+    const isStickerMsg = (currentContextMsg.files || []).some(f => f.type === "image/webp/sticker");
+    contextFavoriteBtn.hidden = isDeleted || !isStickerMsg;
+    if (isStickerMsg) {
+      const sticker = currentContextMsg.files.find(f => f.type === "image/webp/sticker");
+      const isFav = favoriteStickers.includes(sticker.dataUrl);
+      contextFavoriteBtn.textContent = isFav ? 'Remove from Favorites' : 'Add to Favorites';
+    }
   }
 //
   const removeReactionBtn = document.getElementById('removeReactionBtn');
