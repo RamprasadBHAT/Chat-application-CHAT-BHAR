@@ -274,16 +274,32 @@
               </aside>
               <section class="chat-panel">
                 <div class="chat-header">
-                  <h3 id="activeChatTitle">General</h3>
-                  <small id="typingIndicator" class="typing-indicator"></small>
+                  <div style="display:flex; flex-direction:column">
+                    <h3 id="activeChatTitle">General</h3>
+                    <small id="typingIndicator" class="typing-indicator"></small>
+                  </div>
+                  <div id="chatSearchBox" class="search-row glass" hidden style="position:absolute; top:0; left:0; right:40px; margin-bottom:0; z-index:5">
+                    <span>🔍</span>
+                    <input id="chatSearchInput" placeholder="Search in chat..." />
+                    <button id="closeChatSearchBtn" class="icon-btn">✕</button>
+                  </div>
                   <div class="menu-wrap">
                     <button id="chatMenuBtn" class="utility-btn">⋮</button>
                     <div id="chatMenu" class="chat-menu" hidden>
-                      <button id="backupNowBtn">Export backup</button>
-                      <button id="importBackupBtn">Import backup</button>
-                      <button id="shareBackupBtn">Save to phone</button>
-                      <button id="deleteChatBtn" class="utility-btn">Clear chat</button>
-                  <!--    <button id="deleteChatBtn" class="danger">Delete current chat</button>    -->
+                      <button id="groupInfoMenuBtn">Group info</button>
+                      <button id="groupMediaMenuBtn">Group media</button>
+                      <button id="searchMenuBtn">Search</button>
+                      <button id="muteMenuBtn">Mute notifications</button>
+                      <button id="themeMenuBtn">Chat theme</button>
+                      <div class="submenu-parent">
+                        <button id="moreMenuBtn" class="has-submenu">More <span style="float:right">▶</span></button>
+                        <div id="moreSubmenu" class="chat-menu submenu" hidden>
+                          <button id="backupNowBtn">Export backup</button>
+                          <button id="importBackupBtn">Import backup</button>
+                          <button id="shareBackupBtn">Save to phone</button>
+                          <button id="deleteChatBtn" class="utility-btn">Clear chat</button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -294,6 +310,35 @@
                     <p id="replyText">Message text...</p>
                   </div>
                   <button id="closeReplyBtn" class="icon-btn">✕</button>
+                </div>
+
+                <div id="attachmentMenu" class="attachment-menu glass" hidden>
+                  <div class="attachment-grid">
+                    <button class="attachment-item" id="attachDocumentBtn">
+                      <div class="attachment-icon doc"><i data-lucide="file-text"></i></div>
+                      <span>Document</span>
+                    </button>
+                    <button class="attachment-item" id="attachCameraBtn">
+                      <div class="attachment-icon camera"><i data-lucide="camera"></i></div>
+                      <span>Camera</span>
+                    </button>
+                    <button class="attachment-item" id="attachGalleryBtn">
+                      <div class="attachment-icon gallery"><i data-lucide="image"></i></div>
+                      <span>Gallery</span>
+                    </button>
+                    <button class="attachment-item" id="attachAudioBtn">
+                      <div class="attachment-icon audio"><i data-lucide="headphones"></i></div>
+                      <span>Audio</span>
+                    </button>
+                    <button class="attachment-item" id="attachLocationBtn">
+                      <div class="attachment-icon location"><i data-lucide="map-pin"></i></div>
+                      <span>Location</span>
+                    </button>
+                    <button class="attachment-item" id="attachPollBtn">
+                      <div class="attachment-icon poll"><i data-lucide="bar-chart-2"></i></div>
+                      <span>Poll</span>
+                    </button>
+                  </div>
                 </div>
                 <div id="attachmentPreview" class="attachment-preview" hidden></div>
                 <input id="backupInput" type="file" accept="application/json" hidden />
@@ -312,10 +357,10 @@
                   <div id="stickerGrid" class="sticker-grid"></div>
                 </div>
                 <form id="chatForm" class="composer">
-                  <label class="attach-btn" for="fileInput">
+                  <button type="button" class="attach-btn" id="toggleAttachmentMenuBtn">
                     <img src="assets/icons/paperclip.svg" alt="attach" />
-                  </label>
-                  <input id="fileInput" type="file" multiple />
+                  </button>
+                  <input id="fileInput" type="file" multiple hidden />
                   <button id="stickerToggleBtn" class="icon-btn" type="button">
                     <img src="assets/icons/social (1).svg" alt="stickers" />
                   </button>
@@ -782,6 +827,57 @@
     <div id="successToast" class="success-toast glass" hidden>
       <div class="toast-icon">✅</div>
       <div class="toast-message" id="toastMessage">scheduling set successfully</div>
+    </div>
+
+    <div id="themeModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top">
+          <h3>Chat Theme</h3>
+          <button id="closeThemeModal" class="icon-btn">✕</button>
+        </div>
+        <div class="theme-options">
+          <h4>Doodle Backgrounds</h4>
+          <div class="doodle-grid">
+            <button class="doodle-btn pattern-1" data-theme="doodle-1">Doodle 1</button>
+            <button class="doodle-btn pattern-2" data-theme="doodle-2">Doodle 2</button>
+            <button class="doodle-btn pattern-3" data-theme="doodle-3">Doodle 3</button>
+          </div>
+          <h4 style="margin-top:15px">Solid Colors</h4>
+          <div class="color-grid">
+            <button class="color-btn" style="background:#075e54" data-color="#075e54"></button>
+            <button class="color-btn" style="background:#128c7e" data-color="#128c7e"></button>
+            <button class="color-btn" style="background:#25d366" data-color="#25d366"></button>
+            <button class="color-btn" style="background:#34b7f1" data-color="#34b7f1"></button>
+            <button class="color-btn" style="background:#ece5dd" data-color="#ece5dd"></button>
+          </div>
+          <h4 style="margin-top:15px">Custom Background</h4>
+          <input type="file" id="customBgInput" accept="image/*" />
+        </div>
+      </div>
+    </div>
+
+    <div id="pollModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top">
+          <h3>Create Poll</h3>
+          <button id="closePollModal" class="icon-btn">✕</button>
+        </div>
+        <div class="form-group">
+          <label>Question</label>
+          <input id="pollQuestionInput" placeholder="Ask a question" />
+        </div>
+        <div class="form-group">
+          <label>Options</label>
+          <div id="pollOptionsList" style="display:flex; flex-direction:column; gap:8px">
+            <input class="poll-option-input" placeholder="Option 1" />
+            <input class="poll-option-input" placeholder="Option 2" />
+          </div>
+          <button id="addPollOptionBtn" class="utility-btn" style="margin-top:8px">+ Add option</button>
+        </div>
+        <div class="upload-btn-row">
+          <button id="sendPollBtn">Send Poll</button>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="app.js"></script>

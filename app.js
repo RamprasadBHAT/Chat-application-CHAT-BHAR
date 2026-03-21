@@ -873,6 +873,7 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   // Update Global State immediately
   activeChat = targetChatId;
+  updateChatBackground();
   const currentChatId = activeChat;
 
   if (messageUnsubscribe) {
@@ -2048,9 +2049,118 @@ function bindEvents() {
   });
 
   deleteChatBtn.addEventListener('click', deleteCurrentChat);
-  chatMenuBtn.addEventListener('click', () => (chatMenu.hidden = !chatMenu.hidden));
+  chatMenuBtn.onclick = (e) => {
+    e.stopPropagation();
+    chatMenu.hidden = !chatMenu.hidden;
+    document.getElementById('moreSubmenu').hidden = true;
+  };
+  document.getElementById('moreMenuBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const submenu = document.getElementById('moreSubmenu');
+    submenu.hidden = !submenu.hidden;
+  });
+  document.getElementById('groupInfoMenuBtn').addEventListener('click', () => {
+    chatMenu.hidden = true;
+    openGroupInfoModal();
+  });
+  document.getElementById('groupMediaMenuBtn').addEventListener('click', () => {
+    chatMenu.hidden = true;
+    openGroupInfoModal(); // Reusing the modal which already has media gallery
+  });
+  document.getElementById('searchMenuBtn').addEventListener('click', () => {
+    chatMenu.hidden = true;
+    document.getElementById('chatSearchBox').hidden = false;
+    document.getElementById('chatSearchInput').focus();
+  });
+  document.getElementById('muteMenuBtn').addEventListener('click', () => {
+    chatMenu.hidden = true;
+    if (activeChat) {
+      selectedChats.clear();
+      selectedChats.add(getUnifiedChatId(activeChat));
+      openMuteModal();
+    }
+  });
+  document.getElementById('themeMenuBtn').addEventListener('click', () => {
+    chatMenu.hidden = true;
+    document.getElementById('themeModal').hidden = false;
+  });
+
+  const themeModal = document.getElementById('themeModal');
+  document.getElementById('closeThemeModal').onclick = () => (themeModal.hidden = true);
+
+  document.querySelectorAll('.doodle-btn').forEach(btn => {
+    btn.onclick = () => {
+        applyChatTheme(btn.dataset.theme);
+        themeModal.hidden = true;
+    };
+  });
+
+  document.querySelectorAll('.color-btn').forEach(btn => {
+    btn.onclick = () => {
+        applyChatTheme(null, btn.dataset.color);
+        themeModal.hidden = true;
+    };
+  });
+
+  document.getElementById('closeChatSearchBtn').onclick = () => {
+    document.getElementById('chatSearchBox').hidden = true;
+    document.getElementById('chatSearchInput').value = '';
+    renderMessages();
+  };
+
+  document.getElementById('chatSearchInput').oninput = (e) => {
+    const query = e.target.value.toLowerCase();
+    const msgs = chatStore[activeChat] || [];
+    const filtered = query ? msgs.filter(m => (m.text || '').toLowerCase().includes(query)) : msgs;
+    renderMessages(filtered);
+  };
+
+  document.getElementById('customBgInput').onchange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = (re) => {
+            applyChatTheme(null, null, re.target.result);
+            themeModal.hidden = true;
+        };
+        reader.readAsDataURL(file);
+    }
+  };
+
+  function applyChatTheme(doodleClass, solidColor, customImg) {
+    if (!activeChat) return;
+    const chatId = getUnifiedChatId(activeChat);
+    chatMeta[chatId] = chatMeta[chatId] || { id: chatId };
+    chatMeta[chatId].theme = { doodleClass, solidColor, customImg };
+    saveJson('chatbhar.chatMeta', chatMeta);
+    updateChatBackground();
+  }
+
+  function updateChatBackground() {
+    if (!activeChat) {
+        messagesContainer.className = 'messages';
+        messagesContainer.style.backgroundImage = '';
+        messagesContainer.style.backgroundColor = '';
+        return;
+    }
+    const chatId = getUnifiedChatId(activeChat);
+    const theme = chatMeta[chatId]?.theme;
+    messagesContainer.className = 'messages';
+    messagesContainer.style.backgroundImage = '';
+    messagesContainer.style.backgroundColor = '';
+
+    if (theme) {
+        if (theme.doodleClass) messagesContainer.classList.add(theme.doodleClass);
+        if (theme.solidColor) messagesContainer.style.backgroundColor = theme.solidColor;
+        if (theme.customImg) messagesContainer.style.backgroundImage = `url(${theme.customImg})`;
+    }
+  }
+
   document.addEventListener('click', (e) => {
-    if (!chatMenu.contains(e.target) && e.target !== chatMenuBtn) chatMenu.hidden = true;
+    if (!chatMenu.contains(e.target) && e.target !== chatMenuBtn) {
+        chatMenu.hidden = true;
+        document.getElementById('moreSubmenu').hidden = true;
+    }
   });
 
   fileInput.addEventListener('change', async (e) => {
@@ -2679,6 +2789,43 @@ async function acceptFollowRequest(relationshipId) {
     fetchAndSyncFollowRequests();
   } catch (err) {
     alert(err.message);
+  }
+}
+
+window.voteInPoll = voteInPoll;
+async function voteInPoll(msgId, optionIdx) {
+  if (!activeSession || !activeChat) return;
+  const myUid = activeSession.id;
+
+  try {
+    if (useFirebase) {
+      const msgRef = doc(db, "messages", msgId);
+      const msgSnap = await getDoc(msgRef);
+      if (msgSnap.exists()) {
+        const poll = msgSnap.data().poll;
+        // Remove vote from other options if single-choice (WhatsApp style is single-choice usually)
+        poll.options.forEach((opt, idx) => {
+            opt.votes = (opt.votes || []).filter(uid => uid !== myUid);
+            if (idx === optionIdx) opt.votes.push(myUid);
+        });
+        await updateDoc(msgRef, { poll });
+      }
+    } else {
+        const localStore = loadJson(CHAT_STORE_KEY, {});
+        const msgs = localStore[activeChat] || [];
+        const msg = msgs.find(m => m.id === msgId || m.docId === msgId);
+        if (msg && msg.poll) {
+            msg.poll.options.forEach((opt, idx) => {
+                opt.votes = (opt.votes || []).filter(uid => uid !== myUid);
+                if (idx === optionIdx) opt.votes.push(myUid);
+            });
+            saveJson(CHAT_STORE_KEY, localStore);
+            chatStore = localStore;
+            renderMessages();
+        }
+    }
+  } catch (err) {
+    console.error("Voting failed", err);
   }
 }
 
@@ -4639,7 +4786,7 @@ function renderChatUsers() {
 
     selectionHeader.innerHTML = `
       <button id="cancelSelectionBtn" class="selection-btn"><i data-lucide="arrow-left"></i></button>
-      <span id="selectionCount">${count}</span>
+      <span id="selectionCount" style="color:white; font-weight:bold; margin-left:10px">${count}</span>
       <div class="selection-actions">
         <button id="pinChatBtn" title="${isPinned ? 'Unpin' : 'Pin'}">
           <i data-lucide="pin" class="${isPinned ? 'pinned' : ''}" style="${isPinned ? 'fill: currentColor' : ''}"></i>
@@ -4651,11 +4798,11 @@ function renderChatUsers() {
         </button>
         <div class="menu-wrap">
           <button id="moreSelectionOptionsBtn" title="More"><i data-lucide="more-vertical"></i></button>
-          <div id="selectionMoreMenu" class="chat-menu" hidden>
-            ${isGroup ? '<button id="exitGroupBtn">Exit Group</button>' : ''}
-            ${isGroup ? '<button id="groupInfoBtn">Group Info</button>' : ''}
-            <button id="selectAllBtn">Select All</button>
-            <button id="clearChatSelectedBtn">Clear Chat</button>
+          <div id="selectionMoreMenu" class="chat-menu" hidden style="top:40px; right:0; width:160px">
+            ${isGroup ? '<button id="exitGroupBtn" style="color:var(--text)">Exit group</button>' : ''}
+            ${isGroup ? '<button id="groupInfoBtn" style="color:var(--text)">Group info</button>' : ''}
+            <button id="selectAllBtn" style="color:var(--text)">Select all</button>
+            <button id="clearChatSelectedBtn" style="color:var(--text)">Clear chat</button>
           </div>
         </div>
       </div>
@@ -5018,6 +5165,18 @@ function renderMessages(msgsArg = null) {
     const dir = msg.dir || (msg.senderId === myUid ? 'outgoing' : 'incoming');
     bubble.className = `bubble ${dir} ${isImageOnly ? 'image-only' : ''} ${isSticker ? 'sticker' : ''}`;
 
+    let senderHtml = '';
+    const sender = authUsers.find(u => u.id === msg.senderId);
+    if (sender) {
+        const avatar = sender.profilePic ? `<img src="${sender.profilePic}" class="bubble-sender-avatar" />` : `<div class="bubble-sender-avatar" style="background:var(--brand-a); color:white; display:grid; place-items:center; font-size:10px">${(sender.name?.[0] || 'U').toUpperCase()}</div>`;
+        senderHtml = `
+            <div class="bubble-sender">
+                ${avatar}
+                <span class="bubble-sender-name">${escapeHtml(sender.username || sender.name)}</span>
+            </div>
+        `;
+    }
+
     if (msg.deleted) {
       // Requirement: show a "This message was deleted" placeholder
       bubble.innerHTML = '<i style="opacity: 0.7; font-size: 0.85rem;">This message was deleted</i>';
@@ -5054,8 +5213,16 @@ function renderMessages(msgsArg = null) {
       } else if ((f.type || '').startsWith('audio/')) {
         fileHtml += `<div class="chat-audio"><audio controls src="${f.dataUrl}"></audio></div>`;
       } else {
-        const showName = ext === 'pdf' || !isImage;
-        fileHtml += `<div>${fileIcon(f.type)} ${showName ? `<a href="${f.dataUrl}" download="${escapeAttr(f.name)}">${escapeHtml(f.name)}</a>` : ''}</div>`;
+        const extUpper = ext.toUpperCase();
+        fileHtml += `
+            <div class="chat-file-msg">
+                <div class="chat-file-icon">${fileIcon(f.type)}</div>
+                <div class="chat-file-info">
+                    <a href="${f.dataUrl}" download="${escapeAttr(f.name)}" class="chat-file-name">${escapeHtml(f.name)}</a>
+                    <div class="chat-file-meta">${extUpper} • ${Math.round((f.size || 0) / 1024)} KB</div>
+                </div>
+            </div>
+        `;
       }
     });
 
@@ -5083,7 +5250,44 @@ function renderMessages(msgsArg = null) {
     const effectiveStatus = dir === 'outgoing' ? computeOutgoingStatus(msg) : (msg.status || 'sent');
     const timestampHtml = `<small class="bubble-time">${formatMessageTime(msg.createdAt || msg.timestamp)}</small>`;
     const statusHtml = dir === 'outgoing' ? `<small class="bubble-status ${getStatusClass(effectiveStatus)}">${getStatusIcon(effectiveStatus)}</small>` : '';
-    bubble.innerHTML = `${replyHtml}${escapeHtml(msg.text || '')}${editedHtml}${fileHtml}${reactionHtml}<div class="bubble-meta">${timestampHtml}${statusHtml}</div>`;
+
+    let pollHtml = '';
+    if (msg.poll) {
+        const totalVotes = msg.poll.options.reduce((sum, opt) => sum + (opt.votes?.length || 0), 0);
+        const optionsHtml = msg.poll.options.map((opt, optIdx) => {
+            const percentage = totalVotes > 0 ? ((opt.votes?.length || 0) / totalVotes * 100) : 0;
+            const hasVoted = (opt.votes || []).includes(myUid);
+            const voterAvatars = (opt.votes || []).slice(0, 3).map(uid => {
+                const u = authUsers.find(x => x.id === uid);
+                return `<div class="poll-voter-avatar">${(u?.name?.[0] || 'U').toUpperCase()}</div>`;
+            }).join('');
+
+            return `
+                <div class="poll-option-row" onclick="voteInPoll('${msg.docId || msg.id}', ${optIdx})">
+                    <div class="poll-option-label">
+                        <span>${escapeHtml(opt.text)}</span>
+                        <span>${opt.votes?.length || 0}</span>
+                    </div>
+                    <div class="poll-bar-bg">
+                        <div class="poll-bar-fill" style="width: ${percentage}%"></div>
+                    </div>
+                    <div class="poll-voters">
+                        ${voterAvatars}
+                        ${opt.votes?.length > 3 ? `<span style="font-size:10px; color:var(--muted); margin-left:4px">+${opt.votes.length - 3}</span>` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        pollHtml = `
+            <div class="poll-bubble">
+                <div class="poll-question">${escapeHtml(msg.poll.question)}</div>
+                <div class="poll-options">${optionsHtml}</div>
+            </div>
+        `;
+    }
+
+    bubble.innerHTML = `${senderHtml}${replyHtml}${escapeHtml(msg.text || '')}${editedHtml}${fileHtml}${pollHtml}${reactionHtml}<div class="bubble-meta">${timestampHtml}${statusHtml}</div>`;
     bubble.dataset.id = msg.id;
     if (msg.docId) bubble.dataset.docId = msg.docId;
     if (msg.senderId) bubble.dataset.senderId = msg.senderId;
@@ -5146,6 +5350,7 @@ async function sendMessage(prepared = null) {
 
   try {
     if (useFirebase) {
+      const isPoll = Boolean(payload.poll);
       // Create conversation doc if it doesn't exist
       const convRef = doc(db, "conversations", unifiedChatId);
       const convSnap = await getDoc(convRef);
@@ -5176,6 +5381,7 @@ async function sendMessage(prepared = null) {
         senderName: activeHandle(),
         text: payload.text || '',
         files: payload.files || [],
+        poll: payload.poll || null,
         replyToId: payload.replyToId || null,
         viewOnce: payload.viewOnce || false,
         createdAt: now,
@@ -5190,7 +5396,7 @@ async function sendMessage(prepared = null) {
 
       // Update conversation record
       await updateDoc(convRef, {
-        lastMessage: payload.text || (payload.files?.length ? '📎 Attachment' : ''),
+        lastMessage: isPoll ? `📊 Poll: ${payload.poll.question}` : (payload.text || (payload.files?.length ? '📎 Attachment' : '')),
         updatedAt: now,
         visibleTo: selectedUser ? [myUid, selectedUser.uid] : (chatMeta[unifiedChatId]?.participants || [myUid])
       });
@@ -5215,6 +5421,7 @@ async function sendMessage(prepared = null) {
         senderName: activeHandle(),
         text: payload.text || '',
         files: payload.files || [],
+        poll: payload.poll || null,
         replyToId: payload.replyToId || null,
         viewOnce: payload.viewOnce || false,
         createdAt: now,
@@ -5230,16 +5437,18 @@ async function sendMessage(prepared = null) {
       // Update local conversations
       const convs = loadJson('chatbhar.conversations', []);
       let conv = convs.find(c => c.id === unifiedChatId);
+      const isPoll = Boolean(payload.poll);
+      const lastMsgText = isPoll ? `📊 Poll: ${payload.poll.question}` : payload.text;
       if (!conv) {
         conv = {
           id: unifiedChatId,
           participants: selectedUser ? [myUid, selectedUser.uid] : [myUid],
           isGroup: unifiedChatId.startsWith('group:'),
-          name: "", lastMessage: payload.text, updatedAt: now
+          name: "", lastMessage: lastMsgText, updatedAt: now
         };
         convs.push(conv);
       } else {
-        conv.lastMessage = payload.text;
+        conv.lastMessage = lastMsgText;
         conv.updatedAt = now;
       }
       saveJson('chatbhar.conversations', convs);
@@ -5980,6 +6189,7 @@ function bindMessagingUI() {
   if (stickerToggleBtn) {
     stickerToggleBtn.addEventListener('click', () => {
       stickerTray.hidden = !stickerTray.hidden;
+      attachmentMenu.hidden = true;
       const img = stickerToggleBtn.querySelector('img');
       if (img) {
         img.src = stickerTray.hidden ? 'assets/icons/social (1).svg' : 'assets/icons/keyboard.svg';
@@ -5989,6 +6199,97 @@ function bindMessagingUI() {
       }
     });
   }
+
+  const attachmentMenu = document.getElementById('attachmentMenu');
+  const toggleAttachmentMenuBtn = document.getElementById('toggleAttachmentMenuBtn');
+  if (toggleAttachmentMenuBtn) {
+    toggleAttachmentMenuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        attachmentMenu.hidden = !attachmentMenu.hidden;
+        stickerTray.hidden = true;
+        const stickerImg = stickerToggleBtn.querySelector('img');
+        if (stickerImg) stickerImg.src = 'assets/icons/social (1).svg';
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    if (attachmentMenu && !attachmentMenu.contains(e.target) && e.target !== toggleAttachmentMenuBtn) {
+        attachmentMenu.hidden = true;
+    }
+  });
+
+  document.getElementById('attachDocumentBtn').addEventListener('click', () => {
+    fileInput.accept = '*/*';
+    fileInput.click();
+    attachmentMenu.hidden = true;
+  });
+  document.getElementById('attachCameraBtn').addEventListener('click', () => {
+    // For now, trigger creative suite or alert
+    attachmentMenu.hidden = true;
+    alert('Camera capture coming soon');
+  });
+  document.getElementById('attachGalleryBtn').addEventListener('click', () => {
+    fileInput.accept = 'image/*,video/*';
+    fileInput.click();
+    attachmentMenu.hidden = true;
+  });
+  document.getElementById('attachAudioBtn').addEventListener('click', () => {
+    fileInput.accept = 'audio/*';
+    fileInput.click();
+    attachmentMenu.hidden = true;
+  });
+  document.getElementById('attachLocationBtn').addEventListener('click', () => {
+    attachmentMenu.hidden = true;
+    alert('Location sharing coming soon');
+  });
+  document.getElementById('attachPollBtn').addEventListener('click', () => {
+    attachmentMenu.hidden = true;
+    document.getElementById('pollModal').hidden = false;
+  });
+
+  const pollModal = document.getElementById('pollModal');
+  const pollOptionsList = document.getElementById('pollOptionsList');
+  const addPollOptionBtn = document.getElementById('addPollOptionBtn');
+  const sendPollBtn = document.getElementById('sendPollBtn');
+  const pollQuestionInput = document.getElementById('pollQuestionInput');
+
+  document.getElementById('closePollModal').onclick = () => (pollModal.hidden = true);
+
+  addPollOptionBtn.onclick = () => {
+    const input = document.createElement('input');
+    input.className = 'poll-option-input';
+    input.placeholder = `Option ${pollOptionsList.children.length + 1}`;
+    pollOptionsList.appendChild(input);
+  };
+
+  sendPollBtn.onclick = async () => {
+    const question = pollQuestionInput.value.trim();
+    const options = [...pollOptionsList.querySelectorAll('.poll-option-input')]
+        .map(i => i.value.trim())
+        .filter(Boolean);
+
+    if (!question || options.length < 2) {
+        alert('Please enter a question and at least 2 options.');
+        return;
+    }
+
+    const pollData = {
+        question,
+        options: options.map(text => ({ text, votes: [] })),
+        type: 'poll',
+        createdAt: Date.now()
+    };
+
+    await sendMessage({
+        text: '',
+        files: [],
+        poll: pollData
+    });
+
+    pollModal.hidden = true;
+    pollQuestionInput.value = '';
+    pollOptionsList.innerHTML = '<input class="poll-option-input" placeholder="Option 1" /><input class="poll-option-input" placeholder="Option 2" />';
+  };
 
   const closeStickerTrayBtn = document.getElementById('closeStickerTrayBtn');
   if (closeStickerTrayBtn) {
@@ -6739,9 +7040,9 @@ async function exitGroupSelected() {
   });
 }
 
-async function openGroupInfoModal() {
-  const chatId = Array.from(selectedChats)[0];
-  if (!chatId || !chatId.startsWith('group:')) return;
+async function openGroupInfoModal(chatIdArg = null) {
+  const chatId = chatIdArg || Array.from(selectedChats)[0] || getUnifiedChatId(activeChat);
+  if (!chatId) return;
 
   const conv = myConversations.find(c => getUnifiedChatId(c.id) === chatId);
   if (!conv) return;
@@ -6753,6 +7054,9 @@ async function openGroupInfoModal() {
 
   memberListEl.innerHTML = 'Loading members...';
   mediaGalleryEl.innerHTML = '';
+
+  const isGroup = chatId.startsWith('group:');
+  document.getElementById('groupMemberList').parentNode.hidden = !isGroup;
 
   const participants = conv.participants || [];
   titleEl.textContent = `Members (${participants.length})`;
