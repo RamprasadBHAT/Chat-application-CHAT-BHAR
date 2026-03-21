@@ -368,13 +368,13 @@ let recordingStartedAt = 0;
 let recordingTimerInterval = null;
 
 const firebaseConfig = {
-  apiKey: "FIREBASE_API_KEY_PLACEHOLDER",
-  authDomain: "FIREBASE_AUTH_DOMAIN_PLACEHOLDER",
-  projectId: "FIREBASE_PROJECT_ID_PLACEHOLDER",
-  storageBucket: "FIREBASE_STORAGE_BUCKET_PLACEHOLDER",
-  messagingSenderId: "FIREBASE_MESSAGING_SENDER_ID_PLACEHOLDER",
-  appId: "FIREBASE_APP_ID_PLACEHOLDER",
-  measurementId: "FIREBASE_MEASUREMENT_ID_PLACEHOLDER"
+  apiKey: "AIzaSyDN2wTs57wa1cqJQ5j5-IIgVcdOKlJ243E",
+  authDomain: "chat-application-chat-bhar.firebaseapp.com",
+  projectId: "chat-application-chat-bhar",
+  storageBucket: "chat-application-chat-bhar.firebasestorage.app",
+  messagingSenderId: "778286742879",
+  appId: "1:778286742879:web:d486fddb3c2f2efff1caea",
+  measurementId: "G-KP2LXSB0TK"
 };
 
 
@@ -1338,6 +1338,12 @@ function loadJson(key, fallback) {
 function saveJson(key, payload) { localStorage.setItem(key, JSON.stringify(payload)); }
 
 async function apiRequest(path, options = {}) {
+  // If Firebase is configured and active, we should generally avoid falling back to local API
+  // unless specifically intended for some local caching logic.
+  if (useFirebase && !path.startsWith('/api/usernames/check')) {
+     return await localApiRequest(path, options);
+  }
+
   const requestOptions = {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
     ...options
@@ -3011,6 +3017,8 @@ async function onSignup(event) {
 
       await setDoc(doc(db, "users", user.uid), userData);
       activeSession = { ...userData, username: '' };
+    } else if (firebaseConfig.apiKey.includes('PLACEHOLDER')) {
+      throw new Error("Authentication failed: Firebase is not configured. Please add your Firebase credentials to app.js.");
     } else {
       const res = await apiRequest('/api/auth/signup', {
         method: 'POST',
@@ -3049,6 +3057,8 @@ async function onLogin(event) {
       const userData = userDoc.data();
       const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
       activeSession = { ...userData, username };
+    } else if (firebaseConfig.apiKey.includes('PLACEHOLDER')) {
+      throw new Error("Authentication failed: Firebase is not configured. Please add your Firebase credentials to app.js.");
     } else {
       const res = await apiRequest('/api/auth/login', {
         method: 'POST',
