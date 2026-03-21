@@ -179,6 +179,7 @@ main{padding:0;overflow:auto}
   align-items: center;
   padding: 12px 20px;
   margin-bottom: 10px;
+  position: relative; /* For selection-header */
 }
 .chat-header-info h3 { margin: 0; font-size: 1.2rem; }
 .chat-header-info small { color: var(--muted); }
@@ -980,6 +981,138 @@ button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
 .outgoing .reply-ref { background: rgba(255,255,255,0.2); border-left-color: #fff; }
 .outgoing .reply-ref strong { color: #fff; }
 .outgoing .reply-ref p { color: rgba(255,255,255,0.9); }
+
+/* Selection Mode Header */
+.selection-header {
+  background: var(--chat-dark-blue);
+  color: white;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 20;
+}
+.selection-actions {
+  display: flex;
+  gap: 15px;
+  margin-left: auto;
+  align-items: center;
+}
+.selection-actions button {
+  background: transparent;
+  border: 0;
+  color: white;
+  padding: 5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+/* Sidebar Enhancements */
+.archived-row {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 12px 20px;
+  cursor: pointer;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.archived-row:hover { background: rgba(0,0,0,0.02); }
+
+.chat-user.selected {
+  background: rgba(33, 150, 243, 0.15) !important;
+}
+.chat-avatar-wrap {
+  position: relative;
+}
+.checkmark-overlay {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  color: #25D366; /* WhatsApp Green */
+  background: white;
+  border-radius: 50%;
+  display: none;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+}
+.chat-user.selected .checkmark-overlay {
+  display: flex;
+}
+
+/* Pin Icon */
+.pin-indicator {
+  color: var(--muted);
+  transform: rotate(45deg);
+  margin-left: 5px;
+  display: none;
+}
+.pin-indicator.pinned {
+  display: block;
+  fill: currentColor;
+}
+
+/* Mute Modal Styles */
+.mute-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 15px 0;
+}
+.mute-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+/* Group Info Modal */
+.group-info-card {
+  width: min(500px, 95vw);
+}
+.info-section {
+  margin-bottom: 20px;
+}
+.info-section h4 {
+  margin-bottom: 10px;
+  color: var(--brand-a);
+}
+.media-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.media-gallery-item {
+  aspect-ratio: 1/1;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.media-gallery-item img, .media-gallery-item video {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.member-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.admin-badge {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  background: rgba(37, 211, 102, 0.1);
+  color: #128C7E;
+  border-radius: 4px;
+  margin-left: auto;
+}
 
 
 
