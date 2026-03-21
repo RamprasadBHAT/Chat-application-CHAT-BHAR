@@ -368,18 +368,28 @@ let recordingStartedAt = 0;
 let recordingTimerInterval = null;
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDN2wTs57wa1cqJQ5j5-IIgVcdOKlJ243E",
-  authDomain: "chat-application-chat-bhar.firebaseapp.com",
-  projectId: "chat-application-chat-bhar",
-  storageBucket: "chat-application-chat-bhar.firebasestorage.app",
-  messagingSenderId: "778286742879",
-  appId: "1:778286742879:web:d486fddb3c2f2efff1caea",
-  measurementId: "G-KP2LXSB0TK"
+  apiKey: "FIREBASE_API_KEY_PLACEHOLDER",
+  authDomain: "FIREBASE_AUTH_DOMAIN_PLACEHOLDER",
+  projectId: "FIREBASE_PROJECT_ID_PLACEHOLDER",
+  storageBucket: "FIREBASE_STORAGE_BUCKET_PLACEHOLDER",
+  messagingSenderId: "FIREBASE_MESSAGING_SENDER_ID_PLACEHOLDER",
+  appId: "FIREBASE_APP_ID_PLACEHOLDER",
+  measurementId: "FIREBASE_MEASUREMENT_ID_PLACEHOLDER"
 };
 
 
 let app, auth, db, storage;
 let useFirebase = false;
+
+// Attempt to load local config if it exists (not tracked by git)
+try {
+  const { localFirebaseConfig } = await import('./firebase-config.js').catch(() => ({}));
+  if (localFirebaseConfig && localFirebaseConfig.apiKey) {
+    Object.assign(firebaseConfig, localFirebaseConfig);
+  }
+} catch (e) {
+  // Ignore missing local config
+}
 
 if (firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('PLACEHOLDER')) {
   try {
