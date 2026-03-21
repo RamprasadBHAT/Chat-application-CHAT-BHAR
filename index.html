@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
+    <script src="https://unpkg.com/lucide@latest"></script>
     <script type="importmap"> 
       {
         "imports": {
@@ -355,6 +356,52 @@
         <div class="story-viewer-actions">
           <button id="prevStory">← Prev</button>
           <button id="nextStory">Next →</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="muteModal" class="modal" hidden>
+      <div class="modal-card glass confirm-card">
+        <div class="modal-top">
+          <h3>Mute notifications for...</h3>
+          <button id="closeMuteModal" class="icon-btn">✕</button>
+        </div>
+        <div class="mute-options">
+          <label class="mute-option">
+            <input type="radio" name="muteDuration" value="8h" checked />
+            <span>8 hours</span>
+          </label>
+          <label class="mute-option">
+            <input type="radio" name="muteDuration" value="1w" />
+            <span>1 week</span>
+          </label>
+          <label class="mute-option">
+            <input type="radio" name="muteDuration" value="always" />
+            <span>Always</span>
+          </label>
+        </div>
+        <div class="upload-btn-row">
+          <button id="cancelMuteBtn" type="button">Cancel</button>
+          <button id="confirmMuteBtn" type="button">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="groupInfoModal" class="modal" hidden>
+      <div class="modal-card glass group-info-card">
+        <div class="modal-top">
+          <h3>Group Info</h3>
+          <button id="closeGroupInfoModal" class="icon-btn">✕</button>
+        </div>
+        <div style="padding: 10px;">
+          <div class="info-section">
+            <h4>Media, Links and Docs</h4>
+            <div id="groupMediaGallery" class="media-gallery"></div>
+          </div>
+          <div class="info-section">
+            <h4 id="groupMembersTitle">Members (0)</h4>
+            <div id="groupMemberList" class="member-list"></div>
+          </div>
         </div>
       </div>
     </div>

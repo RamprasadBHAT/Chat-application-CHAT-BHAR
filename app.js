@@ -358,6 +358,9 @@ let myFollows = [];
 let myFollowRequests = [];
 let incomingFollowRequests = [];
 let myConversations = [];
+let selectionMode = false;
+let selectedChats = new Set();
+let showArchivedOnly = false;
 let mediaRecorder = null;
 let recordingChunks = [];
 let recordingStream = null;
@@ -1069,16 +1072,18 @@ function fetchAndSyncConversations() {
           online: false,
           typingUsers: conv.typingBy || {},
           clearedAtBy: conv.clearedAtBy || {},
-          visibleTo: conv.visibleTo
+        visibleTo: conv.visibleTo,
+        pinnedBy: conv.pinnedBy || {},
+        archivedBy: conv.archivedBy || {},
+        mutedBy: conv.mutedBy || {}
         };
-      } else if (conv.typingBy) {
-        chatMeta[unifiedId].typingUsers = conv.typingBy;
-      }
-      if (conv.clearedAtBy) {
-        chatMeta[unifiedId].clearedAtBy = conv.clearedAtBy;
-      }
-      if (conv.visibleTo) {
-        chatMeta[unifiedId].visibleTo = conv.visibleTo;
+    } else {
+      if (conv.typingBy) chatMeta[unifiedId].typingUsers = conv.typingBy;
+      if (conv.clearedAtBy) chatMeta[unifiedId].clearedAtBy = conv.clearedAtBy;
+      if (conv.visibleTo) chatMeta[unifiedId].visibleTo = conv.visibleTo;
+      if (conv.pinnedBy) chatMeta[unifiedId].pinnedBy = conv.pinnedBy;
+      if (conv.archivedBy) chatMeta[unifiedId].archivedBy = conv.archivedBy;
+      if (conv.mutedBy) chatMeta[unifiedId].mutedBy = conv.mutedBy;
       }
         
     });
@@ -4615,7 +4620,77 @@ function renderChatUsers() {
 
   chatUsersWrap.innerHTML = '';
 
-  // Deduplicate and Sort conversations by updatedAt descending
+  // Selection Mode Header logic
+  const chatHeaderMain = document.querySelector('.chat-header-main');
+  let selectionHeader = document.querySelector('.selection-header');
+
+  if (selectionMode) {
+    if (!selectionHeader) {
+      selectionHeader = document.createElement('div');
+      selectionHeader.className = 'selection-header';
+      chatHeaderMain.appendChild(selectionHeader);
+    }
+    const count = selectedChats.size;
+    const isSingle = count === 1;
+    const isGroup = isSingle && Array.from(selectedChats)[0].startsWith('group:');
+    const firstChatId = Array.from(selectedChats)[0];
+    const isArchived = firstChatId && (chatMeta[firstChatId]?.archivedBy || {})[activeSession.id];
+    const isPinned = firstChatId && (chatMeta[firstChatId]?.pinnedBy || {})[activeSession.id];
+
+    selectionHeader.innerHTML = `
+      <button id="cancelSelectionBtn" class="selection-btn"><i data-lucide="arrow-left"></i></button>
+      <span id="selectionCount">${count}</span>
+      <div class="selection-actions">
+        <button id="pinChatBtn" title="${isPinned ? 'Unpin' : 'Pin'}">
+          <i data-lucide="pin" class="${isPinned ? 'pinned' : ''}" style="${isPinned ? 'fill: currentColor' : ''}"></i>
+        </button>
+        <button id="deleteSelectedBtn" title="Delete"><i data-lucide="trash-2"></i></button>
+        <button id="muteChatBtn" title="Mute"><i data-lucide="bell-off"></i></button>
+        <button id="archiveChatBtn" title="${isArchived ? 'Unarchive' : 'Archive'}">
+          <i data-lucide="${isArchived ? 'package-open' : 'archive'}"></i>
+        </button>
+        <div class="menu-wrap">
+          <button id="moreSelectionOptionsBtn" title="More"><i data-lucide="more-vertical"></i></button>
+          <div id="selectionMoreMenu" class="chat-menu" hidden>
+            ${isGroup ? '<button id="exitGroupBtn">Exit Group</button>' : ''}
+            ${isGroup ? '<button id="groupInfoBtn">Group Info</button>' : ''}
+            <button id="selectAllBtn">Select All</button>
+            <button id="clearChatSelectedBtn">Clear Chat</button>
+          </div>
+        </div>
+      </div>
+    `;
+    lucide.createIcons();
+
+    document.getElementById('cancelSelectionBtn').onclick = () => {
+      selectionMode = false;
+      selectedChats.clear();
+      renderChatUsers();
+    };
+    document.getElementById('selectAllBtn').onclick = () => {
+      sortedConvs.forEach(c => selectedChats.add(getUnifiedChatId(c.id)));
+      renderChatUsers();
+    };
+    document.getElementById('moreSelectionOptionsBtn').onclick = (e) => {
+      e.stopPropagation();
+      const menu = document.getElementById('selectionMoreMenu');
+      menu.hidden = !menu.hidden;
+    };
+    // Tooltip/Functionality placeholders
+    document.getElementById('pinChatBtn').onclick = () => togglePinSelected();
+    document.getElementById('deleteSelectedBtn').onclick = () => deleteSelected();
+    document.getElementById('muteChatBtn').onclick = () => openMuteModal();
+    document.getElementById('archiveChatBtn').onclick = () => toggleArchiveSelected();
+    document.getElementById('clearChatSelectedBtn').onclick = () => clearChatSelected();
+    if (isGroup) {
+      document.getElementById('exitGroupBtn').onclick = () => exitGroupSelected();
+      document.getElementById('groupInfoBtn').onclick = () => openGroupInfoModal();
+    }
+  } else {
+    if (selectionHeader) selectionHeader.remove();
+  }
+
+  // Deduplicate and Filter
   const uniqueConvs = new Map();
   myConversations.forEach(conv => {
     const unifiedId = getUnifiedChatId(conv.id);
@@ -4625,7 +4700,44 @@ function renderChatUsers() {
     }
   });
 
-  const sortedConvs = Array.from(uniqueConvs.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const myUid = activeSession?.id;
+  const allConvs = Array.from(uniqueConvs.values());
+
+  // Requirement: Archived row visible if archived chats exist
+  const archivedConvs = allConvs.filter(c => (c.archivedBy || {})[myUid]);
+  const recentConvs = allConvs.filter(c => !(c.archivedBy || {})[myUid]);
+
+  if (!showArchivedOnly && archivedConvs.length > 0) {
+    const archRow = document.createElement('div');
+    archRow.className = 'archived-row';
+    archRow.innerHTML = `<i data-lucide="archive"></i><span>Archived</span> <small style="margin-left:auto; color:var(--brand-a)">${archivedConvs.length}</small>`;
+    archRow.onclick = () => {
+      showArchivedOnly = true;
+      renderChatUsers();
+    };
+    chatUsersWrap.appendChild(archRow);
+    lucide.createIcons();
+  } else if (showArchivedOnly) {
+    const backRow = document.createElement('div');
+    backRow.className = 'archived-row';
+    backRow.innerHTML = `<i data-lucide="arrow-left"></i><span>Archived Chats</span>`;
+    backRow.onclick = () => {
+      showArchivedOnly = false;
+      renderChatUsers();
+    };
+    chatUsersWrap.appendChild(backRow);
+    lucide.createIcons();
+  }
+
+  const targetList = showArchivedOnly ? archivedConvs : recentConvs;
+
+  // Requirement: Pinning max 3. Sort pinned first.
+  const sortedConvs = targetList.sort((a, b) => {
+    const aPinned = (a.pinnedBy || {})[myUid] ? 1 : 0;
+    const bPinned = (b.pinnedBy || {})[myUid] ? 1 : 0;
+    if (aPinned !== bPinned) return bPinned - aPinned;
+    return (b.updatedAt || 0) - (a.updatedAt || 0);
+  });
 
   sortedConvs.forEach((conv) => {
     const chatId = getUnifiedChatId(conv.id);
@@ -4641,7 +4753,11 @@ function renderChatUsers() {
 
     const latestMsg = chatStore[chatId]?.at(-1) || { text: conv.lastMessage || 'No messages yet' };
     const btn = document.createElement('button');
-    btn.className = `chat-user ${getUnifiedChatId(chatId) === getUnifiedChatId(activeChat) ? 'active' : ''}`;
+    const isSelected = selectedChats.has(chatId);
+    btn.className = `chat-user ${getUnifiedChatId(chatId) === getUnifiedChatId(activeChat) ? 'active' : ''} ${isSelected ? 'selected' : ''}`;
+
+    const isPinned = (conv.pinnedBy || {})[myUid];
+    const isMuted = (conv.mutedBy || {})[myUid] > Date.now();
 
     const isOnline = Boolean(otherUser && otherUser.online);
     const statusClass = isOnline ? 'online' : 'offline';
@@ -4661,13 +4777,18 @@ function renderChatUsers() {
     }
 
     btn.innerHTML = `
-      <div class="presence-wrap">
+      <div class="presence-wrap chat-avatar-wrap">
         ${avatarHtml}
         <span class="presence-dot ${statusClass}"></span>
+        <div class="checkmark-overlay"><i data-lucide="check-circle-2"></i></div>
       </div>
       <div style="flex:1; text-align:left; overflow:hidden">
-        <div style="display:flex; justify-content:space-between">
+        <div style="display:flex; justify-content:space-between; align-items:center">
           <span>${escapeHtml(chatName)} - ${statusLabel}</span>
+          <div style="display:flex; align-items:center">
+            ${isMuted ? '<i data-lucide="bell-off" style="width:14px; height:14px; color:var(--muted); margin-right:5px"></i>' : ''}
+            ${isPinned ? '<i data-lucide="pin" class="pin-indicator pinned"></i>' : ''}
+          </div>
         </div>
         <small style="display:block; white-space:nowrap; text-overflow:ellipsis; overflow:hidden">${escapeHtml(preview)}</small>
       </div>
@@ -4700,14 +4821,17 @@ function renderChatUsers() {
       avatarEl.ontouchend = () => clearTimeout(avatarLongPress);
     }
 
-    // Requirement: On longPress of a chat tile, extract otherUserId and navigate to Profile
+    // Requirement: On longPress of a chat tile, enter Selection Mode
     let tileLongPress;
     btn.onmousedown = (e) => {
       if (e.target === avatarEl) return;
       if (e.button === 2) return;
       tileLongPress = setTimeout(() => {
-        const otherUid = getOtherUserIdFromConversation(conv) || getOtherUserIdFromConversation(chatId);
-        if (otherUid) openOtherProfile(otherUid);
+        if (!selectionMode) {
+          selectionMode = true;
+          selectedChats.add(chatId);
+          renderChatUsers();
+        }
       }, 800);
     };
     btn.onmouseup = () => clearTimeout(tileLongPress);
@@ -4715,18 +4839,32 @@ function renderChatUsers() {
     btn.ontouchstart = (e) => {
        if (e.target === avatarEl) return;
        tileLongPress = setTimeout(() => {
-          const otherUid = getOtherUserIdFromConversation(conv) || getOtherUserIdFromConversation(chatId);
-          if (otherUid) openOtherProfile(otherUid);
+          if (!selectionMode) {
+            selectionMode = true;
+            selectedChats.add(chatId);
+            renderChatUsers();
+          }
        }, 800);
     };
     btn.ontouchend = () => clearTimeout(tileLongPress);
 
     btn.addEventListener('click', () => {
-      renderChatUsers();
-      fetchAndSyncMessages(chatId);
+      if (selectionMode) {
+        if (selectedChats.has(chatId)) {
+          selectedChats.delete(chatId);
+          if (selectedChats.size === 0) selectionMode = false;
+        } else {
+          selectedChats.add(chatId);
+        }
+        renderChatUsers();
+      } else {
+        renderChatUsers();
+        fetchAndSyncMessages(chatId);
+      }
     });
     chatUsersWrap.appendChild(btn);
   });
+  lucide.createIcons();
 }
 
 function scrollToBottom() {
@@ -5350,6 +5488,9 @@ async function applyImportedBackup(parsed) {
             arrayUnion,
             activeUserId: activeSession.id
           });
+
+        // Re-sync conversations to pick up pinned/archived/muted states
+        fetchAndSyncConversations();
     } catch (err) {
         console.error('Firestore backup sync failed', err);
         throw new Error('Failed to sync backup to cloud. Local sync completed.');
@@ -6240,6 +6381,7 @@ async function createGroupChat() {
   if (!members.length) return;
   const id = `group:${name}-${Date.now()}`;
   const participants = [activeSession.id, ...members];
+  const admins = [activeSession.id];
 
   try {
     if (useFirebase && db) {
@@ -6247,6 +6389,7 @@ async function createGroupChat() {
         id,
         name,
         participants,
+        admins,
         isGroup: true,
         lastMessage: "Group created",
         updatedAt: Date.now(),
@@ -6383,6 +6526,328 @@ function renderScheduledPosts(mine) {
         container.appendChild(item);
     });
 }
+
+async function togglePinSelected() {
+  if (selectedChats.size === 0) return;
+  const myUid = activeSession.id;
+  const chats = Array.from(selectedChats);
+
+  // Requirement: Max 3 pins
+  const currentPinned = myConversations.filter(c => (c.pinnedBy || {})[myUid]);
+
+  for (const chatId of chats) {
+    const conv = myConversations.find(c => getUnifiedChatId(c.id) === chatId);
+    if (!conv) continue;
+
+    const isCurrentlyPinned = (conv.pinnedBy || {})[myUid];
+    const newPinnedStatus = !isCurrentlyPinned;
+
+    if (newPinnedStatus && currentPinned.length >= 3) {
+      alert("You can only pin up to 3 chats.");
+      break;
+    }
+
+    if (useFirebase) {
+      await updateDoc(doc(db, "conversations", chatId), {
+        [`pinnedBy.${myUid}`]: newPinnedStatus
+      });
+    } else {
+      const convs = loadJson('chatbhar.conversations', []);
+      const idx = convs.findIndex(c => getUnifiedChatId(c.id) === chatId);
+      if (idx !== -1) {
+        convs[idx].pinnedBy = convs[idx].pinnedBy || {};
+        convs[idx].pinnedBy[myUid] = newPinnedStatus;
+        saveJson('chatbhar.conversations', convs);
+      }
+    }
+  }
+
+  selectionMode = false;
+  selectedChats.clear();
+  fetchAndSyncConversations();
+}
+
+async function deleteSelected() {
+  if (selectedChats.size === 0) return;
+  const chats = Array.from(selectedChats);
+
+  openConfirm(`Delete ${chats.length} selected chat(s)? This will clear messages for you.`, async () => {
+    for (const chatId of chats) {
+      // Logic from deleteCurrentChat but for multiple
+      activeChat = chatId;
+      await performClearChat(chatId);
+    }
+    selectionMode = false;
+    selectedChats.clear();
+    activeChat = null;
+    fetchAndSyncConversations();
+  });
+}
+
+async function performClearChat(chatId) {
+  const clearTimestamp = Date.now();
+  const myUid = activeSession.id;
+
+  if (useFirebase && db) {
+    const convRef = doc(db, 'conversations', chatId);
+    const convSnap = await getDoc(convRef);
+    if (!convSnap.exists()) return;
+    const convData = convSnap.data();
+    const participants = convData.participants || [];
+    const clearedAtBy = { ...(convData.clearedAtBy || {}), [myUid]: clearTimestamp };
+
+    await updateDoc(convRef, {
+      clearedAtBy,
+      visibleTo: (convData.visibleTo || participants).filter(uid => uid !== myUid)
+    });
+
+    const everyoneCleared = participants.length > 0 && participants.every((uid) => Boolean(clearedAtBy[uid]));
+    if (everyoneCleared) {
+      // Full erase logic here (simplified for this call)
+      const messagesRef = collection(db, 'messages');
+      const byChatIdSnap = await getDocs(query(messagesRef, where('chatId', '==', chatId)));
+      const batch = writeBatch(db);
+      byChatIdSnap.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      await deleteDoc(convRef);
+    }
+  } else {
+    const convs = loadJson('chatbhar.conversations', []);
+    const idx = convs.findIndex(c => getUnifiedChatId(c.id) === chatId);
+    if (idx !== -1) {
+      convs[idx].clearedAtBy = { ...(convs[idx].clearedAtBy || {}), [myUid]: clearTimestamp };
+      convs[idx].visibleTo = (convs[idx].visibleTo || convs[idx].participants || []).filter(uid => uid !== myUid);
+      saveJson('chatbhar.conversations', convs);
+    }
+  }
+}
+
+async function toggleArchiveSelected() {
+  if (selectedChats.size === 0) return;
+  const myUid = activeSession.id;
+  const chats = Array.from(selectedChats);
+
+  for (const chatId of chats) {
+    const conv = myConversations.find(c => getUnifiedChatId(c.id) === chatId);
+    if (!conv) continue;
+
+    const isArchived = (conv.archivedBy || {})[myUid];
+    const newStatus = !isArchived;
+
+    if (useFirebase) {
+      await updateDoc(doc(db, "conversations", chatId), {
+        [`archivedBy.${myUid}`]: newStatus
+      });
+    } else {
+      const convs = loadJson('chatbhar.conversations', []);
+      const idx = convs.findIndex(c => getUnifiedChatId(c.id) === chatId);
+      if (idx !== -1) {
+        convs[idx].archivedBy = convs[idx].archivedBy || {};
+        convs[idx].archivedBy[myUid] = newStatus;
+        saveJson('chatbhar.conversations', convs);
+      }
+    }
+  }
+
+  selectionMode = false;
+  selectedChats.clear();
+  fetchAndSyncConversations();
+}
+
+function openMuteModal() {
+  if (selectedChats.size === 0) return;
+  document.getElementById('muteModal').hidden = false;
+}
+
+const confirmMuteBtn = document.getElementById('confirmMuteBtn');
+const cancelMuteBtn = document.getElementById('cancelMuteBtn');
+const closeMuteModal = document.getElementById('closeMuteModal');
+
+if (closeMuteModal) closeMuteModal.onclick = () => document.getElementById('muteModal').hidden = true;
+if (cancelMuteBtn) cancelMuteBtn.onclick = () => document.getElementById('muteModal').hidden = true;
+if (confirmMuteBtn) {
+  confirmMuteBtn.onclick = async () => {
+    const duration = document.querySelector('input[name="muteDuration"]:checked').value;
+    const myUid = activeSession.id;
+    let muteUntil = 0;
+
+    if (duration === '8h') muteUntil = Date.now() + 8 * 60 * 60 * 1000;
+    else if (duration === '1w') muteUntil = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    else if (duration === 'always') muteUntil = 9999999999999; // Far future
+
+    const chats = Array.from(selectedChats);
+    for (const chatId of chats) {
+      if (useFirebase) {
+        await updateDoc(doc(db, "conversations", chatId), {
+          [`mutedBy.${myUid}`]: muteUntil
+        });
+      } else {
+        const convs = loadJson('chatbhar.conversations', []);
+        const idx = convs.findIndex(c => getUnifiedChatId(c.id) === chatId);
+        if (idx !== -1) {
+          convs[idx].mutedBy = convs[idx].mutedBy || {};
+          convs[idx].mutedBy[myUid] = muteUntil;
+          saveJson('chatbhar.conversations', convs);
+        }
+      }
+    }
+
+    document.getElementById('muteModal').hidden = true;
+    selectionMode = false;
+    selectedChats.clear();
+    fetchAndSyncConversations();
+  };
+}
+
+async function clearChatSelected() {
+  if (selectedChats.size === 0) return;
+  openConfirm(`Clear messages in ${selectedChats.size} chat(s)?`, async () => {
+    for (const chatId of Array.from(selectedChats)) {
+      await performClearChat(chatId);
+    }
+    selectionMode = false;
+    selectedChats.clear();
+    fetchAndSyncConversations();
+  });
+}
+
+async function exitGroupSelected() {
+  const chatId = Array.from(selectedChats)[0];
+  if (!chatId || !chatId.startsWith('group:')) return;
+
+  openConfirm(`Exit this group?`, async () => {
+    const myUid = activeSession.id;
+    if (useFirebase) {
+      const convRef = doc(db, "conversations", chatId);
+      const convSnap = await getDoc(convRef);
+      if (convSnap.exists()) {
+        const participants = convSnap.data().participants || [];
+        const newParticipants = participants.filter(id => id !== myUid);
+        await updateDoc(convRef, { participants: newParticipants });
+      }
+    } else {
+      const convs = loadJson('chatbhar.conversations', []);
+      const idx = convs.findIndex(c => c.id === chatId);
+      if (idx !== -1) {
+        convs[idx].participants = (convs[idx].participants || []).filter(id => id !== myUid);
+        saveJson('chatbhar.conversations', convs);
+      }
+    }
+    selectionMode = false;
+    selectedChats.clear();
+    renderChatUsers();
+  });
+}
+
+async function openGroupInfoModal() {
+  const chatId = Array.from(selectedChats)[0];
+  if (!chatId || !chatId.startsWith('group:')) return;
+
+  const conv = myConversations.find(c => getUnifiedChatId(c.id) === chatId);
+  if (!conv) return;
+
+  document.getElementById('groupInfoModal').hidden = false;
+  const memberListEl = document.getElementById('groupMemberList');
+  const mediaGalleryEl = document.getElementById('groupMediaGallery');
+  const titleEl = document.getElementById('groupMembersTitle');
+
+  memberListEl.innerHTML = 'Loading members...';
+  mediaGalleryEl.innerHTML = '';
+
+  const participants = conv.participants || [];
+  titleEl.textContent = `Members (${participants.length})`;
+
+  memberListEl.innerHTML = participants.map(uid => {
+    const user = authUsers.find(u => u.id === uid);
+    const name = user ? (user.username || user.name) : 'Unknown User';
+    const isAdmin = conv.admins && conv.admins.includes(uid);
+    const isMeAdmin = conv.admins && conv.admins.includes(activeSession.id);
+
+    return `
+      <div class="member-item">
+        <div class="chat-avatar" style="width:30px; height:30px; font-size:10px">${name[0].toUpperCase()}</div>
+        <span>${escapeHtml(name)}</span>
+        ${isAdmin ? '<span class="admin-badge">Group Admin</span>' : ''}
+        ${isMeAdmin && uid !== activeSession.id ? `
+          <div style="margin-left:auto; display:flex; gap:5px">
+            ${!isAdmin ? `<button onclick="promoteToAdmin('${chatId}', '${uid}')" style="padding:2px 5px; font-size:10px">Make Admin</button>` : ''}
+            <button onclick="kickUser('${chatId}', '${uid}')" style="padding:2px 5px; font-size:10px; background:#ef4444">Kick</button>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+
+  // Media, Links, Docs
+  const msgs = chatStore[chatId] || [];
+  const mediaItems = msgs.filter(m => m.files && m.files.length > 0).flatMap(m => m.files);
+
+  // Extract links from text messages
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const links = msgs.filter(m => m.text && m.text.match(urlRegex)).flatMap(m => m.text.match(urlRegex));
+
+  const allGalleryItems = [
+    ...mediaItems.map(f => ({ type: 'file', data: f })),
+    ...links.map(url => ({ type: 'link', data: url }))
+  ];
+
+  if (allGalleryItems.length === 0) {
+    mediaGalleryEl.innerHTML = '<p style="grid-column:1/-1; color:var(--muted); font-size:0.8rem;">No media, links or docs found.</p>';
+  } else {
+    mediaGalleryEl.innerHTML = allGalleryItems.slice(0, 9).map(item => {
+      if (item.type === 'file') {
+        const f = item.data;
+        if (f.type.startsWith('image/')) return `<div class="media-gallery-item"><img src="${f.dataUrl}" /></div>`;
+        if (f.type.startsWith('video/')) return `<div class="media-gallery-item"><video src="${f.dataUrl}"></video></div>`;
+        return `<div class="media-gallery-item" style="display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.05); font-size:20px" title="${escapeAttr(f.name)}">📄</div>`;
+      } else {
+        return `<div class="media-gallery-item" style="display:flex; align-items:center; justify-content:center; background:rgba(33,150,243,0.1); font-size:20px" title="${escapeAttr(item.data)}">🔗</div>`;
+      }
+    }).join('');
+  }
+}
+
+const closeGroupInfoModal = document.getElementById('closeGroupInfoModal');
+if (closeGroupInfoModal) closeGroupInfoModal.onclick = () => document.getElementById('groupInfoModal').hidden = true;
+
+window.promoteToAdmin = async (chatId, uid) => {
+  if (useFirebase) {
+    await updateDoc(doc(db, "conversations", chatId), {
+      admins: arrayUnion(uid)
+    });
+  } else {
+    const convs = loadJson('chatbhar.conversations', []);
+    const idx = convs.findIndex(c => c.id === chatId);
+    if (idx !== -1) {
+      convs[idx].admins = convs[idx].admins || [];
+      if (!convs[idx].admins.includes(uid)) convs[idx].admins.push(uid);
+      saveJson('chatbhar.conversations', convs);
+    }
+  }
+  openGroupInfoModal(); // Refresh
+};
+
+window.kickUser = async (chatId, uid) => {
+  if (!confirm('Kick this user from the group?')) return;
+  if (useFirebase) {
+    const convRef = doc(db, "conversations", chatId);
+    const snap = await getDoc(convRef);
+    if (snap.exists()) {
+      const parts = snap.data().participants.filter(id => id !== uid);
+      const admins = (snap.data().admins || []).filter(id => id !== uid);
+      await updateDoc(convRef, { participants: parts, admins });
+    }
+  } else {
+    const convs = loadJson('chatbhar.conversations', []);
+    const idx = convs.findIndex(c => c.id === chatId);
+    if (idx !== -1) {
+      convs[idx].participants = (convs[idx].participants || []).filter(id => id !== uid);
+      convs[idx].admins = (convs[idx].admins || []).filter(id => id !== uid);
+      saveJson('chatbhar.conversations', convs);
+    }
+  }
+  openGroupInfoModal(); // Refresh
+};
 
 window.deleteScheduledPost = async (id, docId) => {
     if (!confirm('Cancel this scheduled post?')) return;
