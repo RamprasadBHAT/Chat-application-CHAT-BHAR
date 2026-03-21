@@ -420,8 +420,15 @@ async function initApp() {
           } else {
             setPresenceOnline(true);
             startRealTimeSync();
-            renderHome();
-            renderChannelManager();
+            const savedTab = localStorage.getItem('chatbhar.activeTab') || 'home';
+            const savedChat = localStorage.getItem('chatbhar.activeChat');
+            openTab(savedTab);
+            if (savedChat) {
+              fetchAndSyncMessages(savedChat);
+            } else {
+              renderHome();
+              renderChannelManager();
+            }
           }
         }
       } else {
@@ -441,8 +448,15 @@ async function initApp() {
       } else {
         setPresenceOnline(true);
         startRealTimeSync();
-        renderHome();
-        renderChannelManager();
+        const savedTab = localStorage.getItem('chatbhar.activeTab') || 'home';
+        const savedChat = localStorage.getItem('chatbhar.activeChat');
+        openTab(savedTab);
+        if (savedChat) {
+          fetchAndSyncMessages(savedChat);
+        } else {
+          renderHome();
+          renderChannelManager();
+        }
       }
     }
   }
@@ -873,6 +887,7 @@ async function fetchAndSyncMessages(chatIdArg = null) {
 
   // Update Global State immediately
   activeChat = targetChatId;
+  localStorage.setItem('chatbhar.activeChat', activeChat);
   updateChatBackground();
   const currentChatId = activeChat;
 
@@ -1076,7 +1091,8 @@ function fetchAndSyncConversations() {
         visibleTo: conv.visibleTo,
         pinnedBy: conv.pinnedBy || {},
         archivedBy: conv.archivedBy || {},
-        mutedBy: conv.mutedBy || {}
+        mutedBy: conv.mutedBy || {},
+        theme: conv.theme
         };
     } else {
       if (conv.typingBy) chatMeta[unifiedId].typingUsers = conv.typingBy;
@@ -1085,14 +1101,21 @@ function fetchAndSyncConversations() {
       if (conv.pinnedBy) chatMeta[unifiedId].pinnedBy = conv.pinnedBy;
       if (conv.archivedBy) chatMeta[unifiedId].archivedBy = conv.archivedBy;
       if (conv.mutedBy) chatMeta[unifiedId].mutedBy = conv.mutedBy;
+      if (conv.theme) chatMeta[unifiedId].theme = conv.theme;
       }
         
     });
     renderChatUsers();
     updateTypingIndicators();
+    updateChatBackground();
     if (!activeChat && myConversations.length > 0) {
-      const sorted = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-      fetchAndSyncMessages(sorted[0].id);
+      const savedChat = localStorage.getItem('chatbhar.activeChat');
+      if (savedChat && myConversations.some(c => getUnifiedChatId(c.id) === savedChat)) {
+        fetchAndSyncMessages(savedChat);
+      } else {
+        const sorted = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        fetchAndSyncMessages(sorted[0].id);
+      }
     }
   }
 }
@@ -2127,35 +2150,6 @@ function bindEvents() {
     }
   };
 
-  function applyChatTheme(doodleClass, solidColor, customImg) {
-    if (!activeChat) return;
-    const chatId = getUnifiedChatId(activeChat);
-    chatMeta[chatId] = chatMeta[chatId] || { id: chatId };
-    chatMeta[chatId].theme = { doodleClass, solidColor, customImg };
-    saveJson('chatbhar.chatMeta', chatMeta);
-    updateChatBackground();
-  }
-
-  function updateChatBackground() {
-    if (!activeChat) {
-        messagesContainer.className = 'messages';
-        messagesContainer.style.backgroundImage = '';
-        messagesContainer.style.backgroundColor = '';
-        return;
-    }
-    const chatId = getUnifiedChatId(activeChat);
-    const theme = chatMeta[chatId]?.theme;
-    messagesContainer.className = 'messages';
-    messagesContainer.style.backgroundImage = '';
-    messagesContainer.style.backgroundColor = '';
-
-    if (theme) {
-        if (theme.doodleClass) messagesContainer.classList.add(theme.doodleClass);
-        if (theme.solidColor) messagesContainer.style.backgroundColor = theme.solidColor;
-        if (theme.customImg) messagesContainer.style.backgroundImage = `url(${theme.customImg})`;
-    }
-  }
-
   document.addEventListener('click', (e) => {
     if (!chatMenu.contains(e.target) && e.target !== chatMenuBtn) {
         chatMenu.hidden = true;
@@ -2498,6 +2492,48 @@ async function isMutualFollow(userId1, userId2) {
   } catch (err) {
     console.error("Error checking mutual follow:", err);
     return false;
+  }
+}
+
+async function applyChatTheme(doodleClass, solidColor, customImg) {
+  if (!activeChat) return;
+  const chatId = getUnifiedChatId(activeChat);
+  chatMeta[chatId] = chatMeta[chatId] || { id: chatId };
+  const theme = { doodleClass, solidColor, customImg };
+  chatMeta[chatId].theme = theme;
+  saveJson('chatbhar.chatMeta', chatMeta);
+  updateChatBackground();
+
+  // If it's a group and current user is an admin, sync theme to Firestore
+  if (useFirebase && chatId.startsWith('group:')) {
+    const convRef = doc(db, 'conversations', chatId);
+    const convSnap = await getDoc(convRef);
+    if (convSnap.exists()) {
+      const data = convSnap.data();
+      if (data.admins && data.admins.includes(activeSession.id)) {
+        await updateDoc(convRef, { theme });
+      }
+    }
+  }
+}
+
+function updateChatBackground() {
+  if (!activeChat) {
+      messagesContainer.className = 'messages';
+      messagesContainer.style.backgroundImage = '';
+      messagesContainer.style.backgroundColor = '';
+      return;
+  }
+  const chatId = getUnifiedChatId(activeChat);
+  const theme = chatMeta[chatId]?.theme;
+  messagesContainer.className = 'messages';
+  messagesContainer.style.backgroundImage = '';
+  messagesContainer.style.backgroundColor = '';
+
+  if (theme) {
+      if (theme.doodleClass) messagesContainer.classList.add(theme.doodleClass);
+      if (theme.solidColor) messagesContainer.style.backgroundColor = theme.solidColor;
+      if (theme.customImg) messagesContainer.style.backgroundImage = `url(${theme.customImg})`;
   }
 }
 
