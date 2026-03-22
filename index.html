@@ -444,8 +444,18 @@
             <h4>Media, Links and Docs</h4>
             <div id="groupMediaGallery" class="media-gallery"></div>
           </div>
+          <div id="groupAdminSettings" class="info-section" hidden>
+            <h4>Admin Settings</h4>
+            <label class="confirm-checkbox">
+              <input type="checkbox" id="groupAdminOnlyMsg" />
+              <span>Only admins can send messages</span>
+            </label>
+          </div>
           <div class="info-section">
-            <h4 id="groupMembersTitle">Members (0)</h4>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+              <h4 id="groupMembersTitle" style="margin:0">Members (0)</h4>
+              <button id="groupAddMembersBtn" class="utility-btn" style="font-size:12px; padding:4px 8px">+ Add Members</button>
+            </div>
             <div id="groupMemberList" class="member-list"></div>
           </div>
         </div>
@@ -648,10 +658,10 @@
 
     <div id="groupModal" class="modal" hidden>
       <div class="modal-card glass confirm-card">
-        <div class="modal-top"><h3>Create Group</h3><button id="closeGroupModal" class="icon-btn">✕</button></div>
+        <div class="modal-top"><h3 id="groupModalTitle">Create Group</h3><button id="closeGroupModal" class="icon-btn">✕</button></div>
         <input id="groupNameInput" placeholder="Group name" />
         <div id="groupContactList" class="contact-list"></div>
-        <div class="upload-btn-row"><button id="createGroupConfirm" type="button">Create Group</button></div>
+        <div class="upload-btn-row"><button id="groupModalConfirm" type="button">Create Group</button></div>
       </div>
     </div>
 
@@ -857,26 +867,46 @@
       </div>
     </div>
 
-    <div id="pollModal" class="modal" hidden>
+    <div id="locationModal" class="modal" hidden>
       <div class="modal-card glass confirm-card">
+        <div class="modal-top">
+          <h3>Share Location</h3>
+          <button id="closeLocationModal" class="icon-btn">✕</button>
+        </div>
+        <div style="padding: 15px; display: flex; flex-direction: column; gap: 15px;">
+          <button id="shareStaticLocationBtn" class="utility-btn">📍 Share Current Location (Static)</button>
+          <div style="border-top: 1px solid var(--border); padding-top: 10px;">
+            <h4>Live Location</h4>
+            <div style="display:flex; gap:10px; margin-top:10px">
+              <button class="live-loc-duration-btn utility-btn" data-duration="15">15 mins</button>
+              <button class="live-loc-duration-btn utility-btn" data-duration="60">1 hour</button>
+              <button class="live-loc-duration-btn utility-btn" data-duration="480">8 hours</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="pollModal" class="modal" hidden>
+      <div class="modal-card glass poll-creation-card">
         <div class="modal-top">
           <h3>Create Poll</h3>
           <button id="closePollModal" class="icon-btn">✕</button>
         </div>
         <div class="form-group">
           <label>Question</label>
-          <input id="pollQuestionInput" placeholder="Ask a question" />
+          <input id="pollQuestionInput" class="poll-question-input" placeholder="Ask a question" />
         </div>
         <div class="form-group">
           <label>Options</label>
-          <div id="pollOptionsList" style="display:flex; flex-direction:column; gap:8px">
+          <div id="pollOptionsList" class="poll-creation-options">
             <input class="poll-option-input" placeholder="Option 1" />
             <input class="poll-option-input" placeholder="Option 2" />
           </div>
-          <button id="addPollOptionBtn" class="utility-btn" style="margin-top:8px">+ Add option</button>
+          <button id="addPollOptionBtn" class="utility-btn add-poll-option-btn">+ Add option</button>
         </div>
         <div class="upload-btn-row">
-          <button id="sendPollBtn">Send Poll</button>
+          <button id="sendPollBtn" class="primary">Send Poll</button>
         </div>
       </div>
     </div>
