@@ -99,9 +99,8 @@ const editProfileName = document.getElementById('editProfileName');
 const editProfileProfession = document.getElementById('editProfileProfession');
 const editProfileBio = document.getElementById('editProfileBio');
 const editProfileLocation = document.getElementById('editProfileLocation');
-const editProfileTwitter = document.getElementById('editProfileTwitter');
-const editProfileLinkedin = document.getElementById('editProfileLinkedin');
-const editProfileGithub = document.getElementById('editProfileGithub');
+const editProfileLinksContainer = document.getElementById('editProfileLinksContainer');
+const addProfileLinkBtn = document.getElementById('addProfileLinkBtn');
 const editProfilePrivate = document.getElementById('editProfilePrivate');
 const usernameAvailabilityHint = document.getElementById('usernameAvailabilityHint');
 
@@ -361,6 +360,7 @@ let selectionMode = false;
 let selectedChats = new Set();
 let showArchivedOnly = false;
 let mediaRecorder = null;
+let liveLocationInterval = null;
 let recordingChunks = [];
 let recordingStream = null;
 let recordingStartedAt = 0;
@@ -744,6 +744,12 @@ let presenceHeartbeat = null;
 
 async function setPresenceOnline(isOnline) {
   if (!activeSession?.id) return;
+
+  if (isOnline) {
+    startLiveLocationUpdates();
+  } else {
+    stopLiveLocationUpdates();
+  }
 
   if (useFirebase && db) {
     try {
@@ -1405,7 +1411,7 @@ async function localApiRequest(path, options = {}) {
       stats: { posts: 0, followers: 0, following: 0 },
       followerCount: 0, followingCount: 0,
       isPrivate: false,
-      socialLinks: { twitter: '', linkedin: '', github: '' }
+      customLinks: []
     };
     users.push(newUser);
     saveJson(AUTH_USERS_KEY, users);
@@ -2263,14 +2269,23 @@ function bindEvents() {
       editProfileProfession.value = activeSession.profession || '';
       editProfileBio.value = activeSession.bio || 'Digital Creator | Tech Enthusiast | Travel Lover 🌍';
       editProfileLocation.value = activeSession.location || '';
-      editProfileTwitter.value = activeSession.socialLinks?.twitter || '';
-      editProfileLinkedin.value = activeSession.socialLinks?.linkedin || '';
-      editProfileGithub.value = activeSession.socialLinks?.github || '';
+
+      const links = activeSession.customLinks || [];
+      renderEditProfileLinks(links);
+
       editProfilePrivate.checked = !!activeSession.isPrivate;
       usernameAvailabilityHint.textContent = '';
       renderProfileAvatar(editProfileAvatarPreview, activeSession);
       editProfileModal.hidden = false;
     });
+  }
+
+  if (addProfileLinkBtn) {
+    addProfileLinkBtn.onclick = () => {
+      const container = editProfileLinksContainer;
+      if (container.children.length >= 7) return alert("Maximum 7 links allowed.");
+      addLinkRowToEdit(container);
+    };
   }
   if (closeEditProfile) closeEditProfile.addEventListener('click', () => editProfileModal.hidden = true);
   if (cancelEditProfile) cancelEditProfile.addEventListener('click', () => editProfileModal.hidden = true);
@@ -2337,6 +2352,26 @@ function bindEvents() {
       renderChannelManager();
     }
   });
+}
+
+function renderEditProfileLinks(links) {
+  editProfileLinksContainer.innerHTML = '';
+  links.forEach(link => {
+    addLinkRowToEdit(editProfileLinksContainer, link.label, link.url);
+  });
+}
+
+function addLinkRowToEdit(container, label = '', url = '') {
+  const row = document.createElement('div');
+  row.className = 'link-edit-row';
+  row.style = 'display: flex; gap: 5px; margin-bottom: 5px;';
+  row.innerHTML = `
+    <input type="text" class="link-label" placeholder="Label (e.g. My Website)" value="${escapeAttr(label)}" style="flex: 1;" />
+    <input type="url" class="link-url" placeholder="URL" value="${escapeAttr(url)}" style="flex: 2;" />
+    <button type="button" class="danger icon-btn remove-link-btn" style="flex: 0 0 auto; width: 36px;">✕</button>
+  `;
+  row.querySelector('.remove-link-btn').onclick = () => row.remove();
+  container.appendChild(row);
 }
 
 function renderProfileAvatar(el, user) {
@@ -2727,11 +2762,15 @@ async function renderOtherProfile(userId) {
 
   if (myChannelSocialLinks) {
     myChannelSocialLinks.innerHTML = '';
+    myChannelSocialLinks.classList.remove('swip-list');
     if (canSeeDetails) {
-      const links = user.socialLinks || {};
-      if (links.twitter) myChannelSocialLinks.innerHTML += `<a href="${links.twitter}" target="_blank">🐦 Twitter</a>`;
-      if (links.linkedin) myChannelSocialLinks.innerHTML += `<a href="${links.linkedin}" target="_blank">🔗 LinkedIn</a>`;
-      if (links.github) myChannelSocialLinks.innerHTML += `<a href="${links.github}" target="_blank">💻 GitHub</a>`;
+      const links = user.customLinks || [];
+      if (links.length > 0) {
+        myChannelSocialLinks.classList.add('swip-list');
+        links.forEach(link => {
+          myChannelSocialLinks.innerHTML += `<a href="${link.url}" target="_blank" class="custom-link-pill">${escapeHtml(link.label)}</a>`;
+        });
+      }
     } else {
       myChannelSocialLinks.innerHTML = '<span style="color:var(--muted); font-size:0.8rem;">Links hidden</span>';
     }
@@ -2943,9 +2982,17 @@ async function onSaveProfile(e) {
   const profession = editProfileProfession.value.trim();
   const bio = editProfileBio.value.trim();
   const location = editProfileLocation.value.trim();
-  const twitter = editProfileTwitter.value.trim();
-  const linkedin = editProfileLinkedin.value.trim();
-  const github = editProfileGithub.value.trim();
+
+  const customLinks = [];
+  const linkRows = editProfileLinksContainer.querySelectorAll('.link-edit-row');
+  linkRows.forEach(row => {
+    const label = row.querySelector('.link-label').value.trim();
+    const url = row.querySelector('.link-url').value.trim();
+    if (label && url) {
+      customLinks.push({ label, url });
+    }
+  });
+
   const isPrivate = editProfilePrivate.checked;
   let profilePic = activeSession.profilePic;
 
@@ -2961,7 +3008,7 @@ async function onSaveProfile(e) {
       bio,
       profession,
       location,
-      socialLinks: { twitter, linkedin, github },
+      customLinks,
       profilePic,
       isPrivate
     };
@@ -3058,7 +3105,7 @@ async function onSignup(event) {
         bio: '',
         profession: '',
         location: '',
-        socialLinks: { twitter: '', linkedin: '', github: '' },
+        customLinks: [],
         stats: { posts: 0, followers: 0, following: 0 },
         followerCount: 0,
         followingCount: 0,
@@ -3274,7 +3321,7 @@ async function loadSession() {
     bio: dbUser.bio || activeSession.bio,
     profession: dbUser.profession || activeSession.profession,
     location: dbUser.location || activeSession.location,
-    socialLinks: dbUser.socialLinks || activeSession.socialLinks,
+    customLinks: dbUser.customLinks || activeSession.customLinks,
     stats: dbUser.stats || activeSession.stats,
     isPrivate: dbUser.isPrivate !== undefined ? dbUser.isPrivate : activeSession.isPrivate
   };
@@ -4733,10 +4780,14 @@ function renderChannelManager() {
 
   if (myChannelSocialLinks) {
     myChannelSocialLinks.innerHTML = '';
-    const links = activeSession.socialLinks || {};
-    if (links.twitter) myChannelSocialLinks.innerHTML += `<a href="${links.twitter}" target="_blank" title="Twitter">🐦 Twitter</a>`;
-    if (links.linkedin) myChannelSocialLinks.innerHTML += `<a href="${links.linkedin}" target="_blank" title="LinkedIn">🔗 LinkedIn</a>`;
-    if (links.github) myChannelSocialLinks.innerHTML += `<a href="${links.github}" target="_blank" title="GitHub">💻 GitHub</a>`;
+    myChannelSocialLinks.classList.remove('swip-list');
+    const links = activeSession.customLinks || [];
+    if (links.length > 0) {
+      myChannelSocialLinks.classList.add('swip-list');
+      links.forEach(link => {
+        myChannelSocialLinks.innerHTML += `<a href="${link.url}" target="_blank" class="custom-link-pill">${escapeHtml(link.label)}</a>`;
+      });
+    }
   }
 
   if (myPostCount) myPostCount.textContent = activeSession.stats?.posts || mine.length;
@@ -5020,9 +5071,16 @@ function renderChatUsers() {
    // const preview = latestMsg.text || (latestMsg.files?.length ? '📎 Attachment' : 'No messages yet');
    //mar5
       const typingNames = getTypingUserNames(chatId);
-    const preview = typingNames.length
-      ? `${typingNames.join(', ')} typing...`
-      : (latestMsg.text || (latestMsg.files?.length ? '📎 Attachment' : 'No messages yet'));
+    let preview = 'No messages yet';
+    if (typingNames.length) {
+      preview = `${typingNames.join(', ')} typing...`;
+    } else {
+      if (latestMsg.text) preview = latestMsg.text;
+      else if (latestMsg.poll) preview = `📊 Poll: ${latestMsg.poll.question}`;
+      else if (latestMsg.location) preview = latestMsg.location.type === 'live' ? '📍 Live Location' : '📍 Location';
+      else if (latestMsg.files?.length) preview = '📎 Attachment';
+      else if (latestMsg.deleted) preview = '🚫 Message deleted';
+    }
     
     let avatarHtml = '';
     if (otherUser?.profilePic) {
@@ -5441,13 +5499,14 @@ function renderMessages(msgsArg = null) {
     if (msg.location) {
       const { type, lat, lng, expiresAt } = msg.location;
       const isExpired = type === 'live' && expiresAt < Date.now();
-      const mapUrl = `https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed`;
+      // Google Maps standard embed URL (doesn't strictly require API key for basic view)
+      const embedUrl = `https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed`;
 
       locationHtml = `
         <div class="location-bubble">
           <div class="location-type">${type === 'live' ? '📍 Live Location' : '📍 Location'}</div>
           <div class="location-map">
-            <iframe src="${mapUrl}" width="100%" height="150" style="border:0;" allowfullscreen="" loading="lazy"></iframe>
+            <iframe src="${embedUrl}" width="100%" height="150" style="border:0;" allowfullscreen="" loading="lazy"></iframe>
           </div>
           <a href="https://www.google.com/maps/search/?api=1&query=${lat},${lng}" target="_blank" class="location-link">View on Google Maps</a>
           ${type === 'live' ? `<div class="location-status">${isExpired ? 'Live location ended' : 'Live until ' + formatMessageTime(expiresAt)}</div>` : ''}
@@ -5493,6 +5552,48 @@ function openImageFromMessage(idx, msgsSource = null) {
   }
 }
 
+function startLiveLocationUpdates() {
+  if (liveLocationInterval) return;
+  liveLocationInterval = setInterval(updateActiveLiveLocations, 30000); // Every 30 seconds
+}
+
+function stopLiveLocationUpdates() {
+  if (liveLocationInterval) {
+    clearInterval(liveLocationInterval);
+    liveLocationInterval = null;
+  }
+}
+
+async function updateActiveLiveLocations() {
+  if (!activeSession || !useFirebase) return;
+
+  const now = Date.now();
+  const messagesRef = collection(db, 'messages');
+  const q = query(
+    messagesRef,
+    where('senderId', '==', activeSession.id),
+    where('location.type', '==', 'live'),
+    where('location.expiresAt', '>', now)
+  );
+
+  const snap = await getDocs(q);
+  if (snap.empty) return;
+
+  navigator.geolocation.getCurrentPosition(async (position) => {
+    const lat = position.coords.latitude;
+    const lng = position.coords.longitude;
+
+    const batch = writeBatch(db);
+    snap.forEach(d => {
+      batch.update(d.ref, {
+        'location.lat': lat,
+        'location.lng': lng
+      });
+    });
+    await batch.commit();
+  });
+}
+
 async function shareLocation(type, durationMins = 0) {
   if (!navigator.geolocation) {
     alert("Geolocation is not supported by your browser");
@@ -5515,6 +5616,8 @@ async function shareLocation(type, durationMins = 0) {
       files: [],
       location: locationData
     });
+
+    if (type === 'live') startLiveLocationUpdates();
   }, (err) => {
     alert("Unable to retrieve your location: " + err.message);
   });
