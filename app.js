@@ -1106,7 +1106,9 @@ function fetchAndSyncConversations() {
         pinnedBy: conv.pinnedBy || {},
         archivedBy: conv.archivedBy || {},
         mutedBy: conv.mutedBy || {},
-        theme: conv.theme
+          theme: conv.theme,
+          admins: conv.admins || [],
+          adminOnlyMsg: !!conv.adminOnlyMsg
         };
     } else {
       if (conv.typingBy) chatMeta[unifiedId].typingUsers = conv.typingBy;
@@ -1116,6 +1118,8 @@ function fetchAndSyncConversations() {
       if (conv.archivedBy) chatMeta[unifiedId].archivedBy = conv.archivedBy;
       if (conv.mutedBy) chatMeta[unifiedId].mutedBy = conv.mutedBy;
       if (conv.theme) chatMeta[unifiedId].theme = conv.theme;
+        if (conv.admins) chatMeta[unifiedId].admins = conv.admins;
+        if (conv.hasOwnProperty('adminOnlyMsg')) chatMeta[unifiedId].adminOnlyMsg = conv.adminOnlyMsg;
       }
         
     });
@@ -5210,6 +5214,25 @@ async function markVisibleMessagesAsRead() {
 
 function renderMessages(msgsArg = null) {
   if (!messagesContainer) return;
+
+  const meta = chatMeta[activeChat] || { name: activeChat, online: false };
+  const isAdminOnly = !!meta.adminOnlyMsg;
+  const isMeAdmin = meta.admins && meta.admins.includes(activeSession?.id);
+
+  if (isAdminOnly && !isMeAdmin) {
+    messageInput.disabled = true;
+    messageInput.placeholder = "Only admins can send messages";
+    sendMsgBtn.disabled = true;
+    micHoldBtn.disabled = true;
+    toggleAttachmentMenuBtn.disabled = true;
+  } else {
+    messageInput.disabled = false;
+    messageInput.placeholder = "Type a message";
+    sendMsgBtn.disabled = false;
+    micHoldBtn.disabled = false;
+    toggleAttachmentMenuBtn.disabled = false;
+  }
+
   if (!activeChat) {
     messagesContainer.innerHTML = '<div style="text-align:center; padding: 20px; color: var(--muted);">Select a contact to start chatting</div>';
     if (activeChatTitle) activeChatTitle.textContent = 'Chat';
@@ -5219,7 +5242,6 @@ function renderMessages(msgsArg = null) {
   const msgs = msgsArg || chatStore[activeChat] || [];
   const myUid = activeSession?.id;
 
-  const meta = chatMeta[activeChat] || { name: activeChat, online: false };
   const onlineNow = getChatOnlineState(activeChat);
   const activeTitle = `${onlineNow ? '● ' : ''}${meta.name} - ${onlineNow ? 'Online' : 'Offline'}`;
   activeChatTitle.textContent = activeTitle;
@@ -5289,9 +5311,15 @@ function renderMessages(msgsArg = null) {
       if (msg.docId) bubble.dataset.docId = msg.docId;
       if (msg.senderId) bubble.dataset.senderId = msg.senderId;
 
-      bubble.onclick = (e) => showContextMenu(e, bubble);
       bubble.oncontextmenu = (e) => showContextMenu(e, bubble);
 
+      messagesContainer.appendChild(bubble);
+      return;
+    }
+
+    if (msg.system) {
+      bubble.className = 'bubble system-msg';
+      bubble.innerHTML = `<span class="system-text">${escapeHtml(msg.text)}</span>`;
       messagesContainer.appendChild(bubble);
       return;
     }
@@ -5409,12 +5437,29 @@ function renderMessages(msgsArg = null) {
     const previewHtml = getLinkPreviewHtml(rawText);
     displayHtml += previewHtml;
 
-    bubble.innerHTML = `${senderHtml}${replyHtml}${displayHtml}${editedHtml}${fileHtml}${pollHtml}${reactionHtml}<div class="bubble-meta">${timestampHtml}${statusHtml}</div>`;
+    let locationHtml = '';
+    if (msg.location) {
+      const { type, lat, lng, expiresAt } = msg.location;
+      const isExpired = type === 'live' && expiresAt < Date.now();
+      const mapUrl = `https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed`;
+
+      locationHtml = `
+        <div class="location-bubble">
+          <div class="location-type">${type === 'live' ? '📍 Live Location' : '📍 Location'}</div>
+          <div class="location-map">
+            <iframe src="${mapUrl}" width="100%" height="150" style="border:0;" allowfullscreen="" loading="lazy"></iframe>
+          </div>
+          <a href="https://www.google.com/maps/search/?api=1&query=${lat},${lng}" target="_blank" class="location-link">View on Google Maps</a>
+          ${type === 'live' ? `<div class="location-status">${isExpired ? 'Live location ended' : 'Live until ' + formatMessageTime(expiresAt)}</div>` : ''}
+        </div>
+      `;
+    }
+
+    bubble.innerHTML = `${senderHtml}${replyHtml}${displayHtml}${editedHtml}${fileHtml}${pollHtml}${locationHtml}${reactionHtml}<div class="bubble-meta">${timestampHtml}${statusHtml}</div>`;
     bubble.dataset.id = msg.id;
     if (msg.docId) bubble.dataset.docId = msg.docId;
     if (msg.senderId) bubble.dataset.senderId = msg.senderId;
 
-    bubble.onclick = (e) => showContextMenu(e, bubble);
     bubble.oncontextmenu = (e) => showContextMenu(e, bubble);
 
     messagesContainer.appendChild(bubble);
@@ -5448,6 +5493,33 @@ function openImageFromMessage(idx, msgsSource = null) {
   }
 }
 
+async function shareLocation(type, durationMins = 0) {
+  if (!navigator.geolocation) {
+    alert("Geolocation is not supported by your browser");
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(async (position) => {
+    const lat = position.coords.latitude;
+    const lng = position.coords.longitude;
+
+    const locationData = {
+      type,
+      lat,
+      lng,
+      expiresAt: type === 'live' ? Date.now() + durationMins * 60 * 1000 : null
+    };
+
+    await sendMessage({
+      text: '',
+      files: [],
+      location: locationData
+    });
+  }, (err) => {
+    alert("Unable to retrieve your location: " + err.message);
+  });
+}
+
 async function sendMessage(prepared = null) {
   if (!activeSession || !activeChat) return;
   if (useFirebase && (!auth || !auth.currentUser)) return;
@@ -5468,7 +5540,7 @@ async function sendMessage(prepared = null) {
   };
 
   const now = Date.now();
-  if (!payload.text && !(payload.files || []).length) return;
+  if (!payload.text && !(payload.files || []).length && !payload.system) return;
 
   try {
     if (useFirebase) {
@@ -5504,6 +5576,8 @@ async function sendMessage(prepared = null) {
         text: payload.text || '',
         files: payload.files || [],
         poll: payload.poll || null,
+        location: payload.location || null,
+        system: payload.system || false,
         replyToId: payload.replyToId || null,
         viewOnce: payload.viewOnce || false,
         createdAt: now,
@@ -5517,8 +5591,12 @@ async function sendMessage(prepared = null) {
       await addDoc(collection(db, "messages"), msg);
 
       // Update conversation record
+      const isLoc = !!payload.location;
+      let lastMsg = isPoll ? `📊 Poll: ${payload.poll.question}` : (payload.text || (payload.files?.length ? '📎 Attachment' : ''));
+      if (isLoc) lastMsg = payload.location.type === 'live' ? '📍 Live Location' : '📍 Location';
+
       await updateDoc(convRef, {
-        lastMessage: isPoll ? `📊 Poll: ${payload.poll.question}` : (payload.text || (payload.files?.length ? '📎 Attachment' : '')),
+        lastMessage: lastMsg,
         updatedAt: now,
         visibleTo: selectedUser ? [myUid, selectedUser.uid] : (chatMeta[unifiedChatId]?.participants || [myUid])
       });
@@ -5544,6 +5622,8 @@ async function sendMessage(prepared = null) {
         text: payload.text || '',
         files: payload.files || [],
         poll: payload.poll || null,
+        location: payload.location || null,
+        system: payload.system || false,
         replyToId: payload.replyToId || null,
         viewOnce: payload.viewOnce || false,
         createdAt: now,
@@ -5560,7 +5640,9 @@ async function sendMessage(prepared = null) {
       const convs = loadJson('chatbhar.conversations', []);
       let conv = convs.find(c => c.id === unifiedChatId);
       const isPoll = Boolean(payload.poll);
-      const lastMsgText = isPoll ? `📊 Poll: ${payload.poll.question}` : payload.text;
+      const isLoc = !!payload.location;
+      let lastMsgText = isPoll ? `📊 Poll: ${payload.poll.question}` : payload.text;
+      if (isLoc) lastMsgText = payload.location.type === 'live' ? '📍 Live Location' : '📍 Location';
       if (!conv) {
         conv = {
           id: unifiedChatId,
@@ -5654,8 +5736,9 @@ function deleteCurrentChat() {
           clearedAtBy
         });
 
-        // Requirement: Full erase from Firestore only after both users clear-chat
-        const everyoneCleared = participants.length > 0 && participants.every((uid) => Boolean(clearedAtBy[uid]));
+        // Requirement: Full erase from Firestore only after both users clear-chat (DMs only)
+        const isGroup = currentChatId.startsWith('group:');
+        const everyoneCleared = !isGroup && participants.length > 0 && participants.every((uid) => Boolean(clearedAtBy[uid]));
 
         if (everyoneCleared) {
           const messagesToDelete = [];
@@ -5696,7 +5779,8 @@ function deleteCurrentChat() {
           convs[idx].clearedAtBy = { ...(convs[idx].clearedAtBy || {}), [activeSession.id]: clearTimestamp };
 
           const participants = convs[idx].participants || [];
-          const everyoneCleared = participants.length > 0 && participants.every(uid => convs[idx].clearedAtBy[uid]);
+          const isGroup = currentChatId.startsWith('group:');
+          const everyoneCleared = !isGroup && participants.length > 0 && participants.every(uid => convs[idx].clearedAtBy[uid]);
 
           if (everyoneCleared) {
             convs.splice(idx, 1);
@@ -6128,10 +6212,17 @@ function initEnhancedMessaging() {
 
 function bindMessagingUI() {
   if (selectContactBtn) selectContactBtn.addEventListener('click', openContactModal);
-  if (createGroupBtn) createGroupBtn.addEventListener('click', openGroupModal);
+  if (createGroupBtn) createGroupBtn.addEventListener('click', () => openGroupModal());
   if (closeContactModal) closeContactModal.addEventListener('click', () => (contactModal.hidden = true));
   if (closeGroupModal) closeGroupModal.addEventListener('click', () => (groupModal.hidden = true));
-  if (createGroupConfirm) createGroupConfirm.addEventListener('click', createGroupChat);
+  const groupModalConfirm = document.getElementById('groupModalConfirm');
+  if (groupModalConfirm) groupModalConfirm.addEventListener('click', () => {
+    if (groupModalConfirm.dataset.mode === 'add') {
+      addMembersToGroup();
+    } else {
+      createGroupChat();
+    }
+  });
 
   const msgContextMenu = document.getElementById('msgContextMenu');
   if (messagesContainer && msgContextMenu) {
@@ -6401,9 +6492,23 @@ function bindMessagingUI() {
     fileInput.click();
     attachmentMenu.hidden = true;
   });
+  const locationModal = document.getElementById('locationModal');
   document.getElementById('attachLocationBtn').addEventListener('click', () => {
     attachmentMenu.hidden = true;
-    alert('Location sharing coming soon');
+    locationModal.hidden = false;
+  });
+  document.getElementById('closeLocationModal').onclick = () => (locationModal.hidden = true);
+
+  document.getElementById('shareStaticLocationBtn').onclick = () => {
+    shareLocation('static');
+    locationModal.hidden = true;
+  };
+
+  document.querySelectorAll('.live-loc-duration-btn').forEach(btn => {
+    btn.onclick = () => {
+      shareLocation('live', parseInt(btn.dataset.duration));
+      locationModal.hidden = true;
+    };
   });
   document.getElementById('attachPollBtn').addEventListener('click', () => {
     attachmentMenu.hidden = true;
@@ -6501,6 +6606,7 @@ function bindMessagingUI() {
 }
 
 function showContextMenu(e, bubble) {
+  if (e && e.target && (e.target.tagName === 'A' || e.target.closest('a'))) return;
   if (e) {
     e.preventDefault();
     e.stopPropagation();
@@ -6718,8 +6824,40 @@ async function openContactModal() {
   const modalTitle = document.querySelector('#contactModal h3');
   if (modalTitle) modalTitle.textContent = 'Select Contact';
   await syncAuthUsers();
-  const users = authUsers.filter((u) => u.id !== activeSession?.id);
+
+  const myUid = activeSession.id;
+  const groupConvs = myConversations.filter(c => c.isGroup && c.participants.includes(myUid));
+
   contactList.innerHTML = '';
+
+  if (groupConvs.length > 0) {
+    const groupHeader = document.createElement('div');
+    groupHeader.style = 'padding: 10px; font-weight: bold; border-bottom: 1px solid var(--border);';
+    groupHeader.textContent = 'Groups';
+    contactList.appendChild(groupHeader);
+
+    groupConvs.forEach(conv => {
+      const row = document.createElement('div');
+      row.className = 'contact-item';
+      row.innerHTML = `
+        <div class="chat-avatar" style="background:var(--primary); color:white; display:flex; align-items:center; justify-content:center; font-size:12px">${(conv.name[0] || 'G').toUpperCase()}</div>
+        <span>${escapeHtml(conv.name)}</span>
+        <button type="button" class="edit-profile-btn" style="margin-left:auto">Chat</button>
+      `;
+      row.querySelector('button').onclick = () => {
+        contactModal.hidden = true;
+        fetchAndSyncMessages(conv.id);
+      };
+      contactList.appendChild(row);
+    });
+
+    const userHeader = document.createElement('div');
+    userHeader.style = 'padding: 10px; font-weight: bold; border-bottom: 1px solid var(--border); margin-top: 10px;';
+    userHeader.textContent = 'Contacts';
+    contactList.appendChild(userHeader);
+  }
+
+  const users = authUsers.filter((u) => u.id !== activeSession?.id);
   users.forEach((u) => {
     const row = document.createElement('div');
     row.className = 'contact-item';
@@ -6849,17 +6987,87 @@ async function openUserListModal(userId, type) {
   }
 }
 
-async function openGroupModal() {
+async function openGroupModal(mode = 'create', existingParticipants = []) {
   await syncAuthUsers();
-  const users = authUsers.filter((u) => u.id !== activeSession?.id);
+  const users = authUsers.filter((u) => u.id !== activeSession?.id && !existingParticipants.includes(u.id));
+
+  const title = document.getElementById('groupModalTitle');
+  const confirmBtn = document.getElementById('groupModalConfirm');
+  const nameInput = document.getElementById('groupNameInput');
+
+  if (mode === 'add') {
+    title.textContent = 'Add Members';
+    confirmBtn.textContent = 'Add Selected';
+    confirmBtn.dataset.mode = 'add';
+    nameInput.hidden = true;
+  } else {
+    title.textContent = 'Create Group';
+    confirmBtn.textContent = 'Create Group';
+    confirmBtn.dataset.mode = 'create';
+    nameInput.hidden = false;
+    nameInput.value = '';
+  }
+
   groupContactList.innerHTML = '';
-  users.forEach((u) => {
-    const row = document.createElement('label');
-    row.className = 'contact-item';
-    row.innerHTML = `<span>${escapeHtml(u.name)}</span><input type="checkbox" value="${u.id}" />`;
-    groupContactList.appendChild(row);
-  });
+  if (users.length === 0) {
+    groupContactList.innerHTML = '<p style="text-align:center; padding:10px; color:var(--muted)">No more contacts to add.</p>';
+  } else {
+    users.forEach((u) => {
+      const row = document.createElement('label');
+      row.className = 'contact-item';
+      row.innerHTML = `<span>${escapeHtml(u.username || u.name)}</span><input type="checkbox" value="${u.id}" />`;
+      groupContactList.appendChild(row);
+    });
+  }
   groupModal.hidden = false;
+}
+
+async function addMembersToGroup() {
+  const chatId = getUnifiedChatId(activeChat);
+  const conv = myConversations.find(c => getUnifiedChatId(c.id) === chatId);
+  if (!conv) return;
+
+  const selectedUids = [...groupContactList.querySelectorAll('input:checked')].map((x) => x.value);
+  if (!selectedUids.length) return;
+
+  const newParticipants = [...(conv.participants || []), ...selectedUids];
+
+  try {
+    if (useFirebase && db) {
+      const convRef = doc(db, "conversations", chatId);
+      await updateDoc(convRef, {
+        participants: newParticipants,
+        visibleTo: newParticipants,
+        updatedAt: Date.now()
+      });
+    } else {
+      const convs = loadJson('chatbhar.conversations', []);
+      const idx = convs.findIndex(c => getUnifiedChatId(c.id) === chatId);
+      if (idx !== -1) {
+        convs[idx].participants = newParticipants;
+        saveJson('chatbhar.conversations', convs);
+      }
+    }
+
+    // Send system message
+    const addedNames = selectedUids.map(uid => {
+      const u = authUsers.find(x => x.id === uid);
+      return u ? (u.username || u.name) : 'User';
+    }).join(', ');
+
+    await sendMessage({
+      text: `${activeHandle()} added ${addedNames} to the group`,
+      system: true
+    });
+
+  } catch (err) {
+    console.error("Failed to add members:", err);
+    alert("Failed to add members: " + err.message);
+  }
+
+  groupModal.hidden = true;
+  renderChatUsers();
+  openGroupInfoModal(chatId);
 }
 
 async function createGroupChat() {
@@ -7088,7 +7296,8 @@ async function performClearChat(chatId) {
       clearedAtBy
     });
 
-    const everyoneCleared = participants.length > 0 && participants.every((uid) => Boolean(clearedAtBy[uid]));
+    const isGroup = chatId.startsWith('group:');
+    const everyoneCleared = !isGroup && participants.length > 0 && participants.every((uid) => Boolean(clearedAtBy[uid]));
     if (everyoneCleared) {
       // Full erase logic here (simplified for this call)
       const messagesRef = collection(db, 'messages');
@@ -7210,6 +7419,11 @@ async function exitGroupSelected() {
         const participants = convSnap.data().participants || [];
         const newParticipants = participants.filter(id => id !== myUid);
         await updateDoc(convRef, { participants: newParticipants });
+
+        await sendMessage({
+          text: `${activeHandle()} has left the group`,
+          system: true
+        });
       }
     } else {
       const convs = loadJson('chatbhar.conversations', []);
@@ -7217,6 +7431,11 @@ async function exitGroupSelected() {
       if (idx !== -1) {
         convs[idx].participants = (convs[idx].participants || []).filter(id => id !== myUid);
         saveJson('chatbhar.conversations', convs);
+
+        await sendMessage({
+          text: `${activeHandle()} has left the group`,
+          system: true
+        });
       }
     }
     selectionMode = false;
@@ -7242,6 +7461,40 @@ async function openGroupInfoModal(chatIdArg = null) {
 
   const isGroup = chatId.startsWith('group:');
   document.getElementById('groupMemberList').parentNode.hidden = !isGroup;
+
+  const adminSettings = document.getElementById('groupAdminSettings');
+  const adminOnlyToggle = document.getElementById('groupAdminOnlyMsg');
+  const isMeAdmin = conv.admins && conv.admins.includes(activeSession.id);
+
+  if (isGroup && isMeAdmin) {
+    adminSettings.hidden = false;
+    adminOnlyToggle.checked = !!conv.adminOnlyMsg;
+    adminOnlyToggle.onclick = async () => {
+      const newStatus = adminOnlyToggle.checked;
+      if (useFirebase) {
+        await updateDoc(doc(db, "conversations", chatId), { adminOnlyMsg: newStatus });
+      } else {
+        const convs = loadJson('chatbhar.conversations', []);
+        const idx = convs.findIndex(c => getUnifiedChatId(c.id) === chatId);
+        if (idx !== -1) {
+          convs[idx].adminOnlyMsg = newStatus;
+          saveJson('chatbhar.conversations', convs);
+        }
+      }
+
+      await sendMessage({
+        text: `${activeHandle()} changed settings: ${newStatus ? 'Only admins can send messages' : 'All participants can send messages'}`,
+        system: true
+      });
+    };
+  } else {
+    adminSettings.hidden = true;
+  }
+  document.getElementById('groupAddMembersBtn').hidden = !isGroup;
+  document.getElementById('groupAddMembersBtn').onclick = () => {
+    groupInfoModal.hidden = true;
+    openGroupModal('add', conv.participants || []);
+  };
 
   const participants = conv.participants || [];
   titleEl.textContent = `Members (${participants.length})`;
@@ -7325,6 +7578,13 @@ window.kickUser = async (chatId, uid) => {
       const parts = snap.data().participants.filter(id => id !== uid);
       const admins = (snap.data().admins || []).filter(id => id !== uid);
       await updateDoc(convRef, { participants: parts, admins });
+
+      const kickedUser = authUsers.find(u => u.id === uid);
+      const kickedName = kickedUser ? (kickedUser.username || kickedUser.name) : 'User';
+      await sendMessage({
+        text: `${kickedName} was removed from the group`,
+        system: true
+      });
     }
   } else {
     const convs = loadJson('chatbhar.conversations', []);
@@ -7333,6 +7593,13 @@ window.kickUser = async (chatId, uid) => {
       convs[idx].participants = (convs[idx].participants || []).filter(id => id !== uid);
       convs[idx].admins = (convs[idx].admins || []).filter(id => id !== uid);
       saveJson('chatbhar.conversations', convs);
+
+      const kickedUser = authUsers.find(u => u.id === uid);
+      const kickedName = kickedUser ? (kickedUser.username || kickedUser.name) : 'User';
+      await sendMessage({
+        text: `${kickedName} was removed from the group`,
+        system: true
+      });
     }
   }
   openGroupInfoModal(); // Refresh
