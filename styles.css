@@ -317,6 +317,63 @@ body.dark .bubble.system-msg {
   height: 150px;
   object-fit: contain;
 }
+.bubble:hover .msg-options-btn {
+  opacity: 1;
+}
+.msg-options-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.1);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 5;
+  border: none;
+}
+.incoming .msg-options-btn {
+  color: var(--muted);
+  background: rgba(0,0,0,0.05);
+}
+.pinned-msg-bar {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.pinned-msg-bar i {
+  color: var(--brand-a);
+}
+.pinned-msg-content {
+  flex: 1;
+  overflow: hidden;
+}
+.pinned-msg-content strong {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--brand-a);
+}
+.pinned-msg-content p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .mic-btn{width:44px;height:44px;border-radius:50%;padding:0;display:grid;place-items:center;background:var(--brand-a);color:#fff;border:0;font-size:17px;line-height:1;transition:background 0.2s; flex-shrink:0}
 .mic-btn:hover{filter:brightness(1.1)}
 .recording-indicator{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--muted);padding:4px 6px}

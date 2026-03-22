@@ -348,6 +348,7 @@ let replyToMsg = null;
 let touchStartX = 0;
 let swipeBubble = null;
 let currentPendingRequest = null;
+let forwardMsg = null;
 let recentSearches = loadJson('chatbhar.recentSearches', []);
 let recentStickers = loadJson('chatbhar.recentStickers', []);
 let favoriteStickers = loadJson('chatbhar.favoriteStickers', []);
@@ -609,6 +610,7 @@ function fetchAndSyncNotifications() {
         .map((d) => normalizeNotificationItem({ id: d.id, ...d.data() }))
         .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       renderNotifications();
+      renderChatUsers();
     }, (err) => {
       console.error('Failed to sync notifications', err);
       notifications = [];
@@ -623,6 +625,7 @@ function fetchAndSyncNotifications() {
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   notifications = localItems;
   renderNotifications();
+  renderChatUsers();
   notificationsUnsubscribe = null;
 }
 
@@ -1757,6 +1760,60 @@ function bindEvents() {
   if (confirmDeleteBtn) {
     confirmDeleteBtn.addEventListener('click', onDeleteAccount);
   }
+
+  document.getElementById('contextCopyBtn').onclick = () => {
+    if (currentContextMsg?.text) {
+      navigator.clipboard.writeText(currentContextMsg.text);
+      // alert('Message copied to clipboard');
+    }
+    document.getElementById('msgContextMenu').hidden = true;
+  };
+
+  document.getElementById('contextReplyBtn').onclick = () => {
+    if (currentContextMsg) {
+      prepareReply(currentContextMsg);
+    }
+    document.getElementById('msgContextMenu').hidden = true;
+  };
+
+  document.getElementById('contextForwardBtn').onclick = () => {
+    forwardMsg = currentContextMsg;
+    document.getElementById('msgContextMenu').hidden = true;
+    openContactModal();
+  };
+
+  document.getElementById('contextPinBtn').onclick = async () => {
+    const chatId = getUnifiedChatId(activeChat);
+    const msgId = currentContextMsg.docId || currentContextMsg.id;
+
+    chatMeta[chatId] = chatMeta[chatId] || {};
+    chatMeta[chatId].pinnedMsgId = msgId;
+    saveJson('chatbhar.chatMeta', chatMeta);
+
+    if (useFirebase && db) {
+        await updateDoc(doc(db, 'conversations', chatId), { pinnedMsgId: msgId });
+    }
+
+    document.getElementById('msgContextMenu').hidden = true;
+    renderMessages();
+  };
+
+  window.unpinMessage = async (chatId) => {
+    chatMeta[chatId] = chatMeta[chatId] || {};
+    chatMeta[chatId].pinnedMsgId = null;
+    saveJson('chatbhar.chatMeta', chatMeta);
+
+    if (useFirebase && db) {
+        try {
+            await updateDoc(doc(db, 'conversations', chatId), { pinnedMsgId: null });
+        } catch (e) {
+            console.error("Failed to unpin from Firebase", e);
+        }
+    }
+    renderMessages();
+  };
+
+  window.voteInPoll = voteInPoll; // Ensure it's global
 
   if (closeContactRequestModal) closeContactRequestModal.onclick = () => contactRequestModal.hidden = true;
   if (cancelContactRequestBtn) cancelContactRequestBtn.onclick = () => contactRequestModal.hidden = true;
@@ -5081,6 +5138,9 @@ function renderChatUsers() {
       else if (latestMsg.files?.length) preview = '📎 Attachment';
       else if (latestMsg.deleted) preview = '🚫 Message deleted';
     }
+
+    const unreadCount = notifications.filter(n => n.chatId === chatId && n.unread && n.category === 'messages').length;
+    const latestTime = conv.updatedAt ? new Date(conv.updatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase() : '';
     
     let avatarHtml = '';
     if (otherUser?.profilePic) {
@@ -5097,13 +5157,17 @@ function renderChatUsers() {
       </div>
       <div style="flex:1; text-align:left; overflow:hidden">
         <div style="display:flex; justify-content:space-between; align-items:center">
-          <span>${escapeHtml(chatName)} - ${statusLabel}</span>
-          <div style="display:flex; align-items:center">
-            ${isMuted ? '<i data-lucide="bell-off" style="width:14px; height:14px; color:var(--muted); margin-right:5px"></i>' : ''}
+          <span style="font-weight: 600; font-size: 0.95rem;">${escapeHtml(chatName)}</span>
+          <span style="font-size: 0.75rem; color: ${unreadCount > 0 ? '#25D366' : 'var(--muted)'}; font-weight: ${unreadCount > 0 ? '600' : 'normal'}">${latestTime}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top: 2px;">
+          <small style="flex: 1; white-space:nowrap; text-overflow:ellipsis; overflow:hidden; color: var(--muted)">${escapeHtml(preview)}</small>
+          <div style="display:flex; align-items:center; gap: 4px; margin-left: 8px;">
+            ${isMuted ? '<i data-lucide="bell-off" style="width:14px; height:14px; color:var(--muted)"></i>' : ''}
             ${isPinned ? '<i data-lucide="pin" class="pin-indicator pinned"></i>' : ''}
+            ${unreadCount > 0 ? `<span class="unread-dot" style="background: #25D366; color: white; border-radius: 50%; min-width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: bold; padding: 0 4px;">${unreadCount}</span>` : ''}
           </div>
         </div>
-        <small style="display:block; white-space:nowrap; text-overflow:ellipsis; overflow:hidden">${escapeHtml(preview)}</small>
       </div>
     `;
 
@@ -5330,6 +5394,31 @@ function renderMessages(msgsArg = null) {
   messagesContainer.innerHTML = '';
   let lastDateLabel = null;
 
+  const chatId = getUnifiedChatId(activeChat);
+  const pinnedId = chatMeta[chatId]?.pinnedMsgId;
+  const pinnedMsg = msgs.find(m => m.id === pinnedId || m.docId === pinnedId);
+
+  if (pinnedMsg) {
+    const pinnedBar = document.createElement('div');
+    pinnedBar.className = 'pinned-msg-bar';
+    pinnedBar.innerHTML = `
+      <i data-lucide="pin" style="width:16px; height:16px;"></i>
+      <div class="pinned-msg-content">
+        <strong>Pinned Message</strong>
+        <p>${escapeHtml(pinnedMsg.text || (pinnedMsg.files?.length ? 'Photo/File' : '...'))}</p>
+      </div>
+      <button class="icon-btn" onclick="unpinMessage('${chatId}')">✕</button>
+    `;
+    pinnedBar.onclick = (e) => {
+        if (e.target.tagName !== 'BUTTON') {
+            const bubble = messagesContainer.querySelector(`[data-id="${pinnedId}"],[data-doc-id="${pinnedId}"]`);
+            if (bubble) bubble.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    };
+    messagesContainer.appendChild(pinnedBar);
+    lucide.createIcons();
+  }
+
   msgs.forEach((msg, idx) => {
     const msgDate = toMillisValue(msg.createdAt || msg.timestamp);
     const dateLabel = getChatDateLabel(msgDate);
@@ -5514,7 +5603,8 @@ function renderMessages(msgsArg = null) {
       `;
     }
 
-    bubble.innerHTML = `${senderHtml}${replyHtml}${displayHtml}${editedHtml}${fileHtml}${pollHtml}${locationHtml}${reactionHtml}<div class="bubble-meta">${timestampHtml}${statusHtml}</div>`;
+    const optionsBtnHtml = `<button class="msg-options-btn" title="Options" onclick="event.stopPropagation(); showContextMenu({clientX: event.clientX, clientY: event.clientY}, this.closest('.bubble'))"><i data-lucide="chevron-down" style="width:16px; height:16px; pointer-events: none;"></i></button>`;
+    bubble.innerHTML = `${optionsBtnHtml}${senderHtml}${replyHtml}${displayHtml}${editedHtml}${fileHtml}${pollHtml}${locationHtml}${reactionHtml}<div class="bubble-meta">${timestampHtml}${statusHtml}</div>`;
     bubble.dataset.id = msg.id;
     if (msg.docId) bubble.dataset.docId = msg.docId;
     if (msg.senderId) bubble.dataset.senderId = msg.senderId;
@@ -5523,6 +5613,8 @@ function renderMessages(msgsArg = null) {
 
     messagesContainer.appendChild(bubble);
   });
+
+  if (typeof lucide !== 'undefined') lucide.createIcons();
 
   messagesContainer.querySelectorAll('[data-open-img]').forEach((el) => {
     el.addEventListener('click', () => {
@@ -5643,7 +5735,7 @@ async function sendMessage(prepared = null) {
   };
 
   const now = Date.now();
-  if (!payload.text && !(payload.files || []).length && !payload.system) return;
+  if (!payload.text && !(payload.files || []).length && !payload.system && !payload.poll && !payload.location) return;
 
   try {
     if (useFirebase) {
@@ -6711,8 +6803,8 @@ function bindMessagingUI() {
 function showContextMenu(e, bubble) {
   if (e && e.target && (e.target.tagName === 'A' || e.target.closest('a'))) return;
   if (e) {
-    e.preventDefault();
-    e.stopPropagation();
+    if (typeof e.preventDefault === 'function') e.preventDefault();
+    if (typeof e.stopPropagation === 'function') e.stopPropagation();
   }
   const msgContextMenu = document.getElementById('msgContextMenu');
   if (!msgContextMenu) return;
@@ -6925,7 +7017,9 @@ function ensureChatMeta() {
 
 async function openContactModal() {
   const modalTitle = document.querySelector('#contactModal h3');
-  if (modalTitle) modalTitle.textContent = 'Select Contact';
+  if (modalTitle) {
+      modalTitle.textContent = forwardMsg ? 'Forward Message' : 'Select Contact';
+  }
   await syncAuthUsers();
 
   const myUid = activeSession.id;
@@ -6947,9 +7041,22 @@ async function openContactModal() {
         <span>${escapeHtml(conv.name)}</span>
         <button type="button" class="edit-profile-btn" style="margin-left:auto">Chat</button>
       `;
-      row.querySelector('button').onclick = () => {
+      row.querySelector('button').onclick = async () => {
         contactModal.hidden = true;
-        fetchAndSyncMessages(conv.id);
+        if (forwardMsg) {
+            const oldActive = activeChat;
+            activeChat = getUnifiedChatId(conv.id);
+            await sendMessage({
+                text: forwardMsg.text,
+                files: forwardMsg.files,
+                poll: forwardMsg.poll,
+                location: forwardMsg.location
+            });
+            activeChat = oldActive;
+            forwardMsg = null;
+        } else {
+            fetchAndSyncMessages(conv.id);
+        }
       };
       contactList.appendChild(row);
     });
@@ -6995,9 +7102,23 @@ async function openContactModal() {
       contactModal.hidden = true;
       openOtherProfile(u.id);
     });
-    row.querySelector('.chat-p-btn').addEventListener('click', () => {
+    row.querySelector('.chat-p-btn').addEventListener('click', async () => {
       contactModal.hidden = true;
-      onExploreMessageClick(u.id, u.username || u.name);
+      if (forwardMsg) {
+          const chatId = getUnifiedChatId(getDmChatId(activeSession.id, u.id));
+          const oldActive = activeChat;
+          activeChat = chatId;
+          await sendMessage({
+              text: forwardMsg.text,
+              files: forwardMsg.files,
+              poll: forwardMsg.poll,
+              location: forwardMsg.location
+          });
+          activeChat = oldActive;
+          forwardMsg = null;
+      } else {
+          onExploreMessageClick(u.id, u.username || u.name);
+      }
     });
     contactList.appendChild(row);
   });
