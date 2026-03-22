@@ -211,8 +211,12 @@ body.dark .chat-menu button:hover{background:rgba(255,255,255,0.1)}
   width: 24px;
   height: 24px;
   object-fit: contain;
-  filter: brightness(0) invert(1); /* White */
+  filter: none;
   opacity: 1;
+}
+.attach-btn, .mic-btn {
+  background: #f0f2f5 !important; /* Light WhatsApp-like grey */
+  border: 1px solid var(--border) !important;
 }
 #stickerToggleBtn img, #sendMsgBtn img {
   width: 24px;
@@ -231,8 +235,9 @@ body.dark .chat-menu button:hover{background:rgba(255,255,255,0.1)}
 .sticker-tray {
   position: absolute;
   bottom: 60px;
-  left: 10px;
-  right: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(340px, 92vw);
   height: 300px;
   display: flex;
   flex-direction: column;
@@ -240,16 +245,14 @@ body.dark .chat-menu button:hover{background:rgba(255,255,255,0.1)}
   box-shadow: 0 -5px 20px rgba(0,0,0,0.1);
   overflow: hidden;
   background: var(--card);
-  transition: all 0.3s ease;
+  transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 @media (min-width: 1024px) {
   .sticker-tray {
-    width: 320px;
+    width: 400px;
     height: 400px;
-    right: auto;
-    left: 20px;
-    bottom: 70px;
+    bottom: 80px;
     border-radius: 16px;
     border: 1px solid var(--border);
   }
@@ -341,43 +344,98 @@ body.dark .chat-menu button:hover{background:rgba(255,255,255,0.1)}
 
 .chat-file-msg {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
   background: rgba(0,0,0,0.05);
   padding: 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
   margin-top: 4px;
+  width: 150px;
+  height: 150px;
+  justify-content: space-between;
 }
 
 .outgoing .chat-file-msg { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); }
 
-.chat-file-icon {
-  font-size: 1.5rem;
+.chat-file-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
 }
 
-.chat-file-info {
-  flex: 1;
-  overflow: hidden;
+.chat-file-icon {
+  font-size: 3rem;
 }
 
 .chat-file-name {
   font-size: 0.85rem;
-  font-weight: 500;
+  font-weight: 700;
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
   display: block;
   text-decoration: none;
   color: inherit;
+  text-align: center;
+  border-bottom: 1px solid rgba(0,0,0,0.1);
+  padding-bottom: 5px;
+  margin-bottom: 5px;
 }
+.outgoing .chat-file-name { border-bottom-color: rgba(255,255,255,0.2); }
 
 .chat-file-meta {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--muted);
   text-transform: uppercase;
 }
 .outgoing .chat-file-meta { color: rgba(255,255,255,0.7); }
+
+.read-more-btn {
+  background: transparent;
+  border: none;
+  color: var(--brand-a);
+  padding: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  margin-left: 5px;
+}
+.outgoing .read-more-btn { color: #fff; text-decoration: underline; }
+
+.link-preview-box {
+  display: block;
+  background: rgba(0,0,0,0.05);
+  border-radius: 8px;
+  border-left: 4px solid var(--brand-a);
+  padding: 8px;
+  margin: 8px 0;
+  text-decoration: none;
+  color: inherit;
+  font-size: 0.85rem;
+}
+.outgoing .link-preview-box { background: rgba(255,255,255,0.1); border-left-color: #fff; }
+
+.link-preview-content {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.link-preview-icon { font-size: 1.5rem; }
+.link-preview-title { font-weight: 700; color: var(--brand-a); }
+.outgoing .link-preview-title { color: #fff; }
+.link-preview-url { font-size: 0.75rem; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.link-preview-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
 
 .date-separator {
   text-align: center;
@@ -1053,8 +1111,9 @@ button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .attachment-menu {
   position: absolute;
-  bottom: 70px;
-  left: 20px;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
   width: min(340px, 90vw);
   background: var(--card);
   border-radius: 16px;
@@ -1065,8 +1124,8 @@ button.danger:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
 }
 
 .attachment-grid {

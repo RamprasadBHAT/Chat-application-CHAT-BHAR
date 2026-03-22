@@ -329,9 +329,8 @@ function getConversationClearCutoff(conv, userId) {
 
 function shouldShowConversationForUser(conv, userId) {
   if (!conv?.id || !isVisibleToUser(conv, userId)) return false;
-  const clearCutoff = getConversationClearCutoff(conv, userId);
-  if (!clearCutoff) return true;
-  return (conv.updatedAt || 0) > clearCutoff;
+  // Always show in sidebar even if cleared
+  return true;
 }
 
 let previewPendingMessage = null;
@@ -2097,6 +2096,11 @@ function bindEvents() {
     e.stopPropagation();
     chatMenu.hidden = !chatMenu.hidden;
     document.getElementById('moreSubmenu').hidden = true;
+
+    // Show/hide group-specific items
+    const isGroup = activeChat && activeChat.startsWith('group:');
+    document.getElementById('groupInfoMenuBtn').hidden = !isGroup;
+    document.getElementById('groupMediaMenuBtn').hidden = !isGroup;
   };
   document.getElementById('moreMenuBtn').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -5316,10 +5320,10 @@ function renderMessages(msgsArg = null) {
         const extUpper = ext.toUpperCase();
         fileHtml += `
             <div class="chat-file-msg">
-                <div class="chat-file-icon">${fileIcon(f.type)}</div>
-                <div class="chat-file-info">
-                    <a href="${f.dataUrl}" download="${escapeAttr(f.name)}" class="chat-file-name">${escapeHtml(f.name)}</a>
-                    <div class="chat-file-meta">${extUpper} • ${Math.round((f.size || 0) / 1024)} KB</div>
+                <a href="${f.dataUrl}" download="${escapeAttr(f.name)}" class="chat-file-name">${escapeHtml(f.name)}</a>
+                <div class="chat-file-content">
+                  <div class="chat-file-icon">${fileIcon(f.type)}</div>
+                  <div class="chat-file-meta">${extUpper} • ${Math.round((f.size || 0) / 1024)} KB</div>
                 </div>
             </div>
         `;
@@ -5387,7 +5391,25 @@ function renderMessages(msgsArg = null) {
         `;
     }
 
-    bubble.innerHTML = `${senderHtml}${replyHtml}${escapeHtml(msg.text || '')}${editedHtml}${fileHtml}${pollHtml}${reactionHtml}<div class="bubble-meta">${timestampHtml}${statusHtml}</div>`;
+    const rawText = msg.text || '';
+    const wordCount = rawText.split(/\s+/).filter(Boolean).length;
+    const isLong = wordCount > 300 || rawText.length > 760;
+
+    let displayHtml = '';
+    if (isLong) {
+      const truncated = rawText.slice(0, 760);
+      displayHtml = `
+        <span class="text-content" data-full-text="${escapeAttr(rawText)}">${escapeHtml(truncated)}...</span>
+        <button class="read-more-btn" onclick="event.stopPropagation(); toggleReadMore(this)" data-expanded="false">Read more</button>
+      `;
+    } else {
+      displayHtml = `<span class="text-content">${escapeHtml(rawText)}</span>`;
+    }
+
+    const previewHtml = getLinkPreviewHtml(rawText);
+    displayHtml += previewHtml;
+
+    bubble.innerHTML = `${senderHtml}${replyHtml}${displayHtml}${editedHtml}${fileHtml}${pollHtml}${reactionHtml}<div class="bubble-meta">${timestampHtml}${statusHtml}</div>`;
     bubble.dataset.id = msg.id;
     if (msg.docId) bubble.dataset.docId = msg.docId;
     if (msg.senderId) bubble.dataset.senderId = msg.senderId;
@@ -5627,11 +5649,9 @@ function deleteCurrentChat() {
 
         const clearedAtBy = { ...(convData.clearedAtBy || {}), [activeSession.id]: clearTimestamp };
 
-        // Requirement: Disappear for this user by updating clearedAtBy
+        // Requirement: Clear history but keep in sidebar
         await updateDoc(convRef, {
-          clearedAtBy,
-          // We also update visibleTo to remove user if they want it gone from sidebar
-          visibleTo: (convData.visibleTo || participants).filter(uid => uid !== activeSession.id)
+          clearedAtBy
         });
 
         // Requirement: Full erase from Firestore only after both users clear-chat
@@ -5674,7 +5694,6 @@ function deleteCurrentChat() {
         const idx = convs.findIndex(c => getUnifiedChatId(c.id) === currentChatId);
         if (idx !== -1) {
           convs[idx].clearedAtBy = { ...(convs[idx].clearedAtBy || {}), [activeSession.id]: clearTimestamp };
-          convs[idx].visibleTo = (convs[idx].visibleTo || convs[idx].participants || []).filter(uid => uid !== activeSession.id);
 
           const participants = convs[idx].participants || [];
           const everyoneCleared = participants.length > 0 && participants.every(uid => convs[idx].clearedAtBy[uid]);
@@ -5693,24 +5712,8 @@ function deleteCurrentChat() {
       delete chatStore[currentChatId];
       saveJson(CHAT_STORE_KEY, chatStore);
 
-      myConversations = myConversations.filter((conv) => getUnifiedChatId(conv.id) !== currentChatId);
-      delete chatMeta[currentChatId];
-      saveJson('chatbhar.chatMeta', chatMeta);
-
-      if (messageUnsubscribe) {
-        messageUnsubscribe();
-        messageUnsubscribe = null;
-      }
-
-      activeChat = null;
       renderChatUsers();
       renderMessages();
-
-      // Switch to next available chat if any
-      if (myConversations.length > 0) {
-        const sorted = [...myConversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-        fetchAndSyncMessages(sorted[0].id);
-      }
     } catch (err) {
       alert('Failed to clear chat: ' + err.message);
     }
@@ -5934,6 +5937,66 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 }
+
+function getLinkPreviewHtml(text) {
+  if (!text) return '';
+  const urlRegex = /(https?:\/\/[^\s]+)/i;
+  const match = text.match(urlRegex);
+  if (!match) return '';
+
+  const url = match[0].replace(/[.,!?;:]$/, ''); // Clean trailing punctuation
+  let domain = '';
+  try {
+    domain = new URL(url).hostname.replace('www.', '');
+  } catch (e) {
+    domain = 'Link';
+  }
+
+  const isYoutube = domain.includes('youtube.com') || domain.includes('youtu.be');
+  const siteName = isYoutube ? 'YouTube' : domain;
+  const icon = isYoutube ? '📺' : '🔗';
+
+  let thumbnailHtml = '';
+  if (isYoutube) {
+    let videoId = '';
+    if (url.includes('v=')) videoId = url.split('v=')[1].split('&')[0];
+    else if (url.includes('youtu.be/')) videoId = url.split('youtu.be/')[1].split('?')[0];
+
+    if (videoId) {
+      thumbnailHtml = `<img src="https://img.youtube.com/vi/${videoId}/mqdefault.jpg" class="link-preview-thumb" />`;
+    }
+  }
+
+  return `
+    <a href="${url}" target="_blank" class="link-preview-box">
+      ${thumbnailHtml}
+      <div class="link-preview-content">
+        <div class="link-preview-icon">${icon}</div>
+        <div class="link-preview-info">
+          <div class="link-preview-title">${siteName}</div>
+          <div class="link-preview-url">${url.slice(0, 50)}${url.length > 50 ? '...' : ''}</div>
+        </div>
+      </div>
+    </a>
+  `;
+}
+
+window.toggleReadMore = (btn) => {
+  const bubble = btn.closest('.bubble');
+  const textContent = bubble.querySelector('.text-content');
+  const fullText = textContent.dataset.fullText;
+  const isExpanded = btn.dataset.expanded === 'true';
+
+  if (isExpanded) {
+    textContent.textContent = fullText.slice(0, 760) + '...';
+    btn.textContent = 'Read more';
+    btn.dataset.expanded = 'false';
+  } else {
+    textContent.textContent = fullText;
+    btn.textContent = 'Read less';
+    btn.dataset.expanded = 'true';
+  }
+};
 
 function escapeAttr(value) { return String(value).replaceAll('"', '&quot;'); }
 
@@ -7022,8 +7085,7 @@ async function performClearChat(chatId) {
     const clearedAtBy = { ...(convData.clearedAtBy || {}), [myUid]: clearTimestamp };
 
     await updateDoc(convRef, {
-      clearedAtBy,
-      visibleTo: (convData.visibleTo || participants).filter(uid => uid !== myUid)
+      clearedAtBy
     });
 
     const everyoneCleared = participants.length > 0 && participants.every((uid) => Boolean(clearedAtBy[uid]));
@@ -7041,7 +7103,6 @@ async function performClearChat(chatId) {
     const idx = convs.findIndex(c => getUnifiedChatId(c.id) === chatId);
     if (idx !== -1) {
       convs[idx].clearedAtBy = { ...(convs[idx].clearedAtBy || {}), [myUid]: clearTimestamp };
-      convs[idx].visibleTo = (convs[idx].visibleTo || convs[idx].participants || []).filter(uid => uid !== myUid);
       saveJson('chatbhar.conversations', convs);
     }
   }
