@@ -382,10 +382,11 @@ let app, auth, db, storage;
 let useFirebase = false;
 
 // Attempt to load local config if it exists (not tracked by git)
+// Using dynamic import with a fallback to avoid 404 console errors when the file is missing
 try {
-  const { localFirebaseConfig } = await import('./firebase-config.js').catch(() => ({}));
-  if (localFirebaseConfig && localFirebaseConfig.apiKey) {
-    Object.assign(firebaseConfig, localFirebaseConfig);
+  const localConfig = await import('./firebase-config.js').catch(() => null);
+  if (localConfig && localConfig.localFirebaseConfig && localConfig.localFirebaseConfig.apiKey) {
+    Object.assign(firebaseConfig, localConfig.localFirebaseConfig);
   }
 } catch (e) {
   // Ignore missing local config
@@ -642,7 +643,11 @@ async function markChatNotificationsAsRead(chatId) {
       const snap = await getDocs(unreadQuery);
       if (!snap.empty) {
         const batch = writeBatch(db);
-        snap.forEach((d) => batch.update(d.ref, { unread: false }));
+        snap.forEach((d) => {
+          if (d.exists()) {
+            batch.update(d.ref, { unread: false });
+          }
+        });
         await batch.commit();
       }
     } catch (err) {
@@ -2339,14 +2344,24 @@ function renderProfileAvatar(el, user) {
 window.followUser = followUser;
 async function followUser(followingId) {
   if (!activeSession) return;
+  const followingUser = authUsers.find(u => u.id === followingId);
+  if (!followingUser) return;
+
+  const relId = `${activeSession.id}_${followingId}`;
+
+  // Optimistic UI Update
+  const isPrivate = followingUser.isPrivate;
+  const optimisticRel = isPrivate
+    ? { id: relId, fromUserId: activeSession.id, toUserId: followingId, status: 'pending', createdAt: Date.now() }
+    : { id: relId, followerId: activeSession.id, followingId, status: 'accepted', createdAt: Date.now() };
+
+  myRelationships.push(optimisticRel);
+  renderExploreUsers(exploreSearchInput.value);
+  if (otherProfileUserId === followingId) renderOtherProfile(followingId);
+
   try {
-    const followingUser = authUsers.find(u => u.id === followingId);
-    if (!followingUser) throw new Error("User not found");
-
-    const relId = `${activeSession.id}_${followingId}`;
-
     if (useFirebase) {
-      if (followingUser.isPrivate) {
+      if (isPrivate) {
         await setDoc(doc(db, "followRequests", relId), {
           id: relId,
           fromUserId: activeSession.id,
@@ -2393,20 +2408,30 @@ async function followUser(followingId) {
         method: 'POST',
         body: JSON.stringify({ followingId })
       });
-      if (followingUser.isPrivate) alert('Follow request sent');
+      if (isPrivate) alert('Follow request sent');
     }
-
-    await renderExploreUsers(exploreSearchInput.value);
   } catch (err) {
+    // Rollback on error
+    myRelationships = myRelationships.filter(r => r.id !== relId);
+    renderExploreUsers(exploreSearchInput.value);
+    if (otherProfileUserId === followingId) renderOtherProfile(followingId);
     alert(err.message);
   }
 }
 
 async function unfollowUser(followingId) {
   if (!activeSession) return;
-  try {
-    const relId = `${activeSession.id}_${followingId}`;
+  const relId = `${activeSession.id}_${followingId}`;
 
+  // Save current state for rollback
+  const previousRels = [...myRelationships];
+
+  // Optimistic UI Update
+  myRelationships = myRelationships.filter(r => r.id !== relId);
+  renderExploreUsers(exploreSearchInput.value);
+  if (otherProfileUserId === followingId) renderOtherProfile(followingId);
+
+  try {
     if (useFirebase) {
       const followDoc = await getDoc(doc(db, "follows", relId));
 
@@ -2430,9 +2455,11 @@ async function unfollowUser(followingId) {
         body: JSON.stringify({ followingId })
       });
     }
-
-    await renderExploreUsers(exploreSearchInput.value);
   } catch (err) {
+    // Rollback on error
+    myRelationships = previousRels;
+    renderExploreUsers(exploreSearchInput.value);
+    if (otherProfileUserId === followingId) renderOtherProfile(followingId);
     alert(err.message);
   }
 }
@@ -2645,23 +2672,28 @@ async function renderOtherProfile(userId) {
 
   let relStatus = null;
   if (activeSession) {
-    try {
-      const relId = `${activeSession.id}_${userId}`;
-      if (useFirebase && db) {
-        const followDoc = await getDoc(doc(db, "follows", relId));
-        if (followDoc.exists()) {
-          relStatus = 'accepted';
+    const relId = `${activeSession.id}_${userId}`;
+    const localRel = myRelationships.find(r => r.id === relId || (r.followerId === activeSession.id && r.followingId === userId));
+    if (localRel) {
+      relStatus = localRel.status || 'accepted';
+    } else {
+      try {
+        if (useFirebase && db) {
+          const followDoc = await getDoc(doc(db, "follows", relId));
+          if (followDoc.exists()) {
+            relStatus = 'accepted';
+          } else {
+            const reqDoc = await getDoc(doc(db, "followRequests", relId));
+            if (reqDoc.exists()) relStatus = 'pending';
+          }
         } else {
-          const reqDoc = await getDoc(doc(db, "followRequests", relId));
-          if (reqDoc.exists()) relStatus = 'pending';
+          const rels = loadJson('chatbhar.relationships', []);
+          const rel = rels.find(r => r.id === relId);
+          if (rel) relStatus = rel.status;
         }
-      } else {
-        const rels = loadJson('chatbhar.relationships', []);
-        const rel = rels.find(r => r.id === relId);
-        if (rel) relStatus = rel.status;
+      } catch (err) {
+        console.error(err);
       }
-    } catch (err) {
-      console.error(err);
     }
   }
 
@@ -3376,9 +3408,13 @@ function updateNotificationBadge() {
 async function removeNotificationById(id) {
   if (useFirebase && db) {
     try {
-      await deleteDoc(doc(db, 'notifications', id));
+      const notifRef = doc(db, 'notifications', id);
+      const snap = await getDoc(notifRef);
+      if (snap.exists()) {
+        await deleteDoc(notifRef);
+      }
     } catch (err) {
-      console.warn('Failed to delete notification from firebase', err);
+      console.warn('Failed to delete notification from firebase', err.message);
     }
   } else {
     const existing = loadJson(NOTIFICATION_STORE_KEY, []);
@@ -3390,6 +3426,7 @@ async function removeNotificationById(id) {
 }
 
 async function removeNotificationGroup(category) {
+  if (!activeSession) return;
   if (useFirebase && db) {
     try {
       const qNotifs = query(
@@ -3398,11 +3435,13 @@ async function removeNotificationGroup(category) {
         where('category', '==', category)
       );
       const snap = await getDocs(qNotifs);
-      const batch = writeBatch(db);
-      snap.forEach(d => batch.delete(d.ref));
-      await batch.commit();
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
     } catch (err) {
-      console.warn('Failed to delete notification group from firebase', err);
+      console.warn('Failed to delete notification group from firebase', err.message);
     }
   } else {
     const existing = loadJson(NOTIFICATION_STORE_KEY, []);
@@ -3414,16 +3453,21 @@ async function removeNotificationGroup(category) {
 }
 
 async function clearAllVisibleNotifications() {
+  if (!activeSession) return;
   const visible = getVisibleNotifications();
+  if (visible.length === 0) return;
+
   const idsToRemove = visible.map(n => n.id);
 
   if (useFirebase && db) {
     try {
       const batch = writeBatch(db);
-      idsToRemove.forEach(id => batch.delete(doc(db, 'notifications', id)));
+      for (const id of idsToRemove) {
+        batch.delete(doc(db, 'notifications', id));
+      }
       await batch.commit();
     } catch (err) {
-      console.warn('Failed to clear all notifications from firebase', err);
+      console.warn('Failed to clear all notifications from firebase', err.message);
     }
   } else {
     const existing = loadJson(NOTIFICATION_STORE_KEY, []);
@@ -6475,10 +6519,11 @@ function showContextMenu(e, bubble) {
 
 async function deleteMessage(type) {
   if (!currentContextMsg || !activeSession) return;
+  const myUid = activeSession.id;
 
   if (type === 'everyone') {
     // Requirement: “delete from all” should only be allowed by the message sender
-    if (currentContextMsg.senderId !== activeSession.id) {
+    if (currentContextMsg.senderId !== myUid) {
       alert('Only the sender can delete for everyone.');
       return;
     }
@@ -6512,10 +6557,25 @@ async function deleteMessage(type) {
     // Delete for me
     try {
       if (useFirebase && currentContextMsg.docId) {
-        const deletedFor = currentContextMsg.deletedFor || [];
-        if (!deletedFor.includes(activeSession.id)) {
-          deletedFor.push(activeSession.id);
-          await updateDoc(doc(db, "messages", currentContextMsg.docId), { deletedFor });
+        const msgRef = doc(db, "messages", currentContextMsg.docId);
+        const msgSnap = await getDoc(msgRef);
+        if (msgSnap.exists()) {
+          const msgData = msgSnap.data();
+          const deletedFor = msgData.deletedFor || [];
+          const participants = msgData.participants || [];
+
+          if (!deletedFor.includes(myUid)) {
+            deletedFor.push(myUid);
+
+            // Requirement: Purge if everyone has deleted for me or message is globally deleted and all others have hidden it.
+            const everyoneDeletedForMe = participants.length > 0 && participants.every(uid => deletedFor.includes(uid));
+
+            if (everyoneDeletedForMe) {
+              await deleteDoc(msgRef);
+            } else {
+              await updateDoc(msgRef, { deletedFor });
+            }
+          }
         }
       } else {
         // Local mode delete for me
@@ -6524,8 +6584,16 @@ async function deleteMessage(type) {
         const msg = msgs.find(m => m.id === currentContextMsg.id);
         if (msg) {
           msg.deletedFor = msg.deletedFor || [];
-          if (!msg.deletedFor.includes(activeSession.id)) {
-            msg.deletedFor.push(activeSession.id);
+          if (!msg.deletedFor.includes(myUid)) {
+            msg.deletedFor.push(myUid);
+
+            const participants = msg.participants || [];
+            const everyoneDeletedForMe = participants.length > 0 && participants.every(uid => msg.deletedFor.includes(uid));
+
+            if (everyoneDeletedForMe) {
+              const idx = msgs.findIndex(m => m.id === currentContextMsg.id);
+              if (idx !== -1) msgs.splice(idx, 1);
+            }
             saveJson(CHAT_STORE_KEY, chatStore);
           }
         }
