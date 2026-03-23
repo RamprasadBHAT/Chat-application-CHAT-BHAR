@@ -579,6 +579,11 @@ async function initApp() {
     }
   }
 
+  if (!useFirebase) {
+    const indicator = document.getElementById('localModeIndicator');
+    if (indicator) indicator.style.display = 'block';
+  }
+
   await bootstrapUsers();
   migrateOldUploads();
   applyUploadType();
@@ -1732,7 +1737,8 @@ async function syncAuthUsers() {
     try {
       const payload = await apiRequest('/api/auth/users');
       authUsers = payload.users || [];
-      saveJson(AUTH_USERS_KEY, authUsers);
+      // Note: We intentionally DO NOT save to AUTH_USERS_KEY here in Local Mode
+      // because localApiRequest redacts passwords. Overwriting would lock users out.
       renderExploreUsers();
     } catch (err) {
       console.error("Sync users failed", err);
@@ -3643,7 +3649,9 @@ async function loadSession() {
 }
 
 async function onDeactivateAccount() {
-  if (!activeSession) return;
+  // Use either activeSession or auth.currentUser for safety
+  const currentUserId = activeSession?.id || auth?.currentUser?.uid;
+  if (!currentUserId) return;
 
   const duration = Array.from(deactivationDurationRadios).find(r => r.checked)?.value;
   let endDate = new Date();
@@ -3675,10 +3683,10 @@ async function onDeactivateAccount() {
 
   try {
     if (useFirebase && db) {
-      await updateDoc(doc(db, 'users', activeSession.id), updates);
+      await updateDoc(doc(db, 'users', currentUserId), updates);
     } else {
       const users = loadJson(AUTH_USERS_KEY, []);
-      const idx = users.findIndex(u => u.id === activeSession.id);
+      const idx = users.findIndex(u => u.id === currentUserId);
       if (idx !== -1) {
         users[idx] = { ...users[idx], ...updates };
         saveJson(AUTH_USERS_KEY, users);
@@ -3744,6 +3752,8 @@ async function onDeleteAccount() {
 async function proceedWithActualDeletion(password) {
   try {
     if (useFirebase) {
+      if (!auth.currentUser) throw new Error("No active session found.");
+
       const credential = EmailAuthProvider.credential(activeSession.email, password);
       await reauthenticateWithCredential(auth.currentUser, credential);
 
@@ -3776,10 +3786,13 @@ async function proceedWithActualDeletion(password) {
       // Third: Delete the account from Firebase Authentication
       await deleteUser(auth.currentUser);
     } else {
-      await apiRequest('/api/auth/delete-account', {
+      const res = await apiRequest('/api/auth/delete-account', {
         method: 'POST',
         body: JSON.stringify({ email: activeSession.email, password })
       });
+
+      if (!res.ok) throw new Error(res.error || "Deletion failed on server.");
+
       // Cleanup local posts
       const localPosts = loadJson(UPLOAD_STORE_KEY, []);
       const filtered = localPosts.filter(p => p.userId !== activeSession.id);
@@ -3789,7 +3802,8 @@ async function proceedWithActualDeletion(password) {
     deleteAccountModal.hidden = true;
     onLogout();
   } catch (error) {
-    alert(error.message || 'Deletion failed.');
+    console.error("Deletion process failed:", error);
+    alert(error.message || 'Deletion failed. Please verify your password and try again.');
   }
 }
 
