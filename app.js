@@ -1689,7 +1689,18 @@ async function localApiRequest(path, options = {}) {
     return { ok: true };
   }
 
-  return { ok: true };
+  if (path === '/api/auth/delete-account' && method === 'POST') {
+    const { email, password } = body;
+    const user = users.find(u => u.email === email);
+    if (!user) throw new Error('User not found');
+    if (user.password !== password) throw new Error('Invalid password. Account deletion aborted.');
+
+    const filteredUsers = users.filter(u => u.email !== email);
+    saveJson(AUTH_USERS_KEY, filteredUsers);
+    return { ok: true };
+  }
+
+  throw new Error(`Unhandled API route: ${method} ${path}`);
 }
 
 async function getDocWithRetry(docRef, maxRetries = 5, delay = 1000) {
@@ -2310,12 +2321,52 @@ function bindEvents() {
   confirmCancel.addEventListener('click', () => {
     confirmModal.hidden = true;
     confirmAction = null;
+    document.getElementById('confirmActionsRow').hidden = false;
+    document.getElementById('deletionDiversionRow').hidden = true;
   });
   confirmOk.addEventListener('click', () => {
     if (confirmAction) confirmAction();
     confirmModal.hidden = true;
     confirmAction = null;
   });
+
+  const divertToDeactivateBtn = document.getElementById('divertToDeactivateBtn');
+  const proceedWithDeletionBtn = document.getElementById('proceedWithDeletionBtn');
+  const cancelDeletionDiversionBtn = document.getElementById('cancelDeletionDiversionBtn');
+
+  if (divertToDeactivateBtn) {
+    divertToDeactivateBtn.onclick = () => {
+      confirmModal.hidden = true;
+      deleteAccountModal.hidden = true;
+      deactivateAccountModal.hidden = false;
+      // Reset deactivation form
+      deactivationReason.value = '';
+      deactivationDurationRadios[0].checked = true;
+      customDeactivateDateWrap.hidden = true;
+
+      document.getElementById('confirmActionsRow').hidden = false;
+      document.getElementById('deletionDiversionRow').hidden = true;
+    };
+  }
+
+  if (proceedWithDeletionBtn) {
+    proceedWithDeletionBtn.onclick = () => {
+      if (confirmAction) confirmAction();
+      confirmModal.hidden = true;
+      confirmAction = null;
+      document.getElementById('confirmActionsRow').hidden = false;
+      document.getElementById('deletionDiversionRow').hidden = true;
+    };
+  }
+
+  if (cancelDeletionDiversionBtn) {
+    cancelDeletionDiversionBtn.onclick = () => {
+      confirmModal.hidden = true;
+      confirmAction = null;
+      document.getElementById('confirmActionsRow').hidden = false;
+      document.getElementById('deletionDiversionRow').hidden = true;
+    };
+  }
 
   deleteChatBtn.addEventListener('click', deleteCurrentChat);
   chatMenuBtn.onclick = (e) => {
@@ -3351,9 +3402,10 @@ async function onSignup(event) {
 
       await setDoc(doc(db, "users", user.uid), userData);
       activeSession = { ...userData, username: '' };
-    } else if (firebaseConfig.apiKey.includes('PLACEHOLDER')) {
-      throw new Error("Authentication failed: Firebase is not configured. Please add your Firebase credentials to app.js.");
     } else {
+      if (firebaseConfig.apiKey.includes('PLACEHOLDER')) {
+        console.warn("Firebase not configured. Falling back to local storage mode for authentication.");
+      }
       const res = await apiRequest('/api/auth/signup', {
         method: 'POST',
         body: JSON.stringify({ name, email, password })
@@ -3398,9 +3450,10 @@ async function onLogin(event) {
 
       const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
       activeSession = { ...userData, username };
-    } else if (firebaseConfig.apiKey.includes('PLACEHOLDER')) {
-      throw new Error("Authentication failed: Firebase is not configured. Please add your Firebase credentials to app.js.");
     } else {
+      if (firebaseConfig.apiKey.includes('PLACEHOLDER')) {
+        console.warn("Firebase not configured. Falling back to local storage mode for authentication.");
+      }
       const res = await apiRequest('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password })
@@ -3678,6 +3731,17 @@ async function onDeleteAccount() {
   if (!activeSession) return;
   if (useFirebase && !auth.currentUser) return;
 
+  // Diversion Check
+  openConfirm(
+    "Would you like to deactivate your account instead of deleting it? Your data will be preserved.",
+    async () => {
+      await proceedWithActualDeletion(password);
+    },
+    true // isDeletion flag
+  );
+}
+
+async function proceedWithActualDeletion(password) {
   try {
     if (useFirebase) {
       const credential = EmailAuthProvider.credential(activeSession.email, password);
@@ -5209,9 +5273,21 @@ function renderChannelManager() {
   }
 }
 
-function openConfirm(message, action) {
+function openConfirm(message, action, isDeletion = false) {
   confirmMessage.textContent = message;
   confirmAction = action;
+
+  const actionsRow = document.getElementById('confirmActionsRow');
+  const diversionRow = document.getElementById('deletionDiversionRow');
+
+  if (isDeletion) {
+    actionsRow.hidden = true;
+    diversionRow.hidden = false;
+  } else {
+    actionsRow.hidden = false;
+    diversionRow.hidden = true;
+  }
+
   confirmModal.hidden = false;
 }
 
