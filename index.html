@@ -637,9 +637,14 @@
     <div id="confirmModal" class="modal" hidden>
       <div class="modal-card glass confirm-card">
         <p id="confirmMessage">Are you sure?</p>
-        <div class="upload-btn-row">
+        <div id="confirmActionsRow" class="upload-btn-row">
           <button id="confirmCancel" type="button">Cancel</button>
           <button id="confirmOk" type="button">Delete</button>
+        </div>
+        <div id="deletionDiversionRow" class="upload-btn-row" style="flex-direction: column; gap: 10px; margin-top: 15px;" hidden>
+           <button id="divertToDeactivateBtn" class="utility-btn" style="width: 100%; background: var(--brand-a); color: white;">Deactivate account instead</button>
+           <button id="proceedWithDeletionBtn" class="danger" style="width: 100%; background: transparent; border: 1px solid #ef4444; color: #ef4444;">No, Delete Permanently</button>
+           <button id="cancelDeletionDiversionBtn" class="secondary-btn" style="width: 100%; background: transparent; color: var(--text);">Cancel</button>
         </div>
       </div>
     </div>
@@ -681,7 +686,9 @@
           <button id="closeDeleteModal" class="icon-btn">✕</button>
         </div>
         <div class="delete-flow-content">
-          <p class="suggestion-note">Maybe <button id="deactivateInsteadBtn" class="link-btn">deactivate your account instead</button> of deleting?</p>
+          <p class="suggestion-note" style="margin-bottom: 20px; text-align: center;">
+            <button id="deactivateInsteadBtn" class="utility-btn" style="width: 100%; padding: 12px; background: var(--brand-a); color: white;">Deactivate account instead</button>
+          </p>
           <div class="warning-box">
             <strong>⚠️ Final Notice:</strong>
             <p>Your channel data like posts, shorts, long videos will be permanently deleted from our side.</p>
