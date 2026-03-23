@@ -48,7 +48,23 @@ const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
 const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
 const deleteConfirmPassword = document.getElementById('deleteConfirmPassword');
 const deleteTick = document.getElementById('deleteTick');
-const deactivateInstead = document.getElementById('deactivateInstead');
+const deactivateInsteadBtn = document.getElementById('deactivateInsteadBtn');
+
+const deactivateAccountModal = document.getElementById('deactivateAccountModal');
+const closeDeactivateModal = document.getElementById('closeDeactivateModal');
+const cancelDeactivateBtn = document.getElementById('cancelDeactivateBtn');
+const confirmDeactivateBtn = document.getElementById('confirmDeactivateBtn');
+const customDeactivateDateWrap = document.getElementById('customDeactivateDateWrap');
+const customDeactivateDate = document.getElementById('customDeactivateDate');
+const deactivationReason = document.getElementById('deactivationReason');
+const deactivationDurationRadios = document.getElementsByName('deactivateDuration');
+
+const deactivationTimerModal = document.getElementById('deactivationTimerModal');
+const deactivationTimerDisplay = document.getElementById('deactivationTimerDisplay');
+const deactivationTimerOkBtn = document.getElementById('deactivationTimerOkBtn');
+const deactivationTimerReactivateBtn = document.getElementById('deactivationTimerReactivateBtn');
+const reactivateGraceMsg = document.getElementById('reactivateGraceMsg');
+const deactivationLockoutMsg = document.getElementById('deactivationLockoutMsg');
 
 const screens = [...document.querySelectorAll('.screen')];
 const navButtons = [...document.querySelectorAll('.nav-btn')];
@@ -406,6 +422,88 @@ if (firebaseConfig.apiKey && !firebaseConfig.apiKey.includes('PLACEHOLDER')) {
 
 initApp();
 
+async function checkDeactivation(user) {
+  if (!user) return false;
+
+  const now = Date.now();
+
+  if (user.isDeactivated) {
+    // Auto-reactivate if time has passed
+    if (user.deactivationEnd && now >= user.deactivationEnd) {
+      const updates = {
+        isDeactivated: false,
+        deactivationEnd: null,
+        deactivationReason: null,
+        deactivationStartedAt: null
+      };
+
+      if (useFirebase && db) {
+        await updateDoc(doc(db, 'users', user.id || user.uid), updates);
+      } else {
+        const users = loadJson(AUTH_USERS_KEY, []);
+        const idx = users.findIndex(u => u.id === (user.id || user.uid));
+        if (idx !== -1) {
+          users[idx] = { ...users[idx], ...updates };
+          saveJson(AUTH_USERS_KEY, users);
+        }
+      }
+      return false;
+    }
+
+    // Still deactivated
+    authGate.hidden = true;
+    appShell.hidden = true;
+    deactivationTimerModal.hidden = false;
+
+    if (deactivationLockoutMsg) {
+      const dateStr = new Date(user.deactivationEnd).toLocaleString();
+      deactivationLockoutMsg.textContent = `You cannot login until ${dateStr}`;
+    }
+
+    // Timer display logic
+    const updateTimer = () => {
+      const remaining = user.deactivationEnd - Date.now();
+      if (remaining <= 0) {
+        deactivationTimerDisplay.textContent = "Your deactivation period has ended. You can now login.";
+        return;
+      }
+
+      const days = Math.floor(remaining / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((remaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const mins = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60));
+      const secs = Math.floor((remaining % (1000 * 60)) / 1000);
+
+      deactivationTimerDisplay.textContent = `${days}d ${hours}h ${mins}m ${secs}s remaining`;
+    };
+
+    updateTimer();
+    const timerInterval = setInterval(() => {
+      if (deactivationTimerModal.hidden) {
+        clearInterval(timerInterval);
+        return;
+      }
+      updateTimer();
+    }, 1000);
+
+    // 3-day grace period logic
+    const deactivationStarted = user.deactivationStartedAt || now;
+    const gracePeriodEnd = deactivationStarted + (3 * 24 * 60 * 60 * 1000);
+    const inGracePeriod = now <= gracePeriodEnd;
+
+    if (inGracePeriod) {
+      deactivationTimerReactivateBtn.hidden = false;
+      reactivateGraceMsg.hidden = false;
+    } else {
+      deactivationTimerReactivateBtn.hidden = true;
+      reactivateGraceMsg.hidden = true;
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
 async function initApp() {
   hydrateState(); // Hydrate immediately for fast feedback
   applyStoredTheme();
@@ -419,6 +517,12 @@ async function initApp() {
         const userDoc = await getDocWithRetry(doc(db, "users", user.uid));
         if (userDoc) {
           const userData = userDoc.data();
+          const isBlocked = await checkDeactivation({ ...userData, id: user.uid });
+          if (isBlocked) {
+            activeSession = { ...userData, id: user.uid }; // Temporary session for reactivation if needed
+            return;
+          }
+
           const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
           activeSession = { ...userData, username };
           saveJson(AUTH_SESSION_KEY, activeSession);
@@ -452,6 +556,9 @@ async function initApp() {
   } else {
     // Local mode auth check
     if (activeSession && activeSession.id) {
+      const isBlocked = await checkDeactivation(activeSession);
+      if (isBlocked) return;
+
       authGate.hidden = true;
       appShell.hidden = false;
       if (!activeSession.username) {
@@ -1745,12 +1852,64 @@ function bindEvents() {
   }
   if (closeDeleteModal) closeDeleteModal.addEventListener('click', () => deleteAccountModal.hidden = true);
   if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', () => deleteAccountModal.hidden = true);
-  if (deactivateInstead) {
-    deactivateInstead.addEventListener('click', (e) => {
+  if (deactivateInsteadBtn) {
+    deactivateInsteadBtn.addEventListener('click', (e) => {
       e.preventDefault();
-      alert('Deactivation is not yet available, but you can simply log out to stop receiving notifications.');
       deleteAccountModal.hidden = true;
+      deactivateAccountModal.hidden = false;
+      // Reset deactivation form
+      deactivationReason.value = '';
+      deactivationDurationRadios[0].checked = true;
+      customDeactivateDateWrap.hidden = true;
     });
+  }
+
+  if (closeDeactivateModal) closeDeactivateModal.onclick = () => deactivateAccountModal.hidden = true;
+  if (cancelDeactivateBtn) cancelDeactivateBtn.onclick = () => deactivateAccountModal.hidden = true;
+
+  deactivationDurationRadios.forEach(radio => {
+    radio.addEventListener('change', () => {
+      customDeactivateDateWrap.hidden = radio.value !== 'custom';
+    });
+  });
+
+  if (confirmDeactivateBtn) {
+    confirmDeactivateBtn.onclick = onDeactivateAccount;
+  }
+
+  // Handle Custom Date selection UI
+  if (customDeactivateDate) {
+    const today = new Date().toISOString().split('T')[0];
+    customDeactivateDate.min = today;
+  }
+
+  const deactivationLearnMoreLink = document.getElementById('deactivationLearnMoreLink');
+  const deactivationLearnMoreText = document.getElementById('deactivationLearnMoreText');
+  if (deactivationLearnMoreLink) {
+    deactivationLearnMoreLink.onclick = (e) => {
+      e.preventDefault();
+      deactivationLearnMoreText.hidden = !deactivationLearnMoreText.hidden;
+    };
+  }
+
+  const globalDeactivateLearnMore = document.getElementById('globalDeactivateLearnMore');
+  const globalDeactivateLearnMoreText = document.getElementById('globalDeactivateLearnMoreText');
+  if (globalDeactivateLearnMore) {
+    globalDeactivateLearnMore.onclick = (e) => {
+      e.preventDefault();
+      globalDeactivateLearnMoreText.hidden = !globalDeactivateLearnMoreText.hidden;
+    };
+  }
+
+  if (deactivationTimerOkBtn) {
+    deactivationTimerOkBtn.onclick = () => {
+      deactivationTimerModal.hidden = true;
+      onLogout();
+    };
+  }
+
+  if (deactivationTimerReactivateBtn) {
+    deactivationTimerReactivateBtn.onclick = onReactivateAccount;
   }
   if (deleteTick) {
     deleteTick.addEventListener('change', () => {
@@ -2687,6 +2846,12 @@ async function onExploreMessageClick(userId, username) {
 
   const myUid = activeSession.id;
 
+  const user = authUsers.find(u => u.id === userId);
+  if (user?.isDeactivated) {
+    alert(`sorry the ${user.username || user.name} user is no more active`);
+    return;
+  }
+
   const mutual = await isMutualFollow(myUid, userId);
   if (!mutual) {
       alert("You can only message users if you follow each other.");
@@ -2859,6 +3024,21 @@ async function renderOtherProfile(userId) {
   if (activeSession && userId !== activeSession.id) {
     editBtn.hidden = true;
     settingsBtn.hidden = true;
+
+    if (user.isDeactivated) {
+      const deactMsg = document.createElement('p');
+      deactMsg.style = 'color: #ef4444; font-weight: 600; margin-top: 10px;';
+      deactMsg.textContent = 'Account Deactivated';
+      usernameRow.appendChild(deactMsg);
+
+      const deactSub = document.createElement('p');
+      deactSub.style = 'color: var(--muted); font-size: 0.85rem;';
+      deactSub.textContent = `sorry the ${user.username || user.name} user is no more active`;
+      usernameRow.appendChild(deactSub);
+
+      document.querySelector('.profile-header').classList.add('deactivated-account-faded');
+      return;
+    }
 
     const followBtn = document.createElement('button');
     followBtn.className = 'follow-btn dynamic-btn';
@@ -3209,6 +3389,13 @@ async function onLogin(event) {
       if (!userDoc) throw new Error("User data not found in Firestore.");
 
       const userData = userDoc.data();
+
+      const isBlocked = await checkDeactivation({ ...userData, id: user.uid });
+      if (isBlocked) {
+        activeSession = { ...userData, id: user.uid };
+        return;
+      }
+
       const username = (userData.usernames || []).find(x => x.id === userData.activeUsernameId)?.value || '';
       activeSession = { ...userData, username };
     } else if (firebaseConfig.apiKey.includes('PLACEHOLDER')) {
@@ -3218,6 +3405,13 @@ async function onLogin(event) {
         method: 'POST',
         body: JSON.stringify({ email, password })
       });
+
+      const isBlocked = await checkDeactivation(res.session);
+      if (isBlocked) {
+        activeSession = res.session;
+        return;
+      }
+
       activeSession = res.session;
     }
 
@@ -3393,6 +3587,89 @@ async function loadSession() {
   renderUploads();
   renderChannelManager();
   renderFollowRequests();
+}
+
+async function onDeactivateAccount() {
+  if (!activeSession) return;
+
+  const duration = Array.from(deactivationDurationRadios).find(r => r.checked)?.value;
+  let endDate = new Date();
+
+  if (duration === '1d') {
+    endDate.setDate(endDate.getDate() + 1);
+  } else if (duration === '1w') {
+    endDate.setDate(endDate.getDate() + 7);
+  } else if (duration === '1m') {
+    endDate.setMonth(endDate.getMonth() + 1);
+  } else if (duration === 'custom') {
+    const customVal = customDeactivateDate.value;
+    if (!customVal) return alert('Please select a custom re-activation date.');
+    endDate = new Date(customVal);
+
+    // 4-year limit check
+    const maxDate = new Date();
+    maxDate.setFullYear(maxDate.getFullYear() + 4);
+    if (endDate > maxDate) return alert('Maximum deactivation period is 4 years.');
+    if (endDate <= new Date()) return alert('Please select a future date.');
+  }
+
+  const updates = {
+    isDeactivated: true,
+    deactivationEnd: endDate.getTime(),
+    deactivationReason: deactivationReason.value.trim(),
+    deactivationStartedAt: Date.now()
+  };
+
+  try {
+    if (useFirebase && db) {
+      await updateDoc(doc(db, 'users', activeSession.id), updates);
+    } else {
+      const users = loadJson(AUTH_USERS_KEY, []);
+      const idx = users.findIndex(u => u.id === activeSession.id);
+      if (idx !== -1) {
+        users[idx] = { ...users[idx], ...updates };
+        saveJson(AUTH_USERS_KEY, users);
+      }
+    }
+
+    alert(`Account deactivated until ${endDate.toLocaleString()}`);
+    deactivateAccountModal.hidden = true;
+    onLogout();
+  } catch (err) {
+    alert('Failed to deactivate account: ' + err.message);
+  }
+}
+
+async function onReactivateAccount() {
+  if (!activeSession) return;
+
+  try {
+    const updates = {
+      isDeactivated: false,
+      deactivationEnd: null,
+      deactivationReason: null,
+      deactivationStartedAt: null
+    };
+
+    if (useFirebase && db) {
+      await updateDoc(doc(db, 'users', activeSession.id), updates);
+    } else {
+      const users = loadJson(AUTH_USERS_KEY, []);
+      const idx = users.findIndex(u => u.id === activeSession.id);
+      if (idx !== -1) {
+        users[idx] = { ...users[idx], ...updates };
+        saveJson(AUTH_USERS_KEY, users);
+      }
+    }
+
+    activeSession.isDeactivated = false;
+    deactivationTimerModal.hidden = true;
+    alert('Account successfully re-activated!');
+    // Reload UI
+    initApp();
+  } catch (err) {
+    alert('Failed to re-activate account: ' + err.message);
+  }
 }
 
 async function onDeleteAccount() {
@@ -4297,7 +4574,13 @@ async function renderExploreUsers(searchQuery = '') {
       const isActive = u.id === activeSession?.id || (lastUploadTs && now - lastUploadTs < 24 * 60 * 60 * 1000);
       return { ...u, displayName, isActive, lastUploadTs };
     })
-    .sort((a, b) => Number(b.isActive) - Number(a.isActive) || (b.lastUploadTs - a.lastUploadTs));
+    .sort((a, b) => {
+      // Deactivated users always last
+      if (a.isDeactivated !== b.isDeactivated) {
+        return a.isDeactivated ? 1 : -1;
+      }
+      return Number(b.isActive) - Number(a.isActive) || (b.lastUploadTs - a.lastUploadTs);
+    });
 
   exploreUsersList.innerHTML = '';
   if (!rows.length) {
@@ -4311,7 +4594,7 @@ async function renderExploreUsers(searchQuery = '') {
     // This is handled in the profile view. In explore search, we show users.
 
     const card = document.createElement('div');
-    card.className = 'explore-user-card glass';
+    card.className = `explore-user-card glass ${u.isDeactivated ? 'deactivated-account-faded' : ''}`;
 
     let avatarHtml = '';
     if (u.profilePic) {
@@ -5094,6 +5377,9 @@ function renderChatUsers() {
 
   const targetList = showArchivedOnly ? archivedConvs : recentConvs;
 
+  // Apply faded style to deactivated users in sidebar
+  const allUserBtns = Array.from(chatUsersWrap.querySelectorAll('.chat-user'));
+
   // Requirement: Pinning max 3. Sort pinned first.
   const sortedConvs = targetList.sort((a, b) => {
     const aPinned = (a.pinnedBy || {})[myUid] ? 1 : 0;
@@ -5117,7 +5403,9 @@ function renderChatUsers() {
     const latestMsg = chatStore[chatId]?.at(-1) || { text: conv.lastMessage || 'No messages yet' };
     const btn = document.createElement('button');
     const isSelected = selectedChats.has(chatId);
-    btn.className = `chat-user ${getUnifiedChatId(chatId) === getUnifiedChatId(activeChat) ? 'active' : ''} ${isSelected ? 'selected' : ''}`;
+    let deactClass = '';
+    if (otherUser?.isDeactivated) deactClass = 'deactivated-account-faded';
+    btn.className = `chat-user ${getUnifiedChatId(chatId) === getUnifiedChatId(activeChat) ? 'active' : ''} ${isSelected ? 'selected' : ''} ${deactClass}`;
 
     const isPinned = (conv.pinnedBy || {})[myUid];
     const isMuted = (conv.mutedBy || {})[myUid] > Date.now();
@@ -5736,6 +6024,14 @@ async function sendMessage(prepared = null) {
 
   const now = Date.now();
   if (!payload.text && !(payload.files || []).length && !payload.system && !payload.poll && !payload.location) return;
+
+  // Deactivation check
+  const otherUid = getOtherUserIdFromConversation(activeChat);
+  const targetUser = authUsers.find(u => u.id === otherUid);
+  if (targetUser?.isDeactivated && !payload.system) {
+    alert(`sorry the ${targetUser.username || targetUser.name} user is no more active`);
+    return;
+  }
 
   try {
     if (useFirebase) {
@@ -6382,6 +6678,13 @@ async function sendSticker(url) {
     type: "image/webp/sticker",
     dataUrl: url
   };
+
+  const targetId = getOtherUserIdFromConversation(activeChat);
+  const targetUser = authUsers.find(u => u.id === targetId);
+  if (targetUser?.isDeactivated) {
+    alert(`sorry the ${targetUser.username || targetUser.name} user is no more active`);
+    return;
+  }
 
   await sendMessage({
     text: '',
