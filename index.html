@@ -73,6 +73,15 @@
 
 
         <small id="authMessage"></small>
+
+        <div class="auth-footer" style="margin-top: 20px; text-align: center; font-size: 0.8rem; color: var(--muted);">
+          <a href="#" class="learn-more-link" style="font-size: 0.8rem;">Privacy Policy</a>
+          <span style="margin: 0 5px;">•</span>
+          <a href="#" id="globalDeactivateLearnMore" class="learn-more-link" style="font-size: 0.8rem;">Learn more</a>
+          <p id="globalDeactivateLearnMoreText" class="data-freeze-note" hidden style="padding: 10px; background: rgba(0,0,0,0.02); border-radius: 8px; margin-top: 10px;">
+            "This account" details which will be deactivated but ur data will be still there freezed untill your acount is undeactivated or you force stope deactivation
+          </p>
+        </div>
       </div>
     </section>
 
@@ -672,7 +681,7 @@
           <button id="closeDeleteModal" class="icon-btn">✕</button>
         </div>
         <div class="delete-flow-content">
-          <p class="suggestion-note">Maybe <a href="#" id="deactivateInstead">deactivate your account instead</a> of deleting?</p>
+          <p class="suggestion-note">Maybe <button id="deactivateInsteadBtn" class="link-btn">deactivate your account instead</button> of deleting?</p>
           <div class="warning-box">
             <strong>⚠️ Final Notice:</strong>
             <p>Your channel data like posts, shorts, long videos will be permanently deleted from our side.</p>
@@ -689,6 +698,59 @@
         <div class="upload-btn-row">
           <button id="cancelDeleteBtn" type="button">Cancel</button>
           <button id="confirmDeleteBtn" class="danger" disabled>Delete Permanently</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="deactivateAccountModal" class="modal" hidden>
+      <div class="modal-card glass deactivation-settings-card">
+        <div class="modal-top">
+          <h3>Deactivate Account</h3>
+          <button id="closeDeactivateModal" class="icon-btn">✕</button>
+        </div>
+        <p style="font-size: 0.9rem; color: var(--muted);">Choose how long you'd like to stay away.</p>
+
+        <div class="deactivation-options">
+          <label class="deactivation-option">
+            <input type="radio" name="deactivateDuration" value="1d" checked />
+            <span>1 Day</span>
+          </label>
+          <label class="deactivation-option">
+            <input type="radio" name="deactivateDuration" value="1w" />
+            <span>1 Week</span>
+          </label>
+          <label class="deactivation-option">
+            <input type="radio" name="deactivateDuration" value="1m" />
+            <span>1 Month</span>
+          </label>
+          <label class="deactivation-option">
+            <input type="radio" name="deactivateDuration" value="custom" />
+            <span>Custom Date</span>
+          </label>
+        </div>
+
+        <div id="customDeactivateDateWrap" hidden>
+          <div class="form-group">
+            <label for="customDeactivateDate">Re-activate on:</label>
+            <input type="date" id="customDeactivateDate" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text);" />
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 15px;">
+          <label for="deactivationReason">Reason for deactivating (Optional):</label>
+          <textarea id="deactivationReason" class="deactivation-reason-box" placeholder="Tell us why you are leaving..."></textarea>
+        </div>
+
+        <div style="margin-top: 10px;">
+          <a href="#" id="deactivationLearnMoreLink" class="learn-more-link">Learn more</a>
+          <p id="deactivationLearnMoreText" class="data-freeze-note" hidden>
+            Your account details will be deactivated but your data will be still there freezed until your account is undeactivated or you force stop deactivation.
+          </p>
+        </div>
+
+        <div class="upload-btn-row" style="margin-top: 20px;">
+          <button id="cancelDeactivateBtn" type="button" class="secondary-btn" style="background: transparent; color: var(--text);">Cancel</button>
+          <button id="confirmDeactivateBtn" type="button" class="danger">Deactivate</button>
         </div>
       </div>
     </div>
@@ -888,6 +950,26 @@
               <button class="live-loc-duration-btn utility-btn" data-duration="480">8 hours</button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="deactivationTimerModal" class="modal" hidden>
+      <div class="modal-card glass deactivation-timer-card">
+        <h2>Account Deactivated</h2>
+        <p id="deactivationLockoutMsg">You cannot login until your deactivation period ends.</p>
+
+        <div id="deactivationTimerDisplay" class="deactivation-timer-display">
+          Calculating remaining time...
+        </div>
+
+        <p id="reactivateGraceMsg" style="font-size: 0.85rem; color: var(--muted); margin-bottom: 15px;" hidden>
+          You have a 3-day grace period to re-activate your account.
+        </p>
+
+        <div class="upload-btn-row" style="justify-content: center; gap: 15px;">
+          <button id="deactivationTimerOkBtn" type="button">OK</button>
+          <button id="deactivationTimerReactivateBtn" type="button" class="secondary-btn" style="background: var(--brand-a); color: white;" hidden>Re-activate</button>
         </div>
       </div>
     </div>

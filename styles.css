@@ -1780,3 +1780,101 @@ body.dark .poll-bar-bg { background: rgba(255,255,255,0.1); }
 .add-device-btn:hover{transform:translateY(-1px);filter:brightness(1.04)}
 .device-file-name{font-size:.82rem;color:#64748b}
 .creative-suite-card .device-file-name{color:#475569}
+
+/* Deactivation Feature Styles */
+.deactivated-account-faded {
+  opacity: 0.5 !important;
+  filter: grayscale(1) !important;
+  pointer-events: none !important;
+  cursor: not-allowed !important;
+}
+
+.deactivation-settings-card {
+  width: min(450px, 92vw);
+  padding: 20px;
+}
+
+.deactivation-options {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin: 15px 0;
+}
+
+.deactivation-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.deactivation-option:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+body.dark .deactivation-option:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.deactivation-option input[type="radio"] {
+  margin: 0;
+}
+
+.deactivation-reason-box {
+  width: 100%;
+  min-height: 80px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  margin-top: 10px;
+  resize: vertical;
+}
+
+.deactivation-timer-card {
+  width: min(400px, 92vw);
+  text-align: center;
+  padding: 30px 20px;
+}
+
+.deactivation-timer-card h2 {
+  font-size: 1.5rem;
+  margin-bottom: 15px;
+  color: var(--brand-a);
+}
+
+.deactivation-timer-display {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 20px 0;
+  padding: 15px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 12px;
+}
+
+body.dark .deactivation-timer-display {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.learn-more-link {
+  color: var(--brand-a);
+  text-decoration: none;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.learn-more-link:hover {
+  text-decoration: underline;
+}
+
+.data-freeze-note {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 5px;
+  line-height: 1.4;
+}
