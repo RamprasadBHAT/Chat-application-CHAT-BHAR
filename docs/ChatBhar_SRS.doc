@@ -1,0 +1,163 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Calibri;}{\f1 Times New Roman;}}
+\fs24
+\pard\qc\b SOFTWARE REQUIREMENTS SPECIFICATION (SRS)\b0\par
+\pard\qc ChatBhar Web \u8212? Social + Messaging Platform\par
+\pard\qc Version 1.0\par
+\pard\qc \par
+\pard\ql\b Prepared For:\b0 Academic/Project Submission\par
+\pard\ql\b Repository:\b0 Chat-application-CHAT-BHAR\par
+\pard\ql\par
+\page
+\pard\qc\b INDEX\b0\par
+\pard\ql 1. INTRODUCTION ............................................................. 1\par
+2. SRS .............................................................................. 3\par
+3. SYSTEM DESIGN ................................................................. 6\par
+4. PROGRAM CODE LISTING .................................................... 8\par
+5. USER INTERFACES (SCREENS & REPORTS) ............................ 9\par
+6. TESTING ....................................................................... 10\par
+7. CONCLUSION .................................................................. 12\par
+8. LIMITATIONS .................................................................. 13\par
+9. SCOPE OF ENHANCEMENT (FUTURE SCOPE) ........................ 14\par
+10. ABBREVIATIONS AND ACRONYMS .................................. 15\par
+11. BIBLIOGRAPHY / REFERENCES ...................................... 16\par
+\page
+\pard\qc\b 1. INTRODUCTION\b0\par
+\pard\ql\b i) Introduction of the system\b0\par
+\pard\ql\b a) Project Title:\b0 ChatBhar Web \u8212? High-Performance Social CMS + Channels + Messaging\par
+\pard\ql\b b) Category:\b0 Web-based Social Media and Communication System\par
+\pard\ql\b Overview:\b0 ChatBhar is a browser-based application combining social content publishing and messaging in one platform. The system supports authentication, profile setup, content posting, creator/channel management, and direct/group chat with media support.\par
+\pard\ql\b ii) Background\b0\par
+\pard\ql\b a) Introduction of the Company:\b0 No formal company details are defined in the repository; the project is documented as a product prototype/academic implementation.\par
+\pard\ql\b b) Brief note on existing system (if applicable):\b0 Existing social platforms often separate publishing and chat modules; ChatBhar unifies both workflows and includes local fallback execution when backend services are unavailable.\par
+\pard\ql\b iii) Objectives of the system\b0\par
+\pard\ql\pntext\f0 1.\tab{\*\pn\pnlvlbody\pnf0\pnstart1\pndec{\pnsep\pnsp}}Provide one integrated social + messaging experience.\par
+\pard\ql\pntext\f0 2.\tab{\*\pn\pnlvlbody\pnf0\pnstart1\pndec{\pnsep\pnsp}}Support rich media posting (shorts, carousel, long video, stories).\par
+\pard\ql\pntext\f0 3.\tab{\*\pn\pnlvlbody\pnf0\pnstart1\pndec{\pnsep\pnsp}}Enable secure signup/login with username lifecycle controls.\par
+\pard\ql\pntext\f0 4.\tab{\*\pn\pnlvlbody\pnf0\pnstart1\pndec{\pnsep\pnsp}}Offer responsive feed interaction and chat communication.\par
+\pard\ql\pntext\f0 5.\tab{\*\pn\pnlvlbody\pnf0\pnstart1\pndec{\pnsep\pnsp}}Maintain usability in static mode using browser storage.\par
+\pard\ql\b iv) Scope of the system\b0\par
+\pard\ql Scope includes account onboarding, profile editing, content upload and management, feed engagement, user discovery, relationships/follow requests, and messaging (direct and group).\par
+\pard\ql\b v) System Architecture\b0\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Frontend: HTML/CSS/JavaScript SPA\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Optional cloud services: Firebase Auth/Firestore/Storage\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Fallback mode: localStorage-powered API abstraction\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Persistent data files: db/auth-db.json + uploads folder\par
+\pard\ql\b vi) End users\b0\par
+\pard\ql General social users, content creators/channel operators, and messaging users (one-to-one and group chat).\par
+\pard\ql\b vii) Software/Hardware used\b0\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Software: Node.js, npm, browser runtime, Firebase SDK, Playwright test tooling\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Hardware: Standard desktop/laptop with internet for cloud mode\par
+\page
+\pard\qc\b 2. SRS\b0\par
+\pard\ql\b i) Introduction (Brief write-up about SRS)\b0\par
+\pard\ql This Software Requirements Specification defines expected behavior, constraints, interfaces, and quality attributes of ChatBhar Web across full backend mode and local fallback mode.\par
+\pard\ql\b ii) Overall Description\b0\par
+\pard\ql The application is a tab-driven single page app with five primary modules: Home, Explore, Post, Channels, and Chat. User data, posts, and message data are rendered dynamically and synchronized either through Firebase/backend APIs or through local browser persistence.\par
+\pard\ql\b iii) Special Requirements (if any)\b0\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Gmail-only signup policy (as project rule)\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Username uniqueness checks and change-policy limits\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Media format handling for stories/shorts/LTV/carousel\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Graceful API fallback behavior without crashing UX\par
+\pard\ql\b iv) Functional Requirements\b0\par
+\pard\ql\b a) Module 1: Authentication and User Management\b0\par
+\pard\ql - Signup/login, session persistence, username onboarding, profile update.\par
+\pard\ql\b b) Module 2: Content Upload and Publishing\b0\par
+\pard\ql - Type selection, drag/drop or file picker, caption/description validation, progress handling, publish flow.\par
+\pard\ql\b c) Module 3: Feed and Explore\b0\par
+\pard\ql - Feed rendering, user search, active profile discovery, public interaction support (like/comment/share).\par
+\pard\ql\b d) Module 4: Channel Management\b0\par
+\pard\ql - Creator posts listing, metadata editing, creative suite re-entry, post deletion.\par
+\pard\ql\b e) Module 5: Messaging\b0\par
+\pard\ql - DM/group chat, media preview, typing/presence signaling (mode-dependent), reaction and reply-capable interactions.\par
+\pard\ql\b f) Module 6: Data Services\b0\par
+\pard\ql - API request handling, local fallback handlers, data serialization and restore.\par
+\page
+\pard\qc\b 3. SYSTEM DESIGN\b0\par
+\pard\ql\b Introduction\b0\par
+\pard\ql ChatBhar follows an event-driven client architecture where UI components are mounted in a single HTML shell and application state is managed via JavaScript variables + persisted stores.\par
+\pard\ql\b Description of Functions\b0\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Initialization: hydrate state, bind events, start sync listeners\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Rendering: home feed, channels, explore list, chat messages\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Mutation: create/update/delete posts; send messages; follow/request actions\par
+\pard\ql\b Data Flow Design\b0\par
+\pard\ql User Action \u8594? Validation \u8594? API/Fallback Handler \u8594? Persisted State \u8594? UI Re-render.\par
+\pard\ql\b Modular decomposition of the system\b0\par
+\pard\ql 1) Auth Module\par
+2) Profile Module\par
+3) Upload/Creative Module\par
+4) Feed/Viewer Module\par
+5) Explore/Relationship Module\par
+6) Chat/Conversation Module\par
+7) Storage + API Utility Layer\par
+\page
+\pard\qc\b 4. PROGRAM CODE LISTING\b0\par
+\pard\ql\b Code with Title\b0\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}index.html \u8212? Layout, tab screens, form shells, modal containers\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}styles.css \u8212? Theming, responsive structure, component styling\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}app.js \u8212? Core business logic + fallback API + realtime hooks\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}db/auth-db.json \u8212? NoSQL-like persisted user schema\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}verify_*.spec.cjs / verify_*.py \u8212? Automated UI verification scripts\par
+\page
+\pard\qc\b 5. USER INTERFACES (SCREENS & REPORTS)\b0\par
+\pard\ql\b Screenshots\b0\par
+\pard\ql Recommended screenshots for submission:\par
+\pard\ql 1) Login/Signup + Username Setup\par
+2) Home Feed + Stories\par
+3) Explore + Search\par
+4) Create Upload Form + Media Preview\par
+5) Channels Dashboard\par
+6) Chat Conversation Screen\par
+7) Post Viewer / Media Modal\par
+\pard\ql\b Reports\b0\par
+\pard\ql The repository does not define a formal report engine (PDF/CSV analytics reports). User-visible statuses are presented as UI feedback (upload progress, activity states, message updates).\par
+\page
+\pard\qc\b 6. TESTING\b0\par
+\pard\ql\b Introduction (Brief write-up about Software Testing)\b0\par
+\pard\ql Software testing in ChatBhar focuses on validating key journeys: app shell rendering, chat stability, message sending fallback, and post viewer interactions.\par
+\pard\ql\b Test Reports\b0\par
+\pard\ql Existing verification scripts indicate end-to-end browser checks using Playwright (JavaScript and Python variants).\par
+\pard\ql\b a) Unit Testing\b0\par
+\pard\ql Dedicated unit test suites are limited; project verification is primarily behavior-driven UI testing.\par
+\pard\ql\b b) Integration Testing\b0\par
+\pard\ql Integration-style tests validate interactions between localStorage data, API fallback logic, and UI rendering.\par
+\pard\ql\b c) System Testing\b0\par
+\pard\ql End-to-end scripts cover full user flows such as opening chat, sending message, and interacting with feed/post viewer components.\par
+\page
+\pard\qc\b 7. CONCLUSION\b0\par
+\pard\ql ChatBhar is a capable prototype unifying social publishing and messaging. Its dual-mode execution (backend + local fallback) makes it suitable for demonstration, experimentation, and staged product hardening.\par
+\page
+\pard\qc\b 8. LIMITATIONS\b0\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Local mode storage limitations for large media\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Cloud features depend on valid Firebase configuration\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Security, rate limiting, and production observability are not fully hardened\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Formal analytics/report export modules are minimal\par
+\page
+\pard\qc\b 9. SCOPE OF ENHANCEMENT (FUTURE SCOPE)\b0\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Production-grade backend/database with scalable media pipeline\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Role-based access and advanced moderation\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Notification services and mobile push integration\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Advanced analytics dashboards and exportable reports\par
+\pard\ql\pntext\f0 -\tab{\*\pn\pnlvlblt\pnf0\pnindent0{\pntxtb\'B7}}Native mobile clients using shared APIs\par
+\page
+\pard\qc\b 10. ABBREVIATIONS AND ACRONYMS\b0\par
+\pard\ql SRS \u8212? Software Requirements Specification\par
+SPA \u8212? Single Page Application\par
+API \u8212? Application Programming Interface\par
+UI \u8212? User Interface\par
+UX \u8212? User Experience\par
+DM \u8212? Direct Message\par
+DB \u8212? Database\par
+CMS \u8212? Content Management System\par
+LTV \u8212? Long-form Video\par
+\page
+\pard\qc\b 11. BIBLIOGRAPHY / REFERENCES\b0\par
+\pard\ql 1. Project README and architecture notes.\par
+2. Source files: app.js, index.html, styles.css.\par
+3. Data schema/persistence file: db/auth-db.json.\par
+4. Test scripts: verify_ui.spec.cjs, verify_messaging.spec.cjs, verify_chat_ui_final.py.\par
+5. Firebase official documentation: https://firebase.google.com/docs\par
+6. Playwright official documentation: https://playwright.dev/docs/intro\par
+\pard\ql\par
+\pard\qc --- End of Document ---\par
+}
